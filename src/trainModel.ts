@@ -1,4 +1,7 @@
 import * as THREE from 'three'
+import { createShinkansenCar } from './shinkansenModel'
+import { getTrainSpec } from './trains'
+import type { TrainType } from './trains'
 
 /** Japanese N scale: 1:150; every length below is in model millimetres. */
 export const TRAIN_SCALE = 150
@@ -396,8 +399,8 @@ export function updateE235Connection(
     for (let vertex = 0; vertex < 8; vertex += 1) {
       const corner = vertex % 4
       const inset = vertex >= 4 ? 0.27 : 0
-      const halfHeight = 7 + fold - inset
-      const halfWidth = 2.85 + fold - inset
+      const halfHeight = (connection.userData.gangwayHalfHeight ?? 7) + fold - inset
+      const halfWidth = (connection.userData.gangwayHalfWidth ?? 2.85) + fold - inset
       parts.corner.set(0, corner < 2 ? halfHeight : -halfHeight, corner === 0 || corner === 3 ? -halfWidth : halfWidth)
       parts.corner.applyQuaternion(parts.orientation).add(parts.center)
       positions.setXYZ(section * 8 + vertex, parts.corner.x, parts.corner.y, parts.corner.z)
@@ -605,13 +608,32 @@ export function createE235Car(index: number, total = 11): THREE.Group {
   return car
 }
 
+/** Keep the original Yamanote model intact; high-speed series have their own shells. */
+export function createTrainCar(index: number, total = 11, trainType: TrainType = 'e235'): THREE.Group {
+  return trainType === 'e235' ? createE235Car(index, total) : createShinkansenCar(index, total, trainType)
+}
+
+/** Broader flexible diaphragms fill the high-speed train's enclosed body ends. */
+export function createTrainConnection(trainType: TrainType = 'e235'): THREE.Group {
+  const connection = createE235Connection()
+  if (trainType !== 'e235') {
+    const spec = getTrainSpec(trainType)
+    connection.userData.gangwayHalfHeight = (spec.height - 4.8) / 2 - .35
+    connection.userData.gangwayHalfWidth = spec.width / 2 - .65
+    const bellows = connection.getObjectByName('flexible-gangway-bellows') as THREE.Mesh
+    const material = bellows.material as THREE.MeshStandardMaterial
+    material.color.set('#9ba2a2'); material.roughness = .75
+  }
+  return connection
+}
+
 /** Dispose only after all cars in this subtree have been removed from the scene. */
 export function disposeTrainModel(root: THREE.Object3D) {
   const geometries = new Set<THREE.BufferGeometry>()
   const materials = new Set<THREE.Material>()
   const textures = new Set<THREE.Texture>()
   root.traverse(object => {
-    if (!(object instanceof THREE.Mesh)) return
+    if (!(object instanceof THREE.Mesh || object instanceof THREE.Line || object instanceof THREE.Points)) return
     geometries.add(object.geometry)
     const collection = Array.isArray(object.material) ? object.material : [object.material]
     collection.forEach(material => {

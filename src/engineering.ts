@@ -4,6 +4,7 @@ import type { LayoutIssue } from './clearance'
 import type { LayoutData, PlacedAccessory } from './layout'
 import { SNAP_ANGLE, SNAP_DISTANCE, SNAP_HEIGHT, attachTrack, connectedEndpoint, endpoints, pathsFor, pointAt, trackLength } from './track'
 import type { Endpoint, Track } from './track'
+import { getTrainSpec } from './trains'
 
 /** Application planning target; KATO publishes no E235 maximum grade here. */
 export const DEFAULT_RAMP_GRADE_PERCENT = 3
@@ -212,25 +213,26 @@ export function auditConnections(tracks: Track[]): LayoutIssue[] {
 export interface EngineeringAuditOptions { maxGradePercent?: number }
 
 /** Audit supported centerline facts while explicitly retaining unverified limits. */
-export function auditEngineering(layout: Pick<LayoutData, 'tracks' | 'accessories'>, options: EngineeringAuditOptions = {}): LayoutIssue[] {
+export function auditEngineering(layout: Pick<LayoutData, 'tracks' | 'accessories'> & Partial<Pick<LayoutData, 'trainType'>>, options: EngineeringAuditOptions = {}): LayoutIssue[] {
   const issues = auditConnections(layout.tracks)
+  const train = getTrainSpec(layout.trainType)
   const maxGrade = options.maxGradePercent ?? DEFAULT_RAMP_GRADE_PERCENT
   if (!Number.isFinite(maxGrade) || maxGrade <= 0) throw new Error('Use a positive planning grade limit.')
   for (const track of layout.tracks) {
     const spec = CATALOG.get(track.kind)!
     const maximumGrade = trackGradePercent(track)
     if (maximumGrade > maxGrade + EPSILON) issues.push(issue('grade-above-target', [track.id], `${numberLabel(maximumGrade)}% exceeds the ${numberLabel(maxGrade)}% planning target`,
-      'This target is an application guideline, not a published KATO E235 maximum. Traction depends on formation, rolling resistance, transitions, and track condition.'))
+      `This target is an application guideline, not a published KATO ${train.model} maximum. Traction depends on formation, rolling resistance, transitions, and track condition.`))
     const rise = Math.abs((track.endElevation ?? track.elevation ?? 0) - (track.elevation ?? 0))
     if ((spec.shape === 'straight' || spec.shape === 'doubleStraight') && rise >= spec.length) issues.push(issue('track-rise-impossible', [track.id], 'The rise is at least the purchased track length',
       'A fixed-length straight cannot provide this rise and a horizontal railway run. Use several real pieces for a supported, shallow ramp.', 'error'))
     if (rise > EPSILON && spec.shape !== 'straight' && spec.shape !== 'doubleStraight') issues.push(issue('graded-special-geometry', [track.id], 'This graded curve or special track needs a measured template',
       'The simulator interpolates height along this route. It does not prove a rigid curved, banked, turnout, or crossing product can take that three-dimensional shape.'))
     const minimumRadius = spec.shape === 'doubleCurve' ? spec.innerRadius : spec.shape === 'curve' ? spec.radius : undefined
-    const actualMinimum = E235_ENGINEERING_DATA.minimumRadiusMm
+    const actualMinimum = train.minimumRadius ?? E235_ENGINEERING_DATA.minimumRadiusMm
     if (minimumRadius !== undefined && actualMinimum !== undefined && minimumRadius < actualMinimum) {
-      issues.push(issue('curve-below-minimum', [track.id], `R${numberLabel(minimumRadius)} is below the sourced E235 minimum`, E235_ENGINEERING_DATA.sourceUrl, 'error'))
-    } else if (minimumRadius !== undefined && minimumRadius < E235_ENGINEERING_DATA.recommendedRadiusMm) {
+      issues.push(issue('curve-below-minimum', [track.id], `R${numberLabel(minimumRadius)} is below the sourced ${train.model} R${actualMinimum} minimum`, train.referenceUrl, 'error'))
+    } else if (train.type === 'e235' && minimumRadius !== undefined && minimumRadius < E235_ENGINEERING_DATA.recommendedRadiusMm) {
       issues.push(issue('curve-below-recommendation', [track.id], `R${numberLabel(minimumRadius)} is below the official R${E235_ENGINEERING_DATA.recommendedRadiusMm} starter choice`,
         `The official minimum radius is unconfirmed. Verify this exact train and curve before purchasing. ${E235_ENGINEERING_DATA.sourceUrl}`))
     }
@@ -250,8 +252,12 @@ export function auditEngineering(layout: Pick<LayoutData, 'tracks' | 'accessorie
     if (missingSupports.length) issues.push(issue('elevated-supports-unverified', [track.id], 'Raised track ends need verified supports',
       `Required roadbed support heights: ${missingSupports.map(endpoint => `${numberLabel(endpoint.position.z ?? 0)} mm at (${numberLabel(endpoint.position.x)}, ${numberLabel(endpoint.position.y)}) mm`).join('; ')}. These joints have no matching, documented support placement. Include real piers, adapters, or measured risers in the parts plan; an elevated track mesh alone is unsupported.`))
   }
-  if (layout.tracks.length) issues.push(issue('e235-limits-unconfirmed', [], 'E235 minimum radius and maximum grade remain unconfirmed',
-    `${E235_ENGINEERING_DATA.notes} ${E235_ENGINEERING_DATA.sourceUrl}`))
+  if (layout.tracks.length) {
+    if (train.type === 'e235') issues.push(issue('e235-limits-unconfirmed', [], 'E235 minimum radius and maximum grade remain unconfirmed',
+      `${E235_ENGINEERING_DATA.notes} ${E235_ENGINEERING_DATA.sourceUrl}`))
+    else issues.push(issue('train-grade-unconfirmed', [], `${train.model} maximum grade remains unconfirmed`,
+      `KATO publishes R${train.minimumRadius} as the minimum curve for this product. That does not establish grade, adjacent-track, platform, or overhang compatibility. ${train.referenceUrl}`))
+  }
   for (const accessory of layout.accessories) {
     const product = KATO_SUPPORT_DATA.find(support => support.kind === accessory.kind)
     if (!product) continue

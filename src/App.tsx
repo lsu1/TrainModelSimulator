@@ -34,6 +34,8 @@ import Scene3D from "./Scene3D";
 import { KATO_CATALOG, CATALOG_SOURCES } from "./catalog";
 import type { CatalogCategory, CatalogItem } from "./catalogTypes";
 import { CATALOG, useRailway } from "./useRailway";
+import { TRAIN_TYPES, getTrainSpec } from "./trains";
+import type { TrainType } from "./trains";
 import {
   CheckSummary,
   RampBuilder,
@@ -55,6 +57,12 @@ const CATEGORIES: {
   { key: "bridge", label: "Bridges", icon: Mountain },
   { key: "accessory", label: "Scenery", icon: Building2 },
 ];
+const TRAIN_DESCRIPTIONS: Record<TrainType, string> = {
+  e235: "Stainless steel and lime green",
+  e5: "Green, pink stripe, and an extra-long nose",
+  e6: "Red and silver with a pointed nose",
+  e7: "Blue and white with a copper stripe",
+};
 function PieceIllustration({ piece }: { piece: CatalogItem }) {
   const curved = piece.shape.toLowerCase().includes("curve");
   const double = piece.shape.startsWith("double") || piece.shape === "scissors";
@@ -186,12 +194,12 @@ export default function App() {
       <section className="hero">
         <div>
           <div className="eyebrow">
-            <span /> A LITTLE PIECE OF TOKYO
+            <span /> A LITTLE PIECE OF JAPAN
           </div>
           <h1>Your railway. A whole new dimension.</h1>
           <p className="subtitle">
-            Build, turn, and explore in 3D. Then take the Yamanote Line for a
-            ride.
+            Build, turn, and explore in 3D. Then choose your favourite Japanese
+            train for a ride.
           </p>
         </div>
         <div className="hero-badge">
@@ -271,6 +279,7 @@ export default function App() {
                 trainPosition={h.position}
                 cabForward={h.cabForward}
                 carCount={layout.carCount}
+                trainType={h.trainType}
                 selectedId={h.selectedId}
                 activeAnchor={h.anchor}
                 mode={h.mode}
@@ -302,7 +311,7 @@ export default function App() {
               <div className="scene-hud">
                 <span className={`status-dot ${h.running ? "running" : ""}`} />
                 {h.running
-                  ? "山手線 · On an adventure"
+                  ? `${h.trainSpec.name} · On an adventure`
                   : h.routeLength
                     ? "Connected loop · ready to ride"
                     : tracks.length
@@ -438,14 +447,30 @@ export default function App() {
               </div>
             </div>
             <div className="train-name">
-              <span className="line-swatch" />
+              <span className="line-swatch" style={{ background: h.trainSpec.colors.primary }} />
               <TrainFront size={18} />
-              <div>
-                <strong>E235 · Yamanote Line</strong>
+              <div className="train-identity">
+                <label className="train-select">
+                  Train
+                  <select
+                    aria-label="Train"
+                    value={h.trainType}
+                    onChange={(event) => h.chooseTrain(event.target.value as TrainType)}
+                  >
+                    {TRAIN_TYPES.map((type) => {
+                      const train = getTrainSpec(type);
+                      return <option key={type} value={type}>{train.name} · {train.line}</option>;
+                    })}
+                  </select>
+                </label>
                 <span>
-                  山手線 · Stainless steel, lime green, and a little Tokyo
-                  magic.
+                  {TRAIN_DESCRIPTIONS[h.trainType]}
                 </span>
+                {h.trainSpec.minimumRadius && (
+                  <span className="train-fit-note">
+                    KATO minimum curve: R{h.trainSpec.minimumRadius} mm · 3–11 cars for play
+                  </span>
+                )}
               </div>
               <label className="car-select">
                 Cars
@@ -495,7 +520,7 @@ export default function App() {
                 <TrainFront size={18} />
               </span>
               <div>
-                <strong>Ride the Yamanote Line</strong>
+                <strong>Ride your favourite train</strong>
                 <p>Try Train view to get closer to the journey.</p>
               </div>
             </div>
@@ -989,6 +1014,9 @@ export default function App() {
                         <div className="saved-layout-description">
                           <strong>{design.name}</strong>
                           <small>
+                            {getTrainSpec(design.layout.trainType).name} · {design.layout.carCount} cars
+                          </small>
+                          <small>
                             {design.layout.tracks.length} tracks ·{" "}
                             {design.layout.accessories.length} scenery ·{" "}
                             {new Date(design.updatedAt).toLocaleDateString(
@@ -1140,20 +1168,23 @@ export default function App() {
                       <ChevronRight size={16} />
                     </a>
                   ))}
-                  <a
-                    href="https://www.katomodels.com/product/n/e235_yamanote_slm"
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    <span>
-                      <strong>Kato E235 Yamanote Line</strong>
-                      <small>
-                        Cab faces, green door gradients, stainless bodies,
-                        rooftop equipment.
-                      </small>
-                    </span>
-                    <ChevronRight size={16} />
-                  </a>
+                  {TRAIN_TYPES.map((type) => {
+                    const train = getTrainSpec(type);
+                    return (
+                      <a
+                        key={type}
+                        href={train.referenceUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        <span>
+                          <strong>KATO {train.name}</strong>
+                          <small>{TRAIN_DESCRIPTIONS[type]} · Product photos and details.</small>
+                        </span>
+                        <ChevronRight size={16} />
+                      </a>
+                    );
+                  })}
                 </div>
                 <div className="help-note">
                   <Lightbulb size={18} />
@@ -1173,7 +1204,7 @@ export default function App() {
                   {[
                     {
                       title: "Look around your railway",
-                      text: "Drag the scene to orbit, right-drag to pan, and scroll to zoom. Try Top view to line up tracks or Train view to follow your E235.",
+                      text: "Drag the scene to orbit, right-drag to pan, and scroll to zoom. Try Top view to line up tracks or Train view to follow your chosen train.",
                     },
                     {
                       title: "Drag, place, and connect",
@@ -1184,8 +1215,8 @@ export default function App() {
                       text: "Click a green connector, then choose a finish height and maximum grade in Build a gradual ramp. It calculates the track run and places matching catalog supports. The Check before shopping report identifies intermediate supports and transitions still needed. At 60 mm, Add matching piers uses the documented Kato 23-069 assembly.",
                     },
                     {
-                      title: "All aboard the Yamanote Line",
-                      text: "Choose any train length from 3 to 11 cars. The Switch control desk numbers each turnout and sets its straight or branch route. Zoom in to watch the point blades move. A clear switch can change while the train runs; an occupied switch waits for the train to pass. Your train stops at an open end or points set the other way.",
+                      title: "Choose your train and go",
+                      text: "Use the Train list to choose the E235 Yamanote Line or E5, E6, and E7 Shinkansen. Changing trains pauses the journey and places the new train at the beginning of your railway. Choose 3 to 11 cars for play; Shinkansen formations here can be shorter than the real train. Your train choice is kept in saved layouts. The Switch control desk sets each numbered turnout to straight or branch. Zoom in to watch its point blades move. Occupied switches wait for the train to pass. Your train stops at an open end or points set the other way.",
                     },
                     {
                       title: "Check before building for real",

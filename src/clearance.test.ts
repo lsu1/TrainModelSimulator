@@ -41,6 +41,16 @@ describe('actual scenery clearance', () => {
     expect(errors([curve], [signal])).toHaveLength(1)
   })
 
+  it.each(['e5', 'e7'] as const)('checks the longer %s cab where an E235 clears a nearby signal', trainType => {
+    const curve = { ...straight, kind: 'c315' }
+    const point = pathsFor(curve)[0].pointAt(100)
+    const signal = scenery('a-signal', point.x - Math.sin(point.angle) * 19.5, point.y + Math.cos(point.angle) * 19.5, 0, point.angle)
+    const layout = { tracks: [curve], accessories: [] }
+    expect(checkPlacement(layout, signal).allowed).toBe(true)
+    expect(checkPlacement({ ...layout, trainType }, signal).allowed).toBe(false)
+    expect(auditClearances({ ...layout, accessories: [signal], trainType }).some(issue => issue.severity === 'error')).toBe(true)
+  })
+
   it('allows over-track catenary when its posts stand outside the train corridor', () => {
     expect(errors([straight], [scenery('a-catenary')])).toEqual([])
     expect(errors([straight], [scenery('a-catenary', 124, 17)])[0]?.code).toBe('catenary-post-clearance')

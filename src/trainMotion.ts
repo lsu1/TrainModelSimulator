@@ -1,7 +1,8 @@
 import { advanceTrain, sampleBehind } from './track'
 import type { Track, TrainAdvance, TrainPosition } from './track'
-import { BOGIE_OFFSET, solveConsistPoses } from './consistPose'
-import { CAR_LENGTH } from './trainModel'
+import { solveConsistPoses } from './consistPose'
+import { getTrainCarSpec } from './trains'
+import type { TrainType } from './trains'
 
 /** Movement keeps the original cab reference so reversing does not move the cars. */
 export function advanceConsist(
@@ -10,6 +11,7 @@ export function advanceConsist(
   distance: number,
   cabForward: boolean,
   carCount: number,
+  trainType: TrainType = 'e235',
 ): TrainAdvance {
   const proposed = advanceTrain(tracks, position, distance)
   if (cabForward || distance <= 0 || !Number.isFinite(distance)) return proposed
@@ -17,14 +19,14 @@ export function advanceConsist(
     ...reference,
     direction: reference.direction === 1 ? -1 : 1,
   })
-  const initial = solveConsistPoses(tracks, position, false, carCount)
+  const initial = solveConsistPoses(tracks, position, false, carCount, trainType)
   const visibleCount = initial.cars.filter(Boolean).length
   if (!visibleCount) return proposed
   // A partially placed last body may already overhang an unfinished railway.
   // Keep its complete bogies visible and stop the rear bogie at that endpoint.
   const includeOverhang = sampleBehind(tracks, physicalPosition(position), initial.rearOffset) !== null
   const formationFits = (reference: TrainPosition): boolean => {
-    const poses = solveConsistPoses(tracks, reference, false, carCount)
+    const poses = solveConsistPoses(tracks, reference, false, carCount, trainType)
     if (poses.cars.filter(Boolean).length < visibleCount) return false
     const last = poses.cars[visibleCount - 1]
     if (!last) return false
@@ -33,7 +35,8 @@ export function advanceConsist(
     // An accepted small endpoint overlap can make another rear car fit while
     // reversing. Preserve the existing cars' boundary without blocking that
     // newly complete car from appearing.
-    const offset = last.rearOffset + (includeOverhang ? CAR_LENGTH / 2 - BOGIE_OFFSET : 0)
+    const lastSpec = getTrainCarSpec(trainType, visibleCount - 1, carCount)
+    const offset = last.rearOffset + (includeOverhang ? lastSpec.length / 2 - lastSpec.bogieOffset : 0)
     return sampleBehind(tracks, physicalPosition(reference), offset) !== null
   }
   if (formationFits(proposed.position)) return proposed
@@ -57,13 +60,14 @@ export function occupiedTrackIds(
   position: TrainPosition,
   cabForward: boolean,
   carCount: number,
+  trainType: TrainType = 'e235',
 ): Set<string> {
   const occupied = new Set<string>()
   if (!tracks.some(track => track.id === position.trackId)) return occupied
   occupied.add(position.trackId)
   const physicalDirection = cabForward ? position.direction : position.direction === 1 ? -1 : 1
   let trace: TrainPosition = { ...position, direction: physicalDirection === 1 ? -1 : 1 }
-  let remaining = solveConsistPoses(tracks, position, cabForward, carCount).rearOffset
+  let remaining = solveConsistPoses(tracks, position, cabForward, carCount, trainType).rearOffset
   // The shortest supported catalog piece is 29 mm, so a 20 mm step cannot
   // cross a whole piece without recording it. Stop where the real rail stops.
   while (remaining > 0) {

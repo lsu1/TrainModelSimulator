@@ -3,6 +3,8 @@ import type { CatalogItem } from './catalogTypes'
 import type { LayoutData, PlacedAccessory } from './layout'
 import { connectedEndpoint, endpoints, pathsFor } from './track'
 import type { Track, TrackPoint, TrackRoute } from './track'
+import { getTrainSpec } from './trains'
+import type { TrainType } from './trains'
 
 export interface LayoutIssue {
   id: string
@@ -30,6 +32,18 @@ export const CLEARANCE_ASSUMPTIONS = {
 } as const
 
 const ITEM_BY_KIND = new Map(KATO_CATALOG.map(item => [item.kind, item]))
+type ClearanceLayout = Pick<LayoutData, 'tracks' | 'accessories'> & Partial<Pick<LayoutData, 'trainType'>>
+/** Keep the conservative vertical allowance while following each longer cab. */
+export function getClearanceAssumptions(trainType: TrainType = 'e235') {
+  const train = getTrainSpec(trainType)
+  return {
+    ...CLEARANCE_ASSUMPTIONS,
+    straightHalfWidth: Math.max(CLEARANCE_ASSUMPTIONS.straightHalfWidth, train.width / 2 + .85),
+    carHalfLength: Math.max(train.length, train.cabLength) / 2,
+    halfBogieSpacing: train.bogieOffset,
+  }
+}
+type ClearanceProfile = ReturnType<typeof getClearanceAssumptions>
 const EPSILON = .05
 type Point2 = { x: number; y: number }
 interface Bounds { minX: number; maxX: number; minY: number; maxY: number; minZ: number; maxZ: number }
@@ -66,24 +80,24 @@ function upperStructureDepth(item: CatalogItem): number {
   if (/deck girder/i.test(item.name)) return 15
   return 3
 }
-function stockHalfWidth(route: TrackRoute, distance: number): number {
+function stockHalfWidth(route: TrackRoute, distance: number, profile: ClearanceProfile): number {
   const a = route.pointAt(Math.max(0, distance - 4)), b = route.pointAt(Math.min(route.length, distance + 4))
   const heading = Math.abs(difference(a.angle, b.angle))
-  if (heading < .00001) return CLEARANCE_ASSUMPTIONS.straightHalfWidth
+  if (heading < .00001) return profile.straightHalfWidth
   const radius = Math.hypot(b.x - a.x, b.y - a.y) / (2 * Math.sin(heading / 2))
-  const bogie = CLEARANCE_ASSUMPTIONS.halfBogieSpacing, nose = CLEARANCE_ASSUMPTIONS.carHalfLength
+  const bogie = profile.halfBogieSpacing, nose = profile.carHalfLength
   const chord = Math.sqrt(Math.max(0, radius * radius - bogie * bogie))
   const inward = radius - chord, outward = Math.hypot(chord, nose) - radius
-  return CLEARANCE_ASSUMPTIONS.straightHalfWidth + Math.max(inward, outward)
+  return profile.straightHalfWidth + Math.max(inward, outward)
 }
-function trackGeometry(track: Track): TrackGeometry {
+function trackGeometry(track: Track, profile: ClearanceProfile): TrackGeometry {
   const item = ITEM_BY_KIND.get(track.kind)!
   const bounds = emptyBounds(), segments: Segment[] = []
   for (const route of pathsFor(track)) {
     const count = Math.max(1, Math.ceil(route.length / CLEARANCE_ASSUMPTIONS.routeSampleSpacing))
     for (let index = 0; index < count; index++) {
       const a = route.pointAt(route.length * index / count), b = route.pointAt(route.length * (index + 1) / count)
-      const halfWidth = stockHalfWidth(route, route.length * (index + .5) / count)
+      const halfWidth = stockHalfWidth(route, route.length * (index + .5) / count, profile)
       const broadWidth = Math.max(12.5, halfWidth)
       const segmentBounds: Bounds = {
         minX: Math.min(a.x, b.x) - broadWidth, maxX: Math.max(a.x, b.x) + broadWidth,
@@ -346,7 +360,7 @@ function trackPairIssue(a: TrackGeometry, b: TrackGeometry, turnoutExits: [Turno
       'Independent track beds and train corridors intersect at the same level. Proper end-to-end joints and routes inside one turnout or crossing are allowed.')
     return issue('low-overpass', 'error', [a.track.id, b.track.id],
       `The upper track is too low: leave at least ${requiredSeparation} mm between track levels.`,
-      `Only ${height.toFixed(1)} mm separates these tracks here. The current E235 raised pantograph reaches about 45 mm above the track-bed datum; ${upper.item.label} extends approximately ${depth} mm below its roadbed. This clearance allowance follows the rendered model, not a manufacturer-certified dimension.`)
+      `Only ${height.toFixed(1)} mm separates these tracks here. The stock envelope reserves 45 mm above the track-bed datum; ${upper.item.label} extends approximately ${depth} mm below its roadbed. This is a conservative planning allowance, not a manufacturer-certified dimension.`)
   }
   return undefined
 }
@@ -378,7 +392,7 @@ function sceneryTrackIssue(scenery: SceneryGeometry, geometry: TrackGeometry, tr
           : code === 'pier-obstruction' ? 'This pier blocks a train’s path. Move it away from the lower track.'
             : `${scenery.name} is in the train’s path. Move it beside the rails or raise it clear.`
     return issue(code, 'error', [scenery.id, geometry.track.id], message,
-      'The check follows every rail route, including curves, both lanes and turnout branches, at its actual height. It checks the track bed and includes an allowance for E235 body overhang on curves. Scenery dimensions are simplified planning models.')
+      'The check follows every rail route, including curves, both lanes and turnout branches, at its actual height. It checks the track bed and includes the selected train’s width, bogie chord, and longest cab overhang on curves. Scenery dimensions are simplified planning models.')
   }
   return undefined
 }
@@ -387,8 +401,9 @@ function sceneryTrackIssue(scenery: SceneryGeometry, geometry: TrackGeometry, tr
  * A broad-phase bounding-box test precedes sampled route/rotated-solid checks.
  * Routes within a manufactured double track, turnout or crossing are intentional.
  */
-export function auditClearances(layout: Pick<LayoutData, 'tracks' | 'accessories'>): LayoutIssue[] {
-  const tracks = layout.tracks.map(trackGeometry), scenery = layout.accessories.map(accessoryGeometry)
+export function auditClearances(layout: ClearanceLayout): LayoutIssue[] {
+  const profile = getClearanceAssumptions(layout.trainType), train = getTrainSpec(layout.trainType)
+  const tracks = layout.tracks.map(track => trackGeometry(track, profile)), scenery = layout.accessories.map(accessoryGeometry)
   const turnoutExits = connectedTurnoutExits(layout.tracks)
   const issues: LayoutIssue[] = [], reported = new Set<string>()
   const add = (value: LayoutIssue | undefined) => {
@@ -400,7 +415,7 @@ export function auditClearances(layout: Pick<LayoutData, 'tracks' | 'accessories
     add(sceneryTrackIssue(piece, track, layout.tracks))
   if (layout.accessories.length) add(issue('scenery-dimensions-nominal', 'warning', layout.accessories.map(piece => piece.id),
     'Scenery clearance uses simplified models. Check actual accessory dimensions before buying.',
-    'The current stock allowance is 11 mm to either side on straight track, plus calculated curve overhang; stock reaches about 45 mm above the track-bed datum. Catenary contact arms are intentional; their posts and structural beams are checked. This is a planning check, not a measured Kato accessory template.'))
+    `The ${train.name} allowance is ${profile.straightHalfWidth.toFixed(2)} mm to either side on straight track, plus calculated curve overhang; the conservative vertical envelope reserves 45 mm above the track-bed datum. Catenary contact arms are intentional; their posts and structural beams are checked. This is a planning check, not a measured Kato accessory template.`))
   return issues
 }
 
@@ -410,12 +425,13 @@ export function auditClearances(layout: Pick<LayoutData, 'tracks' | 'accessories
  * allow incremental repairs of a previously invalid imported layout.
  */
 export function checkPlacement(
-  layout: Pick<LayoutData, 'tracks' | 'accessories'>,
+  layout: ClearanceLayout,
   candidate: Track | PlacedAccessory,
   replacingId = candidate.id,
 ): { allowed: boolean; issues: LayoutIssue[] } {
   const accessory = ITEM_BY_KIND.get(candidate.kind)?.category === 'accessory'
   const proposed = {
+    ...(layout.trainType === undefined ? {} : { trainType: layout.trainType }),
     tracks: [...layout.tracks.filter(piece => piece.id !== replacingId), ...(!accessory ? [candidate as Track] : [])],
     accessories: [...layout.accessories.filter(piece => piece.id !== replacingId), ...(accessory ? [candidate as PlacedAccessory] : [])],
   }

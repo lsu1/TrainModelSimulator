@@ -4,6 +4,8 @@ import type { CarPose, PoseVector } from './consistPose'
 import { advanceTrain, attachTrack, endpoints, makeStarterLayout, pointAt, sampleBehind, trackLength } from './track'
 import type { Track, TrainPosition } from './track'
 import { CAR_LENGTH, CAR_SPACING } from './trainModel'
+import { getCouplingLinkLength, getTrainCarSpec } from './trains'
+import type { TrainType } from './trains'
 
 function distance(a: PoseVector, b: PoseVector): number {
   return Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z)
@@ -198,5 +200,96 @@ describe('rigid, connected consist poses', () => {
     expect(partial.cars.slice(1)).toEqual([null, null])
     expect(solveConsistPoses([], reference(tracks[0]), true, 3).cars).toEqual([null, null, null])
     expect(solveConsistPoses(tracks, reference(tracks[0]), true, 0)).toEqual({ cars: [], couplings: [], rearOffset: 0 })
+  })
+})
+
+describe.each<TrainType>(['e5', 'e6', 'e7'])('%s Shinkansen rigid formation', trainType => {
+  function checkFormation(cars: CarPose[], count: number): void {
+    for (const [index, car] of cars.entries()) {
+      const spec = getTrainCarSpec(trainType, index, count)
+      expect(distance(car.frontBogie, car.rearBogie)).toBeCloseTo(2 * spec.bogieOffset, 6)
+      expect(distance(car.frontEnd, car.rearEnd)).toBeCloseTo(spec.length, 7)
+      expect(car.frontCoupling.z - car.frontBogie.z).toBeCloseTo(COUPLING_HEIGHT, 8)
+      if (index) {
+        const link = getCouplingLinkLength(trainType, index - 1, count)
+        expect(distance(cars[index - 1].rearCoupling, car.frontCoupling)).toBeCloseTo(link, 6)
+      }
+    }
+  }
+
+  it('keeps the longer end cabs, shorter middle cars and nominal straight gaps', () => {
+    const tracks = chain(Array(12).fill('s248'))
+    const position = reference(tracks[11], 200)
+    const leading = pointAt(tracks[11], position.distance)
+    expect(getTrainCarSpec(trainType, 0, 3).length).toBeGreaterThan(getTrainCarSpec(trainType, 1, 3).length)
+    for (const count of [3, 7, 11]) {
+      const poses = solveConsistPoses(tracks, position, true, count, trainType)
+      const cars = complete(poses.cars)
+      checkFormation(cars, count)
+      let previousRear = leading.x
+      for (const [index, car] of cars.entries()) {
+        const spec = getTrainCarSpec(trainType, index, count)
+        expect(car.frontEnd.x).toBeCloseTo(previousRear - (index ? 4.2 : 0), 6)
+        expect(car.rearEnd.x).toBeCloseTo(car.frontEnd.x - spec.length, 6)
+        previousRear = car.rearEnd.x
+      }
+      expect(poses.rearOffset).toBeCloseTo(leading.x - previousRear, 6)
+      expect(poses.couplings).toHaveLength(count - 1)
+      for (const coupling of poses.couplings) {
+        const halfLink = getCouplingLinkLength(trainType, coupling.frontCarIndex, count) / 2
+        expect(distance(coupling.frontPin, coupling.point)).toBeCloseTo(halfLink, 6)
+        expect(distance(coupling.rearPin, coupling.point)).toBeCloseTo(halfLink, 6)
+      }
+    }
+  })
+
+  it('solves each cab and middle bogie chord analytically on curved rail', () => {
+    const radius = 315
+    const count = 7
+    const tracks = chain(Array(8).fill('c315'))
+    const poses = solveConsistPoses(tracks, reference(tracks[0], 40), true, count, trainType)
+    const cars = complete(poses.cars)
+    checkFormation(cars, count)
+    const first = getTrainCarSpec(trainType, 0, count)
+    let expectedFront = first.length / 2 - first.bogieOffset
+    for (const [index, car] of cars.entries()) {
+      const spec = getTrainCarSpec(trainType, index, count)
+      const bogieArc = 2 * radius * Math.asin(spec.bogieOffset / radius)
+      expect(car.frontOffset).toBeCloseTo(expectedFront, 6)
+      expect(car.rearOffset).toBeCloseTo(expectedFront + bogieArc, 6)
+      expect(Math.hypot(car.center.x, car.center.y - radius)).toBeCloseTo(Math.sqrt(radius ** 2 - spec.bogieOffset ** 2), 6)
+      expectedFront += bogieArc
+      if (index + 1 < count) {
+        expectedFront += 2 * radius * Math.asin(getCouplingLinkLength(trainType, index, count) / (2 * radius))
+      }
+    }
+    const last = getTrainCarSpec(trainType, count - 1, count)
+    expect(poses.rearOffset).toBeCloseTo(expectedFront + last.length / 2 - last.bogieOffset, 6)
+  })
+
+  it('preserves all variable-length poses and couplings on immediate reversal', () => {
+    const tracks = chain(Array(8).fill('c315'))
+    const position = reference(tracks[1], 80)
+    const original = solveConsistPoses(tracks, position, true, 7, trainType)
+    complete(original.cars)
+    expect(solveConsistPoses(tracks, { ...position, direction: -1 }, false, 7, trainType)).toEqual(original)
+  })
+
+  it('keeps long cabs and intermediates rigid and connected across elevated grades', () => {
+    const tracks: Track[] = []
+    let anchor = { position: { x: 0, y: 0, z: 20 }, angle: .3 }
+    for (let index = 0; index < 8; index += 1) {
+      const track = { ...attachTrack('s248', 1, anchor, `shinkansen-ramp-${index}`), elevation: 20 + index * 8, endElevation: 28 + index * 8 }
+      tracks.push(track)
+      const end = endpoints(track)[1]
+      anchor = { ...end, position: { ...end.position, z: end.position.z ?? 0 } }
+    }
+    const cars = complete(solveConsistPoses(tracks, reference(tracks[7], 200), true, 7, trainType).cars)
+    checkFormation(cars, 7)
+    for (const car of cars) {
+      expect(car.pitch).toBeCloseTo(Math.asin(8 / 248), 8)
+      expect(car.frontBogie.z).toBeGreaterThan(car.rearBogie.z)
+      expect(car.direction.z).toBeCloseTo(8 / 248, 8)
+    }
   })
 })

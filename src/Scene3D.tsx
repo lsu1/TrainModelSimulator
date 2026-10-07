@@ -7,7 +7,9 @@ import type { PlacedAccessory } from './layout';
 import type { LayoutIssue } from './clearance';
 import { connectedEndpoint, endpoints, pathsFor } from './track';
 import type { Endpoint, Track, TrainPosition } from './track';
-import { CAR_LENGTH, createE235Car, createE235Connection, updateE235Connection, disposeTrainModel } from './trainModel';
+import { createTrainCar, createTrainConnection, updateE235Connection, disposeTrainModel } from './trainModel';
+import { getTrainCarSpec } from './trains';
+import type { TrainType } from './trains';
 import { solveConsistPoses } from './consistPose';
 import { TurnoutPoints, staticRailRanges } from './turnoutPoints';
 
@@ -17,6 +19,7 @@ interface Scene3DProps {
   trainPosition: TrainPosition;
   cabForward: boolean;
   carCount: number;
+  trainType?: TrainType;
   selectedId: string | null;
   activeAnchor: Endpoint | null;
   mode: 'orbit' | 'move';
@@ -712,7 +715,8 @@ export default function Scene3D(props: Scene3DProps) {
     const plusMaterial = new THREE.MeshStandardMaterial({ color: '#f8faf0', roughness: .9 });
     const plusGeometry = new THREE.BoxGeometry(7.6, .6, 1.7);
     let carCountBuilt = 0;
-    let poseCache: { tracks: Track[]; position: TrainPosition; cabForward: boolean; count: number; poses: ReturnType<typeof solveConsistPoses> } | null = null;
+    let trainTypeBuilt: TrainType | null = null;
+    let poseCache: { tracks: Track[]; position: TrainPosition; cabForward: boolean; count: number; trainType: TrainType; poses: ReturnType<typeof solveConsistPoses> } | null = null;
     const inverse = new THREE.Quaternion();
     const localPoint = new THREE.Vector3();
     const firstPin = new THREE.Vector3(), secondPin = new THREE.Vector3();
@@ -727,14 +731,22 @@ export default function Scene3D(props: Scene3DProps) {
     const publishConsist = () => {
       renderer.domElement.dataset.carPoses = JSON.stringify(trains.children.map((car, index) => {
         if (!car.visible) return { index, visible: false };
+        const spec = getTrainCarSpec(latest.current.trainType ?? 'e235', index, latest.current.carCount);
+        const cab = index === 0 || index === latest.current.carCount - 1;
+        const gangwayHeight = spec.type === 'e235' ? 14.7 : (spec.height + 4.8) / 2;
         return {
           index, visible: true, center: layoutPoint(car.position),
+          trainType: car.userData.trainType ?? 'e235', model: car.userData.model,
+          length: car.userData.length, bogieOffset: car.userData.bogieOffset ?? car.userData.bogieDistance,
+          scale: car.userData.scale, cab: car.userData.cab ?? cab,
+          noseDirection: car.userData.noseDirection ?? (cab ? index === 0 ? 1 : -1 : 0),
+          noseLength: car.userData.noseLength ?? 0,
           frontBogie: layoutPoint(carPoint(car, 'bogie-front')!),
           rearBogie: layoutPoint(carPoint(car, 'bogie-rear')!),
           frontEnd: layoutPoint(carPoint(car, 'coupling-front')!),
           rearEnd: layoutPoint(carPoint(car, 'coupling-rear')!),
-          frontGangway: layoutPoint(carPoint(car, 'gangway-front', new THREE.Vector3(CAR_LENGTH / 2, 14.7, 0))!),
-          rearGangway: layoutPoint(carPoint(car, 'gangway-rear', new THREE.Vector3(-CAR_LENGTH / 2, 14.7, 0))!),
+          frontGangway: layoutPoint(carPoint(car, 'gangway-front', new THREE.Vector3(spec.length / 2, gangwayHeight, 0))!),
+          rearGangway: layoutPoint(carPoint(car, 'gangway-rear', new THREE.Vector3(-spec.length / 2, gangwayHeight, 0))!),
           quaternion: car.quaternion.toArray(),
         };
       }));
@@ -1022,20 +1034,22 @@ export default function Scene3D(props: Scene3DProps) {
       }
       const cameraPresetChanged = current.cameraPreset !== previousCameraPreset;
       previousCameraPreset = current.cameraPreset;
-      if (carCountBuilt !== current.carCount) {
+      const trainType = current.trainType ?? 'e235';
+      if (carCountBuilt !== current.carCount || trainTypeBuilt !== trainType) {
         for (const car of [...trains.children]) disposeTrainModel(car);
         for (const connection of [...connections.children]) disposeTrainModel(connection);
-        trains.clear(); carCountBuilt = current.carCount;
+        trains.clear(); carCountBuilt = current.carCount; trainTypeBuilt = trainType;
         connections.clear();
         for (let i = 0; i < current.carCount; i++) {
-          trains.add(createE235Car(i, current.carCount));
-          if (i > 0) connections.add(createE235Connection());
+          trains.add(createTrainCar(i, current.carCount, trainType));
+          if (i > 0) connections.add(createTrainConnection(trainType));
         }
         renderer.domElement.dataset.carCount = String(current.carCount);
+        renderer.domElement.dataset.trainType = trainType;
       }
-      if (!poseCache || poseCache.tracks !== current.tracks || poseCache.position !== current.trainPosition || poseCache.cabForward !== current.cabForward || poseCache.count !== current.carCount) {
-        const poses = solveConsistPoses(current.tracks, current.trainPosition, current.cabForward, current.carCount);
-        poseCache = { tracks: current.tracks, position: current.trainPosition, cabForward: current.cabForward, count: current.carCount, poses };
+      if (!poseCache || poseCache.tracks !== current.tracks || poseCache.position !== current.trainPosition || poseCache.cabForward !== current.cabForward || poseCache.count !== current.carCount || poseCache.trainType !== trainType) {
+        const poses = solveConsistPoses(current.tracks, current.trainPosition, current.cabForward, current.carCount, trainType);
+        poseCache = { tracks: current.tracks, position: current.trainPosition, cabForward: current.cabForward, count: current.carCount, trainType, poses };
         for (let i = 0; i < trains.children.length; i++) {
           const pose = poses.cars[i], car = trains.children[i];
           car.visible = pose !== null;

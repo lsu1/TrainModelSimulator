@@ -1,13 +1,13 @@
 import { sampleBehind } from './track'
 import type { Track, TrackPoint, TrainPosition } from './track'
-import { CAR_LENGTH, CAR_SPACING } from './trainModel'
+import { CAR_SPACING } from './trainModel'
+import { getCouplingLinkLength, getTrainCarSpec } from './trains'
+import type { TrainType } from './trains'
 
 /** Model millimetres. Coupling pivots follow the bogies, as on an N-scale mechanism. */
 export const BOGIE_OFFSET = 43.7
 export const COUPLING_HEIGHT = 3.45
 export const COUPLING_LINK_LENGTH = CAR_SPACING - 2 * BOGIE_OFFSET
-const BOGIE_SPAN = 2 * BOGIE_OFFSET
-const BODY_OVERHANG = CAR_LENGTH / 2 - BOGIE_OFFSET
 const DISTANCE_TOLERANCE = 1e-7
 
 /** Layout coordinates: x/y are the table plane, z is height. */
@@ -57,7 +57,7 @@ function translated(origin: PoseVector, direction: PoseVector, along: number): P
 /**
  * Find the first rail point behind an existing pivot at a fixed chord distance.
  * Bracket locally before solving, so turns never use the far side of a circuit.
- * The supported minimum radius is 117 mm, larger than either chord here.
+ * Bracketing follows the nearest chord solution even through track joins.
  */
 function chordBehind(
   sample: (offset: number) => TrackPoint | null,
@@ -129,10 +129,12 @@ export function solveConsistPoses(
   position: TrainPosition,
   cabForward: boolean,
   carCount: number,
+  trainType: TrainType = 'e235',
 ): ConsistPoses {
   const count = Number.isFinite(carCount) ? Math.max(0, Math.floor(carCount)) : 0
   const cars: (CarPose | null)[] = Array(count).fill(null)
   const couplings: CouplingPose[] = []
+  if (!count) return { cars, couplings, rearOffset: 0 }
   const physicalPosition: TrainPosition = {
     ...position,
     direction: cabForward ? position.direction : position.direction === 1 ? -1 : 1,
@@ -142,11 +144,13 @@ export function solveConsistPoses(
     if (!samples.has(offset)) samples.set(offset, sampleBehind(tracks, physicalPosition, offset))
     return samples.get(offset) ?? null
   }
-  let frontOffset = BODY_OVERHANG
+  const leadingSpec = getTrainCarSpec(trainType, 0, count)
+  let frontOffset = leadingSpec.length / 2 - leadingSpec.bogieOffset
   let frontBogie = sample(frontOffset)
   let rearOffset = 0
   for (let index = 0; index < count && frontBogie; index += 1) {
-    const rear = chordBehind(sample, frontOffset, frontBogie, BOGIE_SPAN)
+    const spec = getTrainCarSpec(trainType, index, count)
+    const rear = chordBehind(sample, frontOffset, frontBogie, 2 * spec.bogieOffset)
     // Never extrapolate a wheel pose past an open end or an inactive turnout.
     if (!rear) break
     const rearBogie = rear.point
@@ -172,8 +176,8 @@ export function solveConsistPoses(
       pitch: Math.atan2(direction.z, horizontal),
       frontOffset,
       rearOffset: rear.offset,
-      frontEnd: translated(center, direction, CAR_LENGTH / 2),
-      rearEnd: translated(center, direction, -CAR_LENGTH / 2),
+      frontEnd: translated(center, direction, spec.length / 2),
+      rearEnd: translated(center, direction, -spec.length / 2),
       // A bogie-mounted pivot can articulate vertically relative to the shell
       // on grade transitions. A common rail-height offset keeps both fixed
       // shanks connected without pitching or stretching them independently.
@@ -181,7 +185,7 @@ export function solveConsistPoses(
       rearCoupling: { x: rearBogie.x, y: rearBogie.y, z: rearBogie.z + COUPLING_HEIGHT },
     }
     cars[index] = car
-    rearOffset = rear.offset + BODY_OVERHANG
+    rearOffset = rear.offset + spec.length / 2 - spec.bogieOffset
     const preceding = cars[index - 1]
     if (preceding) {
       const frontPin = preceding.rearCoupling
@@ -195,7 +199,7 @@ export function solveConsistPoses(
       })
     }
     if (index + 1 === count) break
-    const next = chordBehind(sample, rear.offset, rearBogie, COUPLING_LINK_LENGTH)
+    const next = chordBehind(sample, rear.offset, rearBogie, getCouplingLinkLength(trainType, index, count))
     if (!next) break
     frontOffset = next.offset
     frontBogie = next.point

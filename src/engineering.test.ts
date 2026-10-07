@@ -156,6 +156,21 @@ describe('engineering evidence and support audit', () => {
     expect(issueCodes(issues)).toContain('e235-limits-unconfirmed')
   })
 
+  it.each([
+    ['e5', 'c282', 'c315'],
+    ['e6', 'c249', 'c282'],
+    ['e7', 'c282', 'c315'],
+  ] as const)('checks the sourced %s curve limit without inheriting E235 warnings', (trainType, tooTight, supported) => {
+    const audit = (kind: string) => auditEngineering({ trainType, tracks: [{ ...straight, kind }], accessories: [] })
+    const tight = audit(tooTight)
+    expect(tight.find(issue => issue.code === 'curve-below-minimum')?.severity).toBe('error')
+    expect(tight.find(issue => issue.code === 'curve-below-minimum')?.message).toContain(trainType.toUpperCase())
+    expect(issueCodes(audit(supported))).not.toContain('curve-below-minimum')
+    expect(issueCodes(audit(supported))).not.toContain('curve-below-recommendation')
+    expect(issueCodes(audit(supported))).not.toContain('e235-limits-unconfirmed')
+    expect(issueCodes(audit(supported))).toContain('train-grade-unconfirmed')
+  })
+
   it('checks the inner double-curve radius and grade against the stated planning target', () => {
     const tracks = [{ ...straight, kind: 'dc315' }, { ...straight, id: 'steep', y: 100, endElevation: 20 }]
     const issues = auditEngineering({ tracks, accessories: [] })

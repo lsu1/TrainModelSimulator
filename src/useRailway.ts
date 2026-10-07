@@ -13,7 +13,8 @@ import {
 import type { Endpoint, Track, TrainPosition } from "./track";
 import { STORAGE_KEY, createLayout, loadLayout, parseLayout } from "./layout";
 import type { LayoutData, LayoutPreset, PlacedAccessory } from "./layout";
-import { CAR_LENGTH, TRAIN_SCALE } from "./trainModel";
+import { getTrainCarSpec, getTrainSpec } from "./trains";
+import type { TrainType } from "./trains";
 import { advanceConsist, occupiedTrackIds } from "./trainMotion";
 import { auditClearances, checkPlacement } from "./clearance";
 import { auditEngineering, planRamp, trackGradePercent } from "./engineering";
@@ -32,7 +33,7 @@ export const CATALOG = new Map(
 type Anchor = Endpoint & { trackId: string; end: number };
 export type Modal = "layouts" | "save" | "help" | "references" | "checks" | null;
 type HistoryEntry = { layout: LayoutData; savedDesignId: string | null };
-const initialTrain = (tracks: Track[]): TrainPosition => {
+const initialTrain = (tracks: Track[], trainType?: TrainType, carCount = 11): TrainPosition => {
   const first = tracks[0];
   const shape = first && CATALOG.get(first.kind)?.shape;
   const route =
@@ -46,7 +47,7 @@ const initialTrain = (tracks: Track[]): TrainPosition => {
       : 0);
   return {
     trackId: first?.id ?? "",
-    distance: first ? Math.min(CAR_LENGTH, trackLength(first, route)) : 0,
+    distance: first ? Math.min(getTrainCarSpec(trainType, 0, carCount).length, trackLength(first, route)) : 0,
     direction: 1,
     route,
     laps: 0,
@@ -56,6 +57,8 @@ const initialTrain = (tracks: Track[]): TrainPosition => {
 export function useRailway() {
   const [layout, setLayout] = useState<LayoutData>(loadLayout);
   const { tracks, accessories } = layout;
+  const trainType = layout.trainType ?? "e235";
+  const trainSpec = getTrainSpec(trainType);
   const [designLibrary, setDesignLibrary] = useState(readSavedDesigns);
   const [activeSavedDesignId, setActiveSavedDesignId] = useState<string | null>(() =>
     readWorkingDesignId(designLibrary.library),
@@ -79,7 +82,7 @@ export function useRailway() {
   const [running, setRunning] = useState(false);
   const [speed, setSpeed] = useState(65);
   const [position, setPosition] = useState<TrainPosition>(() =>
-    initialTrain(layout.tracks),
+    initialTrain(layout.tracks, layout.trainType, layout.carCount),
   );
   const positionRef = useRef(position);
   const lapProgressRef = useRef(0);
@@ -243,8 +246,8 @@ export function useRailway() {
       );
     return result.allowed;
   };
-  const resetTrain = (nextTracks: Track[]) => {
-    const next = initialTrain(nextTracks);
+  const resetTrain = (nextTracks: Track[], nextTrainType?: TrainType, carCount = layout.carCount) => {
+    const next = initialTrain(nextTracks, nextTrainType, carCount);
     positionRef.current = next;
     setPosition(next);
     setRunning(false);
@@ -254,7 +257,7 @@ export function useRailway() {
   const changeLayout = (next: LayoutData, preserveSelection = false) => {
     setHistory((previous) => [...previous.slice(-49), { layout, savedDesignId: activeSavedDesignId }]);
     setLayout(next);
-    resetTrain(next.tracks);
+    resetTrain(next.tracks, next.trainType, next.carCount);
     if (!preserveSelection) setSelectedId(null);
     setAnchor(null);
   };
@@ -265,7 +268,7 @@ export function useRailway() {
     setLayout(previous.layout);
     setActiveSavedDesignId(savedDesigns.some((design) => design.id === previous.savedDesignId)
       ? previous.savedDesignId : null);
-    resetTrain(previous.layout.tracks);
+    resetTrain(previous.layout.tracks, previous.layout.trainType, previous.layout.carCount);
     setSelectedId(null);
     setAnchor(null);
     setLayoutRevision((value) => value + 1);
@@ -429,6 +432,7 @@ export function useRailway() {
         positionRef.current,
         cabForward,
         layout.carCount,
+        trainType,
       ).has(id)
     ) {
       notify(
@@ -635,7 +639,7 @@ export function useRailway() {
     setPosition(next);
     setCabForward((v) => !v);
     lapProgressRef.current = 0;
-    notify("Your Yamanote train is travelling the other way.");
+    notify(`Your ${trainSpec.name} is travelling the other way.`);
   };
   const horn = async () => {
     try {
@@ -671,7 +675,7 @@ export function useRailway() {
       last = time;
       if (accumulated >= 32) {
         const distance =
-          ((((accumulated / 1000) * speed) / 3.6) * 1000) / TRAIN_SCALE;
+          ((((accumulated / 1000) * speed) / 3.6) * 1000) / trainSpec.scale;
         const previous = positionRef.current;
         const result = advanceConsist(
           tracks,
@@ -679,6 +683,7 @@ export function useRailway() {
           distance,
           cabForward,
           layout.carCount,
+          trainType,
         );
         accumulated = 0;
         let laps = 0;
@@ -703,7 +708,7 @@ export function useRailway() {
     };
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
-  }, [running, speed, tracks, cabForward, layout.carCount]);
+  }, [running, speed, tracks, cabForward, layout.carCount, trainType]);
   const actionsRef = useRef({ toggleRunning, reverse, undo, removeSelected });
   actionsRef.current = { toggleRunning, reverse, undo, removeSelected };
   useEffect(() => {
@@ -797,6 +802,13 @@ export function useRailway() {
         ? "Drag a piece from your track box to start a new world."
         : "Your 3D railway is ready. All aboard!",
     );
+  };
+  const chooseTrain = (type: TrainType) => {
+    if (type === trainType) return;
+    // The next formation starts at the same railway's beginning so longer
+    // Shinkansen cars cannot inherit the E235's shorter placement reference.
+    changeLayout({ ...layout, trainType: type }, true);
+    notify(`${getTrainSpec(type).name} is ready. Press Play for a new journey!`);
   };
   const saveDesign = (name: string, asCopy = false): boolean => {
     try {
@@ -897,6 +909,8 @@ export function useRailway() {
   const grade = selectedTrack ? trackGradePercent(selectedTrack) : 0;
   return {
     layout,
+    trainType,
+    trainSpec,
     tracks,
     accessories,
     history,
@@ -970,6 +984,7 @@ export function useRailway() {
     reverse,
     horn,
     chooseLayout,
+    chooseTrain,
     saveDesign,
     openSavedDesign,
     deleteSavedDesign,

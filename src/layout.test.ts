@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { KATO_CATALOG } from './catalog'
 import { LEGACY_STORAGE_KEY, STORAGE_KEY, createLayout, loadLayout, parseLayout, type LayoutData, type PlacedAccessory } from './layout'
 import { endpoints, makeStarterLayout, openEndpoints } from './track'
+import { TRAIN_TYPES } from './trains'
 
 const layout = (): LayoutData => createLayout('compact')
 const accessory = (): PlacedAccessory => ({
@@ -42,6 +43,20 @@ describe('layout file validation', () => {
     for (const sourcePlan of ['other-plan', null, 12]) {
       expect(() => parseLayout({ ...original, sourcePlan })).toThrow(/source plan/)
     }
+  })
+
+  it.each(TRAIN_TYPES)('retains the selected %s train through a layout file round trip', (trainType) => {
+    const original = { ...createLayout('viaduct'), carCount: 5, trainType }
+    expect(parseLayout(JSON.parse(JSON.stringify(original)))).toEqual(original)
+  })
+
+  it('keeps train type absent on older layouts so they continue to default to E235', () => {
+    expect(parseLayout(layout())).not.toHaveProperty('trainType')
+    expect(parseLayout(legacy())).not.toHaveProperty('trainType')
+  })
+
+  it.each(['e8', 'E5', '', null, 5, {}, ['e5']])('rejects an unrecognized train type: %j', (trainType) => {
+    expect(() => parseLayout({ ...layout(), trainType })).toThrow('unrecognized train')
   })
 
   it('migrates the original 2D format without losing the railway', () => {
@@ -234,6 +249,12 @@ describe('documented viaduct supports', () => {
 })
 
 describe('saved layout recovery', () => {
+  it('restores the selected Shinkansen from the working autosave', () => {
+    const original = { ...createLayout('compact'), trainType: 'e6' as const, carCount: 7 }
+    vi.stubGlobal('localStorage', { getItem: (key: string) => key === STORAGE_KEY ? JSON.stringify(original) : null })
+    expect(loadLayout()).toEqual(original)
+  })
+
   it('loads the current save before considering the original save', () => {
     const valid = layout()
     const getItem = vi.fn((key: string) => key === STORAGE_KEY ? JSON.stringify(valid) : JSON.stringify(legacy()))

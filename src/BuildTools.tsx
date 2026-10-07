@@ -217,7 +217,7 @@ export function ShoppingReview({ h }: { h: Railway }) {
       </div>
       <p className="modal-intro">
         The checks measure connector gaps, angles, both lanes, heights,
-        gradients, and the E235 clearance envelope. Connections must meet within
+        gradients, and the selected train’s clearance envelope. Connections must meet within
         0.25 mm and 0.25°. The simulator uses fixed catalog lengths; it never
         stretches a piece to close a loop.
       </p>
@@ -226,7 +226,7 @@ export function ShoppingReview({ h }: { h: Railway }) {
         <p>
           Some turnouts, banking transitions, and accessory shapes are
           approximate. The 3% ramp setting is a planning target, not a published
-          E235 climbing limit. This report cannot certify a complete physical
+          train climbing limit. This report cannot certify a complete physical
           layout. Resolve the listed uncertainties with actual templates and
           your shop before purchasing.
         </p>

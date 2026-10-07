@@ -4,6 +4,8 @@ import { CAR_LENGTH, CAR_SPACING } from './trainModel'
 import { BOGIE_OFFSET, COUPLING_LINK_LENGTH, solveConsistPoses } from './consistPose'
 import { advanceTrain, attachTrack, endpoints, makeStarterLayout, pointAt, sampleBehind, trackLength } from './track'
 import type { Track, TrainPosition } from './track'
+import { getCouplingLinkLength, getTrainCarSpec } from './trains'
+import type { TrainType } from './trains'
 
 const line: Track = { id: 'line', kind: 's248', x: 0, y: 0, angle: 0, bend: 1 }
 const reverseAt = (distance: number): TrainPosition => ({ trackId: line.id, distance, direction: -1, route: 0, laps: 0 })
@@ -215,5 +217,108 @@ describe('track occupancy of the visible formation', () => {
     const poses = solveConsistPoses(tracks, position, true, 3)
     expect(poses.rearOffset).toBeGreaterThan(nominalSpan + 1)
     expect(occupiedTrackIds(tracks, position, true, 3)).toEqual(new Set([turnout.id, ...curves.map(curve => curve.id)]))
+  })
+})
+
+describe.each<TrainType>(['e5', 'e6', 'e7'])('%s Shinkansen reverse bounds and occupancy', trainType => {
+  const count = 3
+  const length = (index: number) => getTrainCarSpec(trainType, index, count).length
+  const overhang = (index: number) => {
+    const spec = getTrainCarSpec(trainType, index, count)
+    return spec.length / 2 - spec.bogieOffset
+  }
+  const completeSpan = () => length(0) + length(1) + length(2) + 2 * 4.2
+
+  it('stops the complete longer trailing cab at an open endpoint', () => {
+    const tracks = openLine(4)
+    const initial: TrainPosition = { trackId: tracks[3].id, distance: 180, direction: -1, route: 0, laps: 0 }
+    const result = advanceConsist(tracks, initial, 2_000, false, count, trainType)
+    expect(result.stopped).toBe(true)
+    const poses = solveConsistPoses(tracks, result.position, false, count, trainType)
+    expect(poses.cars.every(Boolean)).toBe(true)
+    expect(poses.rearOffset).toBeCloseTo(completeSpan(), 6)
+    expect(poses.cars[2]!.rearEnd.x).toBeCloseTo(0, 6)
+    const reference = pointAt(tracks.find(track => track.id === result.position.trackId)!, result.position.distance)
+    expect(reference.x).toBeCloseTo(completeSpan(), 6)
+    expect(advanceConsist(tracks, result.position, 10, false, count, trainType).position.distance).toBeCloseTo(result.position.distance, 6)
+  })
+
+  it.each([false, true])('uses the shorter last visible middle car when it overhangs: %s', overhanging => {
+    const tracks = openLine(3)
+    const visibleSpan = length(0) + length(1) + 4.2
+    const initialX = visibleSpan + (overhanging ? -overhang(1) / 2 : 1)
+    const initial: TrainPosition = { trackId: tracks[1].id, distance: initialX - 248, direction: -1, route: 0, laps: 0 }
+    const before = solveConsistPoses(tracks, initial, false, count, trainType)
+    expect(before.cars.filter(Boolean)).toHaveLength(2)
+    const result = advanceConsist(tracks, initial, 500, false, count, trainType)
+    expect(result.stopped).toBe(true)
+    const poses = solveConsistPoses(tracks, result.position, false, count, trainType)
+    expect(poses.cars.filter(Boolean)).toHaveLength(2)
+    const reference = pointAt(tracks.find(track => track.id === result.position.trackId)!, result.position.distance)
+    expect(reference.x).toBeCloseTo(visibleSpan - (overhanging ? overhang(1) : 0), 6)
+    if (overhanging) {
+      expect(poses.cars[1]!.rearBogie.x).toBeCloseTo(0, 6)
+      expect(poses.cars[1]!.rearEnd.x).toBeLessThan(0)
+    } else expect(poses.cars[1]!.rearEnd.x).toBeCloseTo(0, 6)
+  })
+
+  it('recomputes variable cab and middle chords when backing toward an open curve', () => {
+    const radius = 315
+    const tracks: Track[] = []
+    let anchor = { position: { x: 0, y: 0, z: 0 }, angle: 0 }
+    for (const kind of [...Array(4).fill('c315'), ...Array(4).fill('s248')]) {
+      const track = attachTrack(kind, 1, anchor, `shinkansen-reverse-curve-${tracks.length}`)
+      tracks.push(track)
+      const end = endpoints(track)[1]
+      anchor = { ...end, position: { ...end.position, z: end.position.z ?? 0 } }
+    }
+    const initial: TrainPosition = { trackId: tracks[7].id, distance: 200, direction: -1, laps: 0 }
+    const result = advanceConsist(tracks, initial, 3_000, false, count, trainType)
+    expect(result.stopped).toBe(true)
+    const poses = solveConsistPoses(tracks, result.position, false, count, trainType)
+    expect(poses.cars.every(Boolean)).toBe(true)
+    let curvedSpan = overhang(0) + overhang(2)
+    for (let index = 0; index < count; index += 1) {
+      curvedSpan += 2 * radius * Math.asin(getTrainCarSpec(trainType, index, count).bogieOffset / radius)
+      if (index + 1 < count) curvedSpan += 2 * radius * Math.asin(getCouplingLinkLength(trainType, index, count) / (2 * radius))
+    }
+    expect(poses.rearOffset).toBeCloseTo(curvedSpan, 6)
+    expect(poses.rearOffset).toBeGreaterThan(completeSpan())
+    const tail = sampleBehind(tracks, physical(result.position), poses.rearOffset)!
+    expect(tail.x).toBeCloseTo(0, 6)
+    expect(tail.y).toBeCloseTo(0, 6)
+  })
+
+  it('covers all pieces beneath the true longer formation and keeps occupancy on reversal', () => {
+    const tracks = openLine(12)
+    const cars = 6
+    const position: TrainPosition = { trackId: tracks[10].id, distance: 200, direction: 1, laps: 0 }
+    let span = (cars - 1) * 4.2
+    for (let index = 0; index < cars; index += 1) span += getTrainCarSpec(trainType, index, cars).length
+    const firstOccupied = Math.floor((10 * 248 + 200 - span) / 248)
+    const occupied = occupiedTrackIds(tracks, position, true, cars, trainType)
+    expect(occupied).toEqual(new Set(tracks.slice(firstOccupied, 11).map(track => track.id)))
+    expect(occupiedTrackIds(tracks, { ...position, direction: -1 }, false, cars, trainType)).toEqual(occupied)
+  })
+
+  it('preserves elevated reverse stopping and locks every occupied grade piece', () => {
+    const tracks: Track[] = []
+    let anchor = { position: { x: 0, y: 0, z: 20 }, angle: 0 }
+    for (let index = 0; index < 4; index += 1) {
+      const track = { ...attachTrack('s248', 1, anchor, `shinkansen-occupied-ramp-${index}`), elevation: 20 + index * 8, endElevation: 28 + index * 8 }
+      tracks.push(track)
+      const end = endpoints(track)[1]
+      anchor = { ...end, position: { ...end.position, z: end.position.z ?? 0 } }
+    }
+    const initial: TrainPosition = { trackId: tracks[3].id, distance: 200, direction: -1, laps: 0 }
+    const result = advanceConsist(tracks, initial, 2_000, false, count, trainType)
+    expect(result.stopped).toBe(true)
+    const poses = solveConsistPoses(tracks, result.position, false, count, trainType)
+    expect(poses.cars.every(Boolean)).toBe(true)
+    expect(poses.rearOffset).toBeCloseTo(completeSpan(), 6)
+    expect(sampleBehind(tracks, physical(result.position), poses.rearOffset)!.z).toBeCloseTo(20, 6)
+    expect(poses.cars[2]!.rearEnd.z).toBeCloseTo(20, 6)
+    const finalIndex = tracks.findIndex(track => track.id === result.position.trackId)
+    expect(occupiedTrackIds(tracks, result.position, false, count, trainType)).toEqual(new Set(tracks.slice(0, finalIndex + 1).map(track => track.id)))
   })
 })

@@ -2,6 +2,8 @@ import { KATO_CATALOG } from './catalog';
 import { endpoints, makeCityLayout, makeStarterLayout, makeViaductLayout } from './track';
 import type { Track } from './track';
 import { makeKatoPlan02 } from './katoPlan';
+import { TRAIN_TYPES } from './trains';
+import type { TrainType } from './trains';
 
 export interface PlacedAccessory {
   id: string;
@@ -18,6 +20,8 @@ export interface LayoutData {
   tracks: Track[];
   accessories: PlacedAccessory[];
   carCount: number;
+  /** Older layouts omit this field and continue to use the E235 Yamanote train. */
+  trainType?: TrainType;
   /** Source drawing retained when a preset is saved, edited, or exported. */
   sourcePlan?: 'kato-plan02-1a';
 }
@@ -55,6 +59,11 @@ export function parseLayout(value: unknown): LayoutData {
   }
   if (candidate.sourcePlan !== undefined && candidate.sourcePlan !== 'kato-plan02-1a') {
     throw new Error('This layout has an unrecognized source plan.');
+  }
+  if (candidate.trainType !== undefined
+    && (typeof candidate.trainType !== 'string'
+      || !(TRAIN_TYPES as readonly string[]).includes(candidate.trainType))) {
+    throw new Error('This layout has an unrecognized train. Choose E235, E5, E6, or E7.');
   }
   if (candidate.tracks.length + accessoriesData.length > MAX_PIECES) {
     throw new Error(`This railway has more than ${MAX_PIECES} pieces.`);
@@ -148,6 +157,7 @@ export function parseLayout(value: unknown): LayoutData {
     tracks,
     accessories,
     carCount,
+    ...(candidate.trainType === undefined ? {} : { trainType: candidate.trainType as TrainType }),
     ...(candidate.sourcePlan === 'kato-plan02-1a' ? { sourcePlan: candidate.sourcePlan } : {}),
   };
 }
