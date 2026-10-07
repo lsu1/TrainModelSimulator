@@ -1,6 +1,8 @@
 import { expect, test } from '@playwright/test';
 import type { Locator, Page } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
+import { attachTrack, endpoints, pathsFor } from '../src/track';
+import type { Track } from '../src/track';
 
 // Software WebGL may compile several detailed catalog models per workflow.
 test.setTimeout(60_000);
@@ -453,6 +455,179 @@ function fixtureAccessory(id: string, kind: string, x: number, y: number) {
 
 function fixtureLayout(name: string, tracks: Record<string, unknown>[], accessories: Record<string, unknown>[] = []) {
   return { version: 2, name, tracks, accessories, carCount: 3 };
+}
+
+function curvedConsistFixture(carCount: 3 | 11, turnout: boolean) {
+  const tracks: Track[] = [];
+  let anchor = { position: { x: -992, y: 0 }, angle: 0 };
+  const append = (kind: string, bend: 1 | -1 = 1, branch = false) => {
+    const track = attachTrack(kind, bend, anchor, `curve-check-${tracks.length}`);
+    if (branch) track.switchState = 'branch';
+    tracks.push(track);
+    anchor = endpoints(track)[branch ? 2 : 1];
+  };
+  for (let index = 0; index < 4; index += 1) append('s248');
+  const approach = tracks.at(-1)!;
+  if (turnout) {
+    append('t4l', -1, true);
+    for (let index = 0; index < 4; index += 1) append('c249', -1);
+    append('s248');
+    append('s248');
+  } else {
+    for (let index = 0; index < 4; index += 1) append('c216');
+    for (let index = 0; index < 4; index += 1) append('s248');
+    for (let index = 0; index < 4; index += 1) append('c216');
+  }
+  // Start beside the transition with the rest of the formation already on
+  // connected rails. Save order does not determine physical connectivity.
+  const ordered = [approach, ...tracks.filter(track => track !== approach)];
+  return {
+    ...fixtureLayout(turnout ? 'Curve after a turnout' : 'Long train on tight curves', ordered.map(track => ({ ...track }))),
+    carCount,
+  };
+}
+
+type RenderedPoint = { x: number; y: number; z: number };
+type RenderedCar = {
+  index: number;
+  visible: boolean;
+  center: RenderedPoint;
+  frontBogie: RenderedPoint;
+  rearBogie: RenderedPoint;
+  frontEnd: RenderedPoint;
+  rearEnd: RenderedPoint;
+  frontGangway: RenderedPoint;
+  rearGangway: RenderedPoint;
+  quaternion: [number, number, number, number];
+};
+type RenderedCoupler = {
+  index: number;
+  visible: boolean;
+  front: RenderedPoint;
+  rear: RenderedPoint;
+  frontGangway: RenderedPoint;
+  rearGangway: RenderedPoint;
+};
+
+const pointGap = (a: RenderedPoint, b: RenderedPoint) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+
+async function renderedConsist(page: Page) {
+  return scene(page).evaluate(element => {
+    const data = (element as HTMLCanvasElement).dataset;
+    return {
+      cars: JSON.parse(data.carPoses ?? '[]') as RenderedCar[],
+      couplers: JSON.parse(data.couplers ?? '[]') as RenderedCoupler[],
+    };
+  });
+}
+
+function selectedRailSamples(layout: ReturnType<typeof curvedConsistFixture>) {
+  return (layout.tracks as unknown as Track[]).flatMap(track => pathsFor(track)
+    .filter(path => !track.kind.startsWith('t') || path.route === (track.switchState === 'branch' ? 1 : 0))
+    .flatMap(path => {
+      const steps = Math.ceil(path.length);
+      return Array.from({ length: steps + 1 }, (_, index) => {
+        const point = path.pointAt(path.length * index / steps);
+        return { ...point, z: point.z + 7.35 };
+      });
+    }));
+}
+
+function expectConnectedConsist(
+  rendered: Awaited<ReturnType<typeof renderedConsist>>,
+  count: number,
+  rails: ReturnType<typeof selectedRailSamples>,
+) {
+  expect(rendered.cars).toHaveLength(count);
+  expect(rendered.couplers).toHaveLength(count - 1);
+  for (const car of rendered.cars) {
+    expect(car.visible, `Car ${car.index} remains on the railway`).toBe(true);
+    expect(pointGap(car.frontBogie, car.rearBogie), 'Rigid bogie wheelbase').toBeCloseTo(87.4, 1);
+    expect(pointGap(car.frontEnd, car.rearEnd), 'Rigid car body length').toBeCloseTo(133.3, 1);
+    expect(pointGap({
+      x: (car.frontEnd.x - car.rearEnd.x) * 87.4 / 133.3,
+      y: (car.frontEnd.y - car.rearEnd.y) * 87.4 / 133.3,
+      z: (car.frontEnd.z - car.rearEnd.z) * 87.4 / 133.3,
+    }, {
+      x: car.frontBogie.x - car.rearBogie.x,
+      y: car.frontBogie.y - car.rearBogie.y,
+      z: car.frontBogie.z - car.rearBogie.z,
+    }), 'Body points along the chord between its bogies').toBeLessThan(.05);
+    for (const bogie of [car.frontBogie, car.rearBogie]) {
+      // Samples are at most 1 mm apart, so a correctly rendered bogie lies
+      // within 0.5 mm of one, including at joins and the selected branch.
+      expect(Math.min(...rails.map(point => pointGap(point, bogie))), 'Bogie follows the selected rails').toBeLessThan(.55);
+    }
+    const midpoint = {
+      x: (car.frontBogie.x + car.rearBogie.x) / 2,
+      y: (car.frontBogie.y + car.rearBogie.y) / 2,
+      z: (car.frontBogie.z + car.rearBogie.z) / 2,
+    };
+    expect(pointGap(car.center, midpoint), 'Body sits between its bogies').toBeLessThan(.05);
+  }
+  for (const coupling of rendered.couplers) {
+    expect(coupling.visible).toBe(true);
+    const leading = rendered.cars[coupling.index], following = rendered.cars[coupling.index + 1];
+    expect(pointGap(coupling.front, { ...leading.rearBogie, z: leading.rearBogie.z + 3.45 }), 'Drawbar meets the leading bogie pin').toBeLessThan(.05);
+    expect(pointGap(coupling.rear, { ...following.frontBogie, z: following.frontBogie.z + 3.45 }), 'Drawbar meets the following bogie pin').toBeLessThan(.05);
+    expect(pointGap(coupling.front, coupling.rear), 'Drawbar length remains fixed').toBeCloseTo(50.1, 1);
+    expect(pointGap(coupling.frontGangway, leading.rearGangway), 'Bellows meets the leading body').toBeLessThan(.05);
+    expect(pointGap(coupling.rearGangway, following.frontGangway), 'Bellows meets the following body').toBeLessThan(.05);
+    expect(pointGap(leading.rearEnd, following.frontEnd), 'Cars retain a short connected gap').toBeLessThan(12);
+  }
+}
+
+for (const [count, turnout] of [[3, true], [11, false]] as const) {
+  test(`${count} rendered cars stay connected through ${turnout ? 'a turnout and curve' : 'tight curves'} and reverse smoothly`, async ({ page }, testInfo) => {
+    const layout = curvedConsistFixture(count, turnout);
+    const rails = selectedRailSamples(layout);
+    await freezeAnimationClock(page);
+    await seedLayout(page, layout);
+    await expect(scene(page)).toHaveAttribute('data-car-count', String(count));
+    expectConnectedConsist(await renderedConsist(page), count, rails);
+    await page.getByRole('slider', { name: 'Train speed' }).focus();
+    await page.keyboard.press('End');
+    await page.getByRole('button', { name: 'Run train', exact: true }).click();
+    let previous = (await renderedConsist(page)).cars;
+    for (let step = 0; step < 8; step += 1) {
+      await advanceAnimation(page, 250);
+      const rendered = await renderedConsist(page);
+      expectConnectedConsist(rendered, count, rails);
+      for (const car of rendered.cars) {
+        expect(pointGap(car.center, previous[car.index].center), 'Car advances without jumping').toBeLessThan(75);
+        const dot = Math.abs(car.quaternion.reduce((sum, value, index) => sum + value * previous[car.index].quaternion[index], 0));
+        expect(dot, 'Car heading changes smoothly through the join').toBeGreaterThan(Math.cos(Math.PI / 6));
+      }
+      previous = rendered.cars;
+    }
+    await page.getByRole('button', { name: 'Pause train', exact: true }).click();
+    await advanceAnimation(page, 100);
+    const paused = await renderedConsist(page);
+    const headings = paused.cars.map(car => Math.atan2(car.frontEnd.y - car.rearEnd.y, car.frontEnd.x - car.rearEnd.x));
+    expect(Math.max(...headings) - Math.min(...headings), 'The formation actually spans a bend').toBeGreaterThan(.15);
+    if (turnout) expect(paused.cars[0].frontBogie.y).toBeLessThan(-.5);
+    const perspectivePath = testInfo.outputPath(`${count}-cars-at-curve-perspective.png`);
+    await scene(page).screenshot({ path: perspectivePath });
+    await testInfo.attach(`${count}-cars-at-curve-perspective`, { path: perspectivePath, contentType: 'image/png' });
+    await page.getByRole('button', { name: 'Top view', exact: true }).click();
+    await advanceAnimation(page, 100);
+    const topPath = testInfo.outputPath(`${count}-cars-at-curve-top.png`);
+    await scene(page).screenshot({ path: topPath });
+    await testInfo.attach(`${count}-cars-at-curve-top`, { path: topPath, contentType: 'image/png' });
+    await page.getByRole('button', { name: 'Reverse train direction' }).click();
+    await advanceAnimation(page, 100);
+    expect(await renderedConsist(page), 'Reversal keeps every rendered car and connector in place').toEqual(paused);
+    await page.getByRole('button', { name: 'Run train', exact: true }).click();
+    await advanceAnimation(page, 250);
+    const reversed = await renderedConsist(page);
+    expectConnectedConsist(reversed, count, rails);
+    const before = paused.cars[0], after = reversed.cars[0];
+    expect(pointGap(before.center, after.center)).toBeGreaterThan(5);
+    expect(pointGap(before.center, after.center)).toBeLessThan(75);
+    const alongBody = (after.center.x - before.center.x) * (before.frontEnd.x - before.rearEnd.x)
+      + (after.center.y - before.center.y) * (before.frontEnd.y - before.rearEnd.y);
+    expect(alongBody, 'The same formation moves backwards').toBeLessThan(0);
+  });
 }
 
 async function seedLayout(page: Page, layout: ReturnType<typeof fixtureLayout>) {

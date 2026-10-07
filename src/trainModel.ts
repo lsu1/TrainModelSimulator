@@ -10,6 +10,10 @@ export const CAR_SPACING = 137.5
  */
 const DOOR_POSITIONS = [-45.2, -15.1, 15.1, 45.2]
 const BOGIE_DISTANCE = 43.7
+const COUPLING_HEIGHT = 3.45
+const GANGWAY_HEIGHT = 14.7
+const CONNECTION_AXIS = new THREE.Vector3(1, 0, 0)
+const BELLOWS_SECTIONS = 9
 
 type BoxInstance = { position: [number, number, number]; scale: [number, number, number]; rotation?: THREE.Euler }
 
@@ -282,6 +286,150 @@ function addPantograph(car: THREE.Group, material: THREE.Material) {
   car.add(group)
 }
 
+type E235ConnectionParts = {
+  drawbar: THREE.Mesh
+  couplingHead: THREE.Mesh
+  firstPivot: THREE.Mesh
+  secondPivot: THREE.Mesh
+  bellows: THREE.Mesh<THREE.BufferGeometry>
+  tangent: THREE.Vector3
+  center: THREE.Vector3
+  corner: THREE.Vector3
+  edge: THREE.Vector3
+  triangleNormal: THREE.Vector3
+  orientation: THREE.Quaternion
+  firstOrientation: THREE.Quaternion
+  secondOrientation: THREE.Quaternion
+}
+
+/** One reusable drawbar and flexible vestibule for two neighboring body ends. */
+export function createE235Connection(): THREE.Group {
+  const connection = new THREE.Group()
+  connection.name = 'articulated-inter-car-connection'
+  const rubber = new THREE.MeshStandardMaterial({ color: '#20272b', roughness: 0.86, side: THREE.DoubleSide })
+  const metal = new THREE.MeshStandardMaterial({ color: '#3c474d', metalness: 0.55, roughness: 0.57 })
+  const drawbar = new THREE.Mesh(new THREE.BoxGeometry(1, 0.9, 1.5), metal)
+  drawbar.name = 'articulated-drawbar'
+  const couplingHead = new THREE.Mesh(new THREE.BoxGeometry(1.05, 1.35, 2.1), metal)
+  couplingHead.name = 'joined-coupling-heads'
+  const pivotGeometry = new THREE.CylinderGeometry(0.85, 0.85, 0.75, 10)
+  const firstPivot = new THREE.Mesh(pivotGeometry, metal)
+  const secondPivot = new THREE.Mesh(pivotGeometry, metal)
+  firstPivot.name = 'coupling-pivot-first'
+  secondPivot.name = 'coupling-pivot-second'
+
+  // Open rectangular accordion tube: both end rings follow their own car's
+  // orientation, while the intermediate folds articulate across the short gap.
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(BELLOWS_SECTIONS * 8 * 3), 3).setUsage(THREE.DynamicDrawUsage))
+  geometry.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(BELLOWS_SECTIONS * 8 * 3), 3).setUsage(THREE.DynamicDrawUsage))
+  const indices: number[] = []
+  for (let section = 0; section < BELLOWS_SECTIONS - 1; section += 1) {
+    const first = section * 8
+    const second = first + 8
+    for (let corner = 0; corner < 4; corner += 1) {
+      const next = (corner + 1) % 4
+      indices.push(first + corner, second + corner, second + next, first + corner, second + next, first + next)
+      indices.push(first + 4 + corner, second + 4 + next, second + 4 + corner, first + 4 + corner, first + 4 + next, second + 4 + next)
+    }
+  }
+  for (const first of [0, (BELLOWS_SECTIONS - 1) * 8]) {
+    for (let corner = 0; corner < 4; corner += 1) {
+      const next = (corner + 1) % 4
+      indices.push(first + corner, first + next, first + 4 + next, first + corner, first + 4 + next, first + 4 + corner)
+    }
+  }
+  geometry.setIndex(indices)
+  const bellows = new THREE.Mesh(geometry, rubber)
+  bellows.name = 'flexible-gangway-bellows'
+  // The geometry follows attachment points directly, so its bounds change on
+  // every bend. Ten small connectors do not need a per-frame bounds rebuild.
+  bellows.frustumCulled = false
+  connection.add(drawbar, couplingHead, firstPivot, secondPivot, bellows)
+  for (const mesh of [drawbar, couplingHead, firstPivot, secondPivot, bellows]) {
+    mesh.castShadow = true
+    mesh.receiveShadow = true
+  }
+  connection.userData.connectionParts = {
+    drawbar, couplingHead, firstPivot, secondPivot, bellows,
+    tangent: new THREE.Vector3(), center: new THREE.Vector3(), corner: new THREE.Vector3(),
+    edge: new THREE.Vector3(), triangleNormal: new THREE.Vector3(),
+    orientation: new THREE.Quaternion(), firstOrientation: new THREE.Quaternion(), secondOrientation: new THREE.Quaternion(),
+  } satisfies E235ConnectionParts
+  return connection
+}
+
+/**
+ * Coupling pivot points, body-end gangway points, and car orientations use the
+ * connection parent's coordinate space, in model millimetres. The drawbar may
+ * run underneath the body from bogie-mounted pins, with its joined heads midway
+ * between the pins. Geometry and scratch objects are reused each frame.
+ * Dispose the connection with disposeTrainModel when removing the consist.
+ */
+export function updateE235Connection(
+  connection: THREE.Group,
+  firstCoupling: THREE.Vector3,
+  secondCoupling: THREE.Vector3,
+  firstGangway: THREE.Vector3,
+  secondGangway: THREE.Vector3,
+  firstCarOrientation?: THREE.Quaternion,
+  secondCarOrientation?: THREE.Quaternion,
+) {
+  const parts = connection.userData.connectionParts as E235ConnectionParts
+  const length = parts.tangent.subVectors(secondCoupling, firstCoupling).length()
+  parts.orientation.setFromUnitVectors(CONNECTION_AXIS, parts.tangent.multiplyScalar(1 / Math.max(length, 1e-6)))
+  parts.drawbar.position.addVectors(firstCoupling, secondCoupling).multiplyScalar(0.5)
+  parts.drawbar.quaternion.copy(parts.orientation)
+  parts.drawbar.scale.x = length
+  parts.couplingHead.position.copy(parts.drawbar.position)
+  parts.couplingHead.quaternion.copy(parts.orientation)
+  parts.firstPivot.position.copy(firstCoupling)
+  parts.secondPivot.position.copy(secondCoupling)
+  parts.firstOrientation.copy(firstCarOrientation ?? parts.orientation)
+  parts.secondOrientation.copy(secondCarOrientation ?? parts.firstOrientation)
+  const positions = parts.bellows.geometry.getAttribute('position') as THREE.BufferAttribute
+  for (let section = 0; section < BELLOWS_SECTIONS; section += 1) {
+    const t = section / (BELLOWS_SECTIONS - 1)
+    const fold = section === 0 || section === BELLOWS_SECTIONS - 1 || section % 2 === 0 ? 0 : -0.22
+    parts.center.lerpVectors(firstGangway, secondGangway, t)
+    parts.orientation.slerpQuaternions(parts.firstOrientation, parts.secondOrientation, t)
+    for (let vertex = 0; vertex < 8; vertex += 1) {
+      const corner = vertex % 4
+      const inset = vertex >= 4 ? 0.27 : 0
+      const halfHeight = 7 + fold - inset
+      const halfWidth = 2.85 + fold - inset
+      parts.corner.set(0, corner < 2 ? halfHeight : -halfHeight, corner === 0 || corner === 3 ? -halfWidth : halfWidth)
+      parts.corner.applyQuaternion(parts.orientation).add(parts.center)
+      positions.setXYZ(section * 8 + vertex, parts.corner.x, parts.corner.y, parts.corner.z)
+    }
+  }
+  positions.needsUpdate = true
+  const normals = parts.bellows.geometry.getAttribute('normal') as THREE.BufferAttribute
+  const normalValues = normals.array as Float32Array
+  const indices = parts.bellows.geometry.getIndex()!
+  normalValues.fill(0)
+  for (let triangle = 0; triangle < indices.count; triangle += 3) {
+    const a = indices.getX(triangle)
+    const b = indices.getX(triangle + 1)
+    const c = indices.getX(triangle + 2)
+    parts.corner.fromBufferAttribute(positions, a)
+    parts.edge.fromBufferAttribute(positions, b).sub(parts.corner)
+    parts.triangleNormal.fromBufferAttribute(positions, c).sub(parts.corner)
+    parts.triangleNormal.crossVectors(parts.edge, parts.triangleNormal)
+    for (let vertex = 0; vertex < 3; vertex += 1) {
+      const offset = indices.getX(triangle + vertex) * 3
+      normalValues[offset] += parts.triangleNormal.x
+      normalValues[offset + 1] += parts.triangleNormal.y
+      normalValues[offset + 2] += parts.triangleNormal.z
+    }
+  }
+  for (let vertex = 0; vertex < normals.count; vertex += 1) {
+    parts.corner.fromBufferAttribute(normals, vertex).normalize()
+    normals.setXYZ(vertex, parts.corner.x, parts.corner.y, parts.corner.z)
+  }
+  normals.needsUpdate = true
+}
+
 /**
  * A self-contained E235-0 Yamanote car. The first car faces +X, the last -X.
  * +Y is up and the wheel treads touch Y=0. Bogies are named bogie-front/rear.
@@ -411,6 +559,12 @@ export function createE235Car(index: number, total = 11): THREE.Group {
 
   for (const end of [-1, 1]) {
     const cabEnd = (index === 0 && end === 1) || (index === total - 1 && end === -1)
+    const endName = end === 1 ? 'front' : 'rear'
+    const couplingAnchor = new THREE.Object3D()
+    couplingAnchor.name = `coupling-${endName}`
+    couplingAnchor.position.set(end * CAR_LENGTH / 2, COUPLING_HEIGHT, 0)
+    couplingAnchor.userData.cab = cabEnd
+    car.add(couplingAnchor)
     if (cabEnd) {
       const tail = end === -1
       instancedBoxes(car, green, [-1, 1].map(side => ({
@@ -436,10 +590,17 @@ export function createE235Car(index: number, total = 11): THREE.Group {
       })), tail ? 'red-tail-lights' : 'white-headlights')
       instancedBoxes(car, silver, [{ position: [end * (CAR_LENGTH / 2 - 0.3), 4.75, 0], scale: [1.9, 3.1, 14.1] }], 'cab-front-skirt')
     } else {
-      instancedBoxes(car, dark, [{ position: [end * (CAR_LENGTH / 2 + 0.28), 14.7, 0], scale: [0.85, 14, 5.7] }], 'rubber-gangway')
-      instancedBoxes(car, glass, [{ position: [end * (CAR_LENGTH / 2 + 0.75), 17.2, 0], scale: [0.08, 6.9, 3.1] }], 'gangway-door-window')
+      const gangwayAnchor = new THREE.Object3D()
+      gangwayAnchor.name = `gangway-${endName}`
+      gangwayAnchor.position.set(end * CAR_LENGTH / 2, GANGWAY_HEIGHT, 0)
+      car.add(gangwayAnchor)
+      instancedBoxes(car, dark, [{ position: [end * (CAR_LENGTH / 2 + 0.12), GANGWAY_HEIGHT, 0], scale: [0.35, 14, 5.7] }], `rubber-gangway-${endName}`)
+      instancedBoxes(car, glass, [{ position: [end * (CAR_LENGTH / 2 + 0.31), 17.2, 0], scale: [0.08, 6.9, 3.1] }], `gangway-door-window-${endName}`)
     }
-    instancedBoxes(car, dark, [{ position: [end * (CAR_LENGTH / 2 + 0.8), 3.45, 0], scale: [3.15, 1.25, 2.1] }], 'coupler')
+    instancedBoxes(car, dark, [{
+      position: [end * (CAR_LENGTH / 2 + (cabEnd ? 0.8 : -0.35)), COUPLING_HEIGHT, 0],
+      scale: [cabEnd ? 3.15 : 1.2, 1.25, 2.1],
+    }], cabEnd ? 'cab-coupler' : `coupler-mount-${endName}`)
   }
   return car
 }

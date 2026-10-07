@@ -13,7 +13,7 @@ import {
 import type { Endpoint, Track, TrainPosition } from "./track";
 import { STORAGE_KEY, createLayout, loadLayout, parseLayout } from "./layout";
 import type { LayoutData, LayoutPreset, PlacedAccessory } from "./layout";
-import { TRAIN_SCALE } from "./trainModel";
+import { CAR_LENGTH, TRAIN_SCALE } from "./trainModel";
 import { advanceConsist, occupiedTrackIds } from "./trainMotion";
 import { auditClearances, checkPlacement } from "./clearance";
 import { auditEngineering, planRamp, trackGradePercent } from "./engineering";
@@ -37,7 +37,7 @@ const initialTrain = (tracks: Track[]): TrainPosition => {
       : 0);
   return {
     trackId: first?.id ?? "",
-    distance: first ? Math.min(110, trackLength(first, route)) : 0,
+    distance: first ? Math.min(CAR_LENGTH, trackLength(first, route)) : 0,
     direction: 1,
     route,
     laps: 0,

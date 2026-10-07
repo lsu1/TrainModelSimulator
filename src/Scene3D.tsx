@@ -5,9 +5,10 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import { KATO_CATALOG } from './catalog';
 import type { PlacedAccessory } from './layout';
 import type { LayoutIssue } from './clearance';
-import { connectedEndpoint, endpoints, pathsFor, sampleBehind } from './track';
+import { connectedEndpoint, endpoints, pathsFor } from './track';
 import type { Endpoint, Track, TrainPosition } from './track';
-import { CAR_LENGTH, CAR_SPACING, createE235Car, disposeTrainModel } from './trainModel';
+import { CAR_LENGTH, createE235Car, createE235Connection, updateE235Connection, disposeTrainModel } from './trainModel';
+import { solveConsistPoses } from './consistPose';
 
 interface Scene3DProps {
   tracks: Track[];
@@ -585,8 +586,8 @@ export default function Scene3D(props: Scene3DProps) {
     controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
     const library = new ModelLibrary();
     const world = new THREE.Group(); world.scale.setScalar(SCALE); scene.add(world);
-    const pieces = new THREE.Group(), anchors = new THREE.Group(), trains = new THREE.Group();
-    world.add(pieces, anchors, trains);
+    const pieces = new THREE.Group(), anchors = new THREE.Group(), trains = new THREE.Group(), connections = new THREE.Group();
+    world.add(pieces, anchors, trains, connections);
     const hemi = new THREE.HemisphereLight('#fafcf5', '#a4b59d', .9); scene.add(hemi);
     const sunlight = new THREE.DirectionalLight('#fff7e8', 2.0);
     sunlight.position.set(-15, 28, 13); sunlight.castShadow = true;
@@ -633,6 +634,52 @@ export default function Scene3D(props: Scene3DProps) {
     const plusMaterial = new THREE.MeshStandardMaterial({ color: '#f8faf0', roughness: .9 });
     const plusGeometry = new THREE.BoxGeometry(7.6, .6, 1.7);
     let carCountBuilt = 0;
+    let poseCache: { tracks: Track[]; position: TrainPosition; cabForward: boolean; count: number; poses: ReturnType<typeof solveConsistPoses> } | null = null;
+    const inverse = new THREE.Quaternion();
+    const localPoint = new THREE.Vector3();
+    const firstPin = new THREE.Vector3(), secondPin = new THREE.Vector3();
+    const firstGangway = new THREE.Vector3(), secondGangway = new THREE.Vector3();
+    const layoutPoint = (point: THREE.Vector3) => ({ x: point.x, y: point.z, z: point.y });
+    const carPoint = (car: THREE.Object3D, name: string, fallback?: THREE.Vector3) => {
+      const point = car.getObjectByName(name)?.position ?? fallback;
+      return point ? point.clone().applyQuaternion(car.quaternion).add(car.position) : null;
+    };
+    // Diagnostics come from the rendered transforms and bellows vertices, so
+    // browser checks detect detached meshes as well as incorrect solver poses.
+    const publishConsist = () => {
+      renderer.domElement.dataset.carPoses = JSON.stringify(trains.children.map((car, index) => {
+        if (!car.visible) return { index, visible: false };
+        return {
+          index, visible: true, center: layoutPoint(car.position),
+          frontBogie: layoutPoint(carPoint(car, 'bogie-front')!),
+          rearBogie: layoutPoint(carPoint(car, 'bogie-rear')!),
+          frontEnd: layoutPoint(carPoint(car, 'coupling-front')!),
+          rearEnd: layoutPoint(carPoint(car, 'coupling-rear')!),
+          frontGangway: layoutPoint(carPoint(car, 'gangway-front', new THREE.Vector3(CAR_LENGTH / 2, 14.7, 0))!),
+          rearGangway: layoutPoint(carPoint(car, 'gangway-rear', new THREE.Vector3(-CAR_LENGTH / 2, 14.7, 0))!),
+          quaternion: car.quaternion.toArray(),
+        };
+      }));
+      renderer.domElement.dataset.couplers = JSON.stringify(connections.children.map((connection, index) => {
+        if (!connection.visible) return { index, visible: false };
+        const drawbar = connection.getObjectByName('articulated-drawbar')!;
+        drawbar.updateMatrix();
+        const bellows = connection.getObjectByName('flexible-gangway-bellows') as THREE.Mesh<THREE.BufferGeometry>;
+        bellows.updateMatrix();
+        const vertices = bellows.geometry.getAttribute('position');
+        const ringCenter = (start: number) => {
+          const center = new THREE.Vector3();
+          for (let vertex = 0; vertex < 4; vertex++) center.add(localPoint.fromBufferAttribute(vertices, start + vertex));
+          return layoutPoint(center.multiplyScalar(.25).applyMatrix4(bellows.matrix));
+        };
+        return {
+          index, visible: true,
+          front: layoutPoint(new THREE.Vector3(-.5, 0, 0).applyMatrix4(drawbar.matrix)),
+          rear: layoutPoint(new THREE.Vector3(.5, 0, 0).applyMatrix4(drawbar.matrix)),
+          frontGangway: ringCenter(0), rearGangway: ringCenter(vertices.count - 8),
+        };
+      }));
+    };
 
     const getPlanePoint = (event: { clientX: number; clientY: number }, height: number) => {
       const rect = renderer.domElement.getBoundingClientRect();
@@ -866,33 +913,47 @@ export default function Scene3D(props: Scene3DProps) {
       previousCameraPreset = current.cameraPreset;
       if (carCountBuilt !== current.carCount) {
         for (const car of [...trains.children]) disposeTrainModel(car);
+        for (const connection of [...connections.children]) disposeTrainModel(connection);
         trains.clear(); carCountBuilt = current.carCount;
-        for (let i = 0; i < current.carCount; i++) trains.add(createE235Car(i, current.carCount));
+        connections.clear();
+        for (let i = 0; i < current.carCount; i++) {
+          trains.add(createE235Car(i, current.carCount));
+          if (i > 0) connections.add(createE235Connection());
+        }
         renderer.domElement.dataset.carCount = String(current.carCount);
       }
-      const physicalPosition: TrainPosition = { ...current.trainPosition, direction: current.cabForward ? current.trainPosition.direction : current.trainPosition.direction === 1 ? -1 : 1 };
-      const inverse = new THREE.Quaternion();
-      let leadPoint: Point | null = null;
-      for (let i = 0; i < trains.children.length; i++) {
-        const distance = CAR_LENGTH / 2 + i * CAR_SPACING;
-        const p = sampleBehind(current.tracks, physicalPosition, distance);
-        const car = trains.children[i]; car.visible = p !== null;
-        if (!p) continue;
-        if (i === 0) leadPoint = p;
-        const bogieOffset = car.userData.bogieOffset ?? (car.userData.bogieOffset = car.getObjectByName('bogie-front')?.position.x ?? 43.7);
-        const front = sampleBehind(current.tracks, physicalPosition, Math.max(0, distance - bogieOffset));
-        const rear = sampleBehind(current.tracks, physicalPosition, distance + bogieOffset);
-        const angle = front && rear ? Math.atan2(front.y - rear.y, front.x - rear.x) : p.angle;
-        const slope = front && rear ? (front.z - rear.z) / Math.max(.01, Math.hypot(front.x - rear.x, front.y - rear.y)) : p.slope;
-        car.position.set(p.x, p.z + RAIL_TOP, p.y); setTangent(car, angle, slope);
-        inverse.copy(car.quaternion).invert();
-        for (const [name, point] of [['bogie-front', front], ['bogie-rear', rear]] as const) {
-          const bogie = car.getObjectByName(name); if (!bogie || !point) continue;
-          const local = new THREE.Vector3(point.x - p.x, point.z - p.z, point.y - p.y).applyQuaternion(inverse);
-          bogie.position.copy(local); setTangent(bogie, point.angle, point.slope);
-          bogie.quaternion.premultiply(inverse);
+      if (!poseCache || poseCache.tracks !== current.tracks || poseCache.position !== current.trainPosition || poseCache.cabForward !== current.cabForward || poseCache.count !== current.carCount) {
+        const poses = solveConsistPoses(current.tracks, current.trainPosition, current.cabForward, current.carCount);
+        poseCache = { tracks: current.tracks, position: current.trainPosition, cabForward: current.cabForward, count: current.carCount, poses };
+        for (let i = 0; i < trains.children.length; i++) {
+          const pose = poses.cars[i], car = trains.children[i];
+          car.visible = pose !== null;
+          if (!pose) continue;
+          const p = pose.center;
+          car.position.set(p.x, p.z + RAIL_TOP, p.y); setTangent(car, p.angle, p.slope);
+          inverse.copy(car.quaternion).invert();
+          for (const [name, point] of [['bogie-front', pose.frontBogie], ['bogie-rear', pose.rearBogie]] as const) {
+            const bogie = car.getObjectByName(name)!;
+            localPoint.set(point.x - p.x, point.z - p.z, point.y - p.y).applyQuaternion(inverse);
+            bogie.position.copy(localPoint); setTangent(bogie, point.angle, point.slope);
+            bogie.quaternion.premultiply(inverse);
+          }
         }
+        for (const connection of connections.children) connection.visible = false;
+        for (const coupling of poses.couplings) {
+          const connection = connections.children[coupling.frontCarIndex] as THREE.Group;
+          const firstCar = trains.children[coupling.frontCarIndex], secondCar = trains.children[coupling.rearCarIndex];
+          const firstMount = carPoint(firstCar, 'gangway-rear'), secondMount = carPoint(secondCar, 'gangway-front');
+          if (!firstMount || !secondMount) continue;
+          firstPin.set(coupling.frontPin.x, coupling.frontPin.z + RAIL_TOP, coupling.frontPin.y);
+          secondPin.set(coupling.rearPin.x, coupling.rearPin.z + RAIL_TOP, coupling.rearPin.y);
+          firstGangway.copy(firstMount); secondGangway.copy(secondMount);
+          connection.visible = true;
+          updateE235Connection(connection, firstPin, secondPin, firstGangway, secondGangway, firstCar.quaternion, secondCar.quaternion);
+        }
+        publishConsist();
       }
+      const leadPoint = poseCache.poses.cars[0]?.center ?? null;
       if (leadPoint) {
         renderer.domElement.dataset.trainX = leadPoint.x.toFixed(2);
         renderer.domElement.dataset.trainY = leadPoint.y.toFixed(2);
@@ -923,6 +984,7 @@ export default function Scene3D(props: Scene3DProps) {
       controls.dispose();
       for (const piece of pieces.children) disposePiece(piece, library);
       for (const car of trains.children) disposeTrainModel(car);
+      for (const connection of connections.children) disposeTrainModel(connection);
       if (runtime.current?.selected) { scene.remove(runtime.current.selected); runtime.current.selected.geometry.dispose(); }
       for (const outline of runtime.current?.issueOutlines ?? []) { outline.removeFromParent(); outline.geometry.dispose(); }
       ground.geometry.dispose(); grid.geometry.dispose(); (grid.material as THREE.Material).dispose();

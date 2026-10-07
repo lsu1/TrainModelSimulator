@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { advanceConsist, occupiedTrackIds } from './trainMotion'
 import { CAR_LENGTH, CAR_SPACING } from './trainModel'
+import { BOGIE_OFFSET, COUPLING_LINK_LENGTH, solveConsistPoses } from './consistPose'
 import { advanceTrain, attachTrack, endpoints, makeStarterLayout, pointAt, sampleBehind, trackLength } from './track'
 import type { Track, TrainPosition } from './track'
 
@@ -20,18 +21,20 @@ describe('whole-train reverse motion', () => {
     expect(advanceConsist([line], position, 1_000, true, 11)).toEqual(advanceTrain([line], position, 1_000))
   })
 
-  it('stops a partially visible short-line train with its visible car center at the rail end', () => {
-    const position = reverseAt(110)
+  it('stops an already overhanging short-line body with its complete rear bogie at the rail end', () => {
+    const position = reverseAt(120)
     const result = advanceConsist([line], position, 200, false, 11)
     expect(result.stopped).toBe(true)
-    expect(result.position.distance).toBeCloseTo(CAR_LENGTH / 2)
+    expect(result.position.distance).toBeCloseTo(CAR_LENGTH / 2 + BOGIE_OFFSET)
     expect(result.position.direction).toBe(-1)
     expect(result.position.route).toBe(0)
-    const car = sampleBehind([line], physical(result.position), CAR_LENGTH / 2)
+    const car = solveConsistPoses([line], result.position, false, 11).cars[0]
     expect(car).not.toBeNull()
-    expect(car!.x).toBeCloseTo(0)
-    expect(car!.angle).toBeCloseTo(0)
-    expect(sampleBehind([line], physical(result.position), CAR_LENGTH / 2 + CAR_SPACING)).toBeNull()
+    expect(car!.rearBogie.x).toBeCloseTo(0)
+    expect(car!.frontBogie.x).toBeCloseTo(2 * BOGIE_OFFSET)
+    expect(car!.center.angle).toBeCloseTo(0)
+    expect(car!.rearEnd.x).toBeLessThan(0)
+    expect(solveConsistPoses([line], result.position, false, 11).cars[1]).toBeNull()
   })
 
   it('stops the rear body at the rail end when the whole visible car fits', () => {
@@ -52,6 +55,36 @@ describe('whole-train reverse motion', () => {
     expect(reference.x).toBeCloseTo(rearOffset)
     for (let index = 0; index < 3; index += 1) expect(sampleBehind(tracks, physical(result.position), CAR_LENGTH / 2 + index * CAR_SPACING)).not.toBeNull()
     expect(sampleBehind(tracks, physical(result.position), rearOffset)!.x).toBeCloseTo(0)
+  })
+
+  it('recomputes the curved tail span when reversing from straights toward an open curve end', () => {
+    const tracks: Track[] = []
+    let anchor = { position: { x: 0, y: 0, z: 0 }, angle: 0 }
+    for (const kind of ['c216', 'c216', 'c216', 'c216', 's248', 's248', 's248']) {
+      const track = attachTrack(kind, 1, anchor, `reverse-curve-${tracks.length}`)
+      tracks.push(track)
+      const end = endpoints(track)[1]
+      anchor = { ...end, position: { ...end.position, z: end.position.z ?? 0 } }
+    }
+    const position: TrainPosition = { trackId: tracks[6].id, distance: 180, direction: -1, laps: 0 }
+    const initial = solveConsistPoses(tracks, position, false, 3)
+    expect(initial.rearOffset).toBeCloseTo(CAR_LENGTH + 2 * CAR_SPACING, 6)
+    const result = advanceConsist(tracks, position, 2_000, false, 3)
+    expect(result.stopped).toBe(true)
+    const poses = solveConsistPoses(tracks, result.position, false, 3)
+    expect(poses.cars.every(Boolean)).toBe(true)
+    const bogieArc = 2 * 216 * Math.asin(BOGIE_OFFSET / 216)
+    const couplingArc = 2 * 216 * Math.asin(COUPLING_LINK_LENGTH / (2 * 216))
+    const curvedSpan = CAR_LENGTH - 2 * BOGIE_OFFSET + 3 * bogieArc + 2 * couplingArc
+    expect(poses.rearOffset).toBeCloseTo(curvedSpan, 6)
+    expect(poses.rearOffset).toBeGreaterThan(initial.rearOffset + 1)
+    const tail = sampleBehind(tracks, physical(result.position), poses.rearOffset)
+    expect(tail).not.toBeNull()
+    expect(tail!.x).toBeCloseTo(0, 6)
+    expect(tail!.y).toBeCloseTo(0, 6)
+    const again = advanceConsist(tracks, result.position, 10, false, 3)
+    expect(again.stopped).toBe(true)
+    expect(again.position.distance).toBeCloseTo(result.position.distance, 6)
   })
 
   it('moves normally before the rear boundary and remains stopped at that boundary', () => {
@@ -78,6 +111,32 @@ describe('whole-train reverse motion', () => {
     expect(car.angle).toBeCloseTo(0)
   })
 
+  it('allows another complete car to appear across an accepted small overlapping join', () => {
+    const tracks: Track[] = []
+    let anchor = { position: { x: 0, y: 0, z: 0 }, angle: 0 }
+    for (const kind of ['s186', 's64', 's29', 's45-5', 's38', 's248']) {
+      const track = attachTrack(kind, 1, anchor, `overlap-${tracks.length}`)
+      tracks.push(track)
+      const end = endpoints(track)[1]
+      anchor = { ...end, position: { ...end.position, z: end.position.z ?? 0 } }
+    }
+    // The 0.2 mm overlap is inside the accepted 0.25 mm connection tolerance.
+    // Its small backward-traversal jump makes the third rear bogie fit.
+    tracks[5].x -= .2
+    const position: TrainPosition = { trackId: tracks[5].id, distance: 22.96, direction: -1, laps: 0 }
+    expect(solveConsistPoses(tracks, position, false, 3).cars.filter(Boolean)).toHaveLength(2)
+    const expected = advanceTrain(tracks, position, .02)
+    const result = advanceConsist(tracks, position, .02, false, 3)
+    expect(result).toEqual(expected)
+    expect(result.stopped).toBe(false)
+    const poses = solveConsistPoses(tracks, result.position, false, 3)
+    expect(poses.cars.filter(Boolean)).toHaveLength(3)
+    // The newly placed third body may overhang; only the existing second
+    // body's stopping boundary applies to this reverse step.
+    expect(sampleBehind(tracks, physical(result.position), poses.rearOffset)).toBeNull()
+    expect(sampleBehind(tracks, physical(result.position), poses.cars[1]!.rearOffset + CAR_LENGTH / 2 - BOGIE_OFFSET)).not.toBeNull()
+  })
+
   it('leaves reverse traversal of a closed circuit unchanged, including large steps', () => {
     const tracks = makeStarterLayout('oval')
     const position: TrainPosition = { trackId: tracks[4].id, distance: 80, direction: -1, route: 0, laps: 0 }
@@ -99,6 +158,7 @@ describe('whole-train reverse motion', () => {
     const short = { ...line, kind: 's29' }
     const position = { ...reverseAt(15), direction: 1 as const }
     expect(advanceConsist([short], position, 5, false, 11)).toEqual(advanceTrain([short], position, 5))
+    expect(advanceConsist([line], reverseAt(110), 200, false, 11)).toEqual(advanceTrain([line], reverseAt(110), 200))
     expect(advanceConsist([line], reverseAt(180), 0, false, 3)).toEqual(advanceTrain([line], reverseAt(180), 0))
     expect(advanceConsist([line], reverseAt(180), Number.POSITIVE_INFINITY, false, 3)).toEqual(advanceTrain([line], reverseAt(180), Number.POSITIVE_INFINITY))
   })
@@ -132,5 +192,28 @@ describe('track occupancy of the visible formation', () => {
     const branch = attachTrack('s248', 1, endpoints(turnout)[2], 'branch')
     const position: TrainPosition = { trackId: branch.id, distance: 80, direction: 1, route: 0, laps: 0 }
     expect(occupiedTrackIds([turnout, common, main, branch], position, true, 3)).toEqual(new Set([branch.id, turnout.id, common.id]))
+  })
+
+  it('keeps a turnout locked when curved rigid bodies put the tail beyond nominal straight spacing', () => {
+    const turnout: Track = { ...line, id: 'curved-tail-turnout', kind: 't4r', switchState: 'branch' }
+    const common = attachTrack('s248', 1, endpoints(turnout)[0], 'curved-tail-common')
+    const unused = attachTrack('s248', 1, endpoints(turnout)[1], 'curved-tail-unused')
+    const curves: Track[] = []
+    let anchor = endpoints(turnout)[2]
+    for (let index = 0; index < 3; index += 1) {
+      const curve = attachTrack('c216', 1, anchor, `curved-tail-${index}`)
+      curves.push(curve)
+      anchor = endpoints(curve)[1]
+    }
+    const tracks = [turnout, common, unused, ...curves]
+    const nominalSpan = CAR_LENGTH + 2 * CAR_SPACING
+    const position = advanceTrain(tracks, { trackId: curves[0].id, distance: 0, direction: 1, laps: 0 }, nominalSpan + 1).position
+    // The old fixed span finishes 1 mm beyond the turnout and misses its lock.
+    const fixedTail = sampleBehind(tracks, position, nominalSpan)!
+    const curveStart = endpoints(curves[0])[0].position
+    expect(Math.hypot(fixedTail.x - curveStart.x, fixedTail.y - curveStart.y)).toBeCloseTo(1, 3)
+    const poses = solveConsistPoses(tracks, position, true, 3)
+    expect(poses.rearOffset).toBeGreaterThan(nominalSpan + 1)
+    expect(occupiedTrackIds(tracks, position, true, 3)).toEqual(new Set([turnout.id, ...curves.map(curve => curve.id)]))
   })
 })
