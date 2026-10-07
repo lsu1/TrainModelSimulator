@@ -16,6 +16,8 @@ export interface Track {
   elevation?: number
   endElevation?: number
   switchState?: 'straight' | 'branch'
+  /** Stable layout label shared with the central turnout controls. */
+  switchNumber?: number
   route?: number
 }
 export interface TrackPoint extends Vec { z: number; angle: number; slope: number }
@@ -35,9 +37,9 @@ export interface Endpoint {
 export const TRACK_CATALOG: TrackSpec[] = KATO_CATALOG.filter((item) => item.shape !== 'accessory')
 const SPECS = new Map(TRACK_CATALOG.map((spec) => [spec.kind, spec]))
 const EPSILON = 1e-8
-export const SNAP_DISTANCE = 3
-export const SNAP_HEIGHT = 1
-const SNAP_ANGLE = 5 * Math.PI / 180
+export const SNAP_DISTANCE = 0.25
+export const SNAP_HEIGHT = 0.25
+export const SNAP_ANGLE = 0.25 * Math.PI / 180
 // Train sampling and endpoint lookup share immutable geometry between frames.
 const GEOMETRY_CACHE = new WeakMap<Track, { key: string; paths: TrackRoute[]; endpoints?: Endpoint[] }>()
 
@@ -142,17 +144,24 @@ export function pathsFor(track: Track): TrackRoute[] {
   const sine = Math.sin(track.angle)
   const startHeight = track.elevation ?? 0
   const endHeight = track.endElevation ?? startHeight
-  const paths = localRoutes(track).map((route) => ({ ...route, pointAt: (distance: number): TrackPoint => {
+  const rise = endHeight - startHeight
+  const shape = specFor(track).shape
+  const paths = localRoutes(track).map((route) => {
+    // A rigid purchased straight keeps its physical length when inclined.
+    // Invalid rises remain drawable, but engineering.ts marks them impossible.
+    const projection = (shape === 'straight' || shape === 'doubleStraight') && Math.abs(rise) < route.length
+      ? Math.sqrt(1 - (rise / route.length) ** 2) : 1
+    return { ...route, pointAt: (distance: number): TrackPoint => {
     const along = clamp(distance, 0, route.length)
     const point = route.pointAt(along)
     return {
-      x: originX + point.x * cosine - point.y * sine,
-      y: originY + point.x * sine + point.y * cosine,
+      x: originX + point.x * projection * cosine - point.y * sine,
+      y: originY + point.x * projection * sine + point.y * cosine,
       z: startHeight + (endHeight - startHeight) * along / Math.max(route.length, EPSILON),
       angle: heading + point.angle,
-      slope: (endHeight - startHeight) / Math.max(route.length, EPSILON),
+      slope: rise / Math.max(route.length * projection, EPSILON),
     }
-  } }))
+  } } })
   GEOMETRY_CACHE.set(track, { key, paths })
   return paths
 }
@@ -254,8 +263,11 @@ export function snapTrack(tracks: Track[], candidate: Track): Track {
   if (!selected) return candidate
   const rotated = { ...candidate, angle: candidate.angle + selected.rotation }
   const port = endpoints(rotated)[selected.port]
+  const heightCorrection = (selected.anchor.position.z ?? 0) - (port.position.z ?? 0)
   return { ...rotated, x: rotated.x + selected.anchor.position.x - port.position.x,
-    y: rotated.y + selected.anchor.position.y - port.position.y }
+    y: rotated.y + selected.anchor.position.y - port.position.y,
+    ...(heightCorrection ? { elevation: (rotated.elevation ?? 0) + heightCorrection,
+      endElevation: (rotated.endElevation ?? rotated.elevation ?? 0) + heightCorrection } : {}) }
 }
 function ovalLayout(curve: TrackKind, straight: TrackKind, straightsPerSide: number, prefix: string, elevation = 0): Track[] {
   const radius = specFor(curve).radius!
@@ -285,9 +297,9 @@ export function makeViaductLayout(): Track[] {
     && spec.radius === 315 && Math.abs((spec.angle ?? 0) - Math.PI / 4) < EPSILON)?.kind ?? 'c315'
   const straight = TRACK_CATALOG.find((spec) => spec.category === 'viaduct' && spec.shape === 'straight' && spec.length === 248)?.kind ?? 's248'
   const bridge = TRACK_CATALOG.find((spec) => spec.category === 'bridge' && spec.shape === 'straight' && spec.length === 248)?.kind
-  const tracks = ovalLayout(curve, straight, 4, 'viaduct', 80)
+  const tracks = ovalLayout(curve, straight, 4, 'viaduct', 60)
   if (bridge) for (const index of [1, 2, 9, 10]) tracks[index].kind = bridge
-  let anchor: Endpoint = { position: { x: 0, y: -620, z: 0 }, angle: Math.PI / 2 }
+  let anchor: Endpoint = { position: { x: 124, y: -620, z: 0 }, angle: Math.PI / 2 }
   for (let index = 0; index < 5; index += 1) {
     const track = attachTrack('s248', 1, anchor, `ground-${index + 1}`)
     tracks.push(track)

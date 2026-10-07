@@ -1,5 +1,5 @@
 import { KATO_CATALOG } from './catalog';
-import { makeCityLayout, makeStarterLayout, makeViaductLayout } from './track';
+import { endpoints, makeCityLayout, makeStarterLayout, makeViaductLayout } from './track';
 import type { Track } from './track';
 
 export interface PlacedAccessory {
@@ -16,7 +16,7 @@ export interface LayoutData {
   name: string;
   tracks: Track[];
   accessories: PlacedAccessory[];
-  carCount: 3 | 6 | 11;
+  carCount: number;
 }
 
 export const STORAGE_KEY = 'little-railways-layout-v2';
@@ -47,14 +47,16 @@ export function parseLayout(value: unknown): LayoutData {
   const accessoriesData = candidate.version === 1 ? [] : candidate.accessories;
   if (!Array.isArray(accessoriesData)) throw new Error('This layout has an invalid accessories list.');
   const carCount = candidate.version === 1 ? 11 : candidate.carCount;
-  if (carCount !== 3 && carCount !== 6 && carCount !== 11) {
-    throw new Error('Choose a train with 3, 6, or 11 cars.');
+  if (typeof carCount !== 'number' || !Number.isInteger(carCount) || carCount < 3 || carCount > 11) {
+    throw new Error('Choose a train with 3 to 11 cars.');
   }
   if (candidate.tracks.length + accessoriesData.length > MAX_PIECES) {
     throw new Error(`This railway has more than ${MAX_PIECES} pieces.`);
   }
 
   const ids = new Set<string>();
+  const switchNumbers = new Set<number>();
+  let highestSwitchNumber = 0;
   function validatePlacement(item: Record<string, unknown>, message: string): void {
     if (typeof item.id !== 'string' || !item.id.trim() || item.id.length > 100 || ids.has(item.id)
       || !validCoordinate(item.x, 50000) || !validCoordinate(item.y, 50000)
@@ -75,6 +77,15 @@ export function parseLayout(value: unknown): LayoutData {
     if (item.switchState !== undefined && item.switchState !== 'straight' && item.switchState !== 'branch') {
       throw new Error(error);
     }
+    if (item.switchNumber !== undefined) {
+      if ((spec.shape !== 'turnout' && spec.shape !== 'scissors')
+        || typeof item.switchNumber !== 'number' || !Number.isSafeInteger(item.switchNumber)
+        || item.switchNumber <= 0 || switchNumbers.has(item.switchNumber)) {
+        throw new Error('This layout contains an invalid or duplicate switch number.');
+      }
+      switchNumbers.add(item.switchNumber);
+      highestSwitchNumber = Math.max(highestSwitchNumber, item.switchNumber);
+    }
     if (item.route !== undefined) {
       const routeCount = spec.shape === 'scissors' ? 4
         : spec.shape === 'turnout' || spec.shape === 'crossing'
@@ -92,9 +103,20 @@ export function parseLayout(value: unknown): LayoutData {
       elevation,
       endElevation,
       ...(item.switchState === undefined ? {} : { switchState: item.switchState as 'straight' | 'branch' }),
+      ...(item.switchNumber === undefined ? {} : { switchNumber: item.switchNumber as number }),
       ...(item.route === undefined ? {} : { route: item.route as number }),
     };
   });
+  // Reserve every existing number first so older saves can acquire stable
+  // labels without renumbering switches whose labels were already saved.
+  for (const track of tracks) {
+    const shape = CATALOG.get(track.kind)!.shape;
+    if ((shape === 'turnout' || shape === 'scissors') && track.switchNumber === undefined) {
+      highestSwitchNumber += 1;
+      if (!Number.isSafeInteger(highestSwitchNumber)) throw new Error('This layout has no available switch numbers.');
+      track.switchNumber = highestSwitchNumber;
+    }
+  }
 
   const accessories = accessoriesData.map((value: unknown): PlacedAccessory => {
     const error = 'This layout contains an invalid accessory.';
@@ -132,7 +154,7 @@ export function createLayout(kind: LayoutPreset = 'city'): LayoutData {
       : kind === 'compact' ? makeStarterLayout('compact') : [];
   const accessories: PlacedAccessory[] = [];
   if (kind === 'city' || kind === 'viaduct') {
-    const elevation = kind === 'viaduct' ? 80 : 0;
+    const elevation = kind === 'viaduct' ? 60 : 0;
     const northTrackY = tracks[0]?.y ?? -381;
     const place = (type: 'platform' | 'station' | 'catenary' | 'pier' | 'building', x: number, y: number, height = elevation) => {
       const spec = KATO_CATALOG.find((item) => item.category === 'accessory' && item.accessoryType === type);
@@ -140,12 +162,20 @@ export function createLayout(kind: LayoutPreset = 'city'): LayoutData {
     };
     place('platform', 0, northTrackY + 31);
     place('station', 0, northTrackY + 101);
-    place('building', 140, 60, 0);
+    place('building', kind === 'viaduct' ? -220 : 140, 60, 0);
     place('catenary', -370, northTrackY);
     place('catenary', 370, northTrackY);
     if (kind === 'viaduct') {
-      place('pier', -370, northTrackY, 0);
-      place('pier', 370, northTrackY, 0);
+      const support = KATO_CATALOG.find((item) => item.kind === 'a-pier-tapered' && item.supportDeckHeight === elevation)
+        ?? KATO_CATALOG.find((item) => item.category === 'accessory' && item.accessoryType === 'pier' && item.supportDeckHeight === elevation);
+      if (!support) throw new Error('A catalog support for the viaduct height is unavailable.');
+      const joints: { x: number; y: number }[] = [];
+      for (const track of tracks) for (const endpoint of endpoints(track)) {
+        const { x, y, z = 0 } = endpoint.position;
+        if (Math.abs(z - elevation) > .25 || joints.some((joint) => Math.hypot(joint.x - x, joint.y - y) <= .25)) continue;
+        joints.push({ x, y });
+        accessories.push({ id: `starter-pier-${joints.length}`, kind: support.kind, x, y, angle: endpoint.angle, elevation: 0 });
+      }
     }
   }
   return parseLayout({

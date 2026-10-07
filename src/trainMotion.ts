@@ -38,3 +38,29 @@ export function advanceConsist(
   }
   return { ...advanceTrain(tracks, position, validDistance), stopped: true }
 }
+
+/** Track pieces under the formation, including its original cab and both ends. */
+export function occupiedTrackIds(
+  tracks: Track[],
+  position: TrainPosition,
+  cabForward: boolean,
+  carCount: number,
+): Set<string> {
+  const occupied = new Set<string>()
+  if (!tracks.some(track => track.id === position.trackId)) return occupied
+  occupied.add(position.trackId)
+  const physicalDirection = cabForward ? position.direction : position.direction === 1 ? -1 : 1
+  let trace: TrainPosition = { ...position, direction: physicalDirection === 1 ? -1 : 1 }
+  let remaining = CAR_LENGTH + Math.max(0, carCount - 1) * CAR_SPACING
+  // The shortest supported catalog piece is 29 mm, so a 20 mm step cannot
+  // cross a whole piece without recording it. Stop where the real rail stops.
+  while (remaining > 0) {
+    const step = Math.min(20, remaining)
+    const result = advanceTrain(tracks, trace, step)
+    occupied.add(result.position.trackId)
+    trace = result.position
+    if (result.stopped) break
+    remaining -= step
+  }
+  return occupied
+}

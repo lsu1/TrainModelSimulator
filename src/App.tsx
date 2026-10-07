@@ -2,6 +2,7 @@ import {
   ArrowDownToLine,
   ArrowLeftRight,
   ArrowUpFromLine,
+  AlertTriangle,
   Building2,
   Check,
   ChevronRight,
@@ -31,6 +32,12 @@ import Scene3D from "./Scene3D";
 import { KATO_CATALOG, CATALOG_SOURCES } from "./catalog";
 import type { CatalogCategory, CatalogItem } from "./catalogTypes";
 import { CATALOG, useRailway } from "./useRailway";
+import {
+  CheckSummary,
+  RampBuilder,
+  ShoppingReview,
+  SwitchPanel,
+} from "./BuildTools";
 
 const CATEGORIES: {
   key: CatalogCategory;
@@ -236,6 +243,7 @@ export default function App() {
                   h.notify("Connector selected. Choose the next track piece.");
                 }}
                 onReady={() => h.setReady(true)}
+                issues={h.issues}
               />
               {!h.ready && (
                 <div className="scene-loading">
@@ -399,17 +407,22 @@ export default function App() {
                   onChange={(event) =>
                     h.changeLayout({
                       ...layout,
-                      carCount: Number(event.target.value) as 3 | 6 | 11,
+                      carCount: Number(event.target.value),
                     })
                   }
                 >
-                  <option value={3}>3 cars</option>
-                  <option value={6}>6 cars</option>
-                  <option value={11}>11 cars</option>
+                  {Array.from({ length: 9 }, (_, index) => index + 3).map(
+                    (count) => (
+                      <option key={count} value={count}>
+                        {count} cars
+                      </option>
+                    ),
+                  )}
                 </select>
               </label>
             </div>
           </section>
+          <SwitchPanel h={h} />
           <div className="below-board">
             <div className="tip-card">
               <span>
@@ -508,6 +521,9 @@ export default function App() {
                   <span className="piece-label">{piece.label}</span>
                   <span className="piece-name">{piece.name}</span>
                   <span className="piece-sku">KATO {piece.sku}</span>
+                  {piece.verification === "nominal" && (
+                    <span className="piece-precision">Verify physical fit</span>
+                  )}
                   <span className="piece-add">
                     <Plus size={12} />
                   </span>
@@ -661,6 +677,15 @@ export default function App() {
                   </button>
                 ))}
               </div>
+              {selectedTrack && (selectedTrack.elevation ?? 0) > 0 && (
+                <button
+                  className="button secondary"
+                  onClick={h.addMatchingPiers}
+                >
+                  <ArrowUpFromLine size={15} />
+                  Add matching piers
+                </button>
+              )}
               {selectedTrack &&
                 (selectedSpec.shape === "turnout" ||
                   selectedSpec.shape === "scissors") && (
@@ -718,6 +743,8 @@ export default function App() {
               </p>
             </div>
           )}
+          <RampBuilder h={h} />
+          <CheckSummary h={h} />
           <details className="inventory">
             <summary>
               Placed pieces <span>{h.pieceCount}</span>
@@ -782,15 +809,18 @@ export default function App() {
         onChange={(event) => void h.importLayout(event.target.files?.[0])}
       />
       {h.toast && (
-        <div className="toast" role="status">
-          <Check size={17} />
+        <div
+          className={`toast ${h.toastError ? "error" : ""}`}
+          role={h.toastError ? "alert" : "status"}
+        >
+          {h.toastError ? <AlertTriangle size={17} /> : <Check size={17} />}
           {h.toast}
         </div>
       )}
       {h.modal && (
         <div className="modal-backdrop" onClick={() => h.setModal(null)}>
           <section
-            className="modal"
+            className={`modal ${h.modal === "checks" ? "shopping-modal" : ""}`}
             role="dialog"
             aria-modal="true"
             aria-labelledby="modal-title"
@@ -799,18 +829,22 @@ export default function App() {
             <div className="modal-header">
               <div>
                 <div className="panel-eyebrow">
-                  {h.modal === "layouts"
-                    ? "THE NEXT ADVENTURE"
-                    : h.modal === "references"
-                      ? "REAL-WORLD INSPIRATION"
-                      : "WELCOME, CONDUCTOR"}
+                  {h.modal === "checks"
+                    ? "PHYSICAL LAYOUT REVIEW"
+                    : h.modal === "layouts"
+                      ? "THE NEXT ADVENTURE"
+                      : h.modal === "references"
+                        ? "REAL-WORLD INSPIRATION"
+                        : "WELCOME, CONDUCTOR"}
                 </div>
                 <h2 id="modal-title">
-                  {h.modal === "layouts"
-                    ? "Where shall we go?"
-                    : h.modal === "references"
-                      ? "From Kato to your little world"
-                      : "A railway you can explore in 3D"}
+                  {h.modal === "checks"
+                    ? "Check your physical layout"
+                    : h.modal === "layouts"
+                      ? "Where shall we go?"
+                      : h.modal === "references"
+                        ? "From Kato to your little world"
+                        : "A railway you can explore in 3D"}
                 </h2>
               </div>
               <button
@@ -821,7 +855,9 @@ export default function App() {
                 <X size={21} />
               </button>
             </div>
-            {h.modal === "layouts" ? (
+            {h.modal === "checks" ? (
+              <ShoppingReview h={h} />
+            ) : h.modal === "layouts" ? (
               <>
                 <p className="modal-intro">
                   Choose a starting point. Undo brings back your previous
@@ -945,11 +981,15 @@ export default function App() {
                     },
                     {
                       title: "Build into the sky",
-                      text: "Select a piece to rotate it or change its height. Set a different end height to make a ramp. Tracks only connect when their heights match; an overpass stays separate from the track below.",
+                      text: "Click a green connector, then choose a finish height and maximum grade in Build a gradual ramp. It calculates the track run and places matching catalog supports. The Check before shopping report identifies intermediate supports and transitions still needed. At 60 mm, Add matching piers uses the documented Kato 23-069 assembly.",
                     },
                     {
                       title: "All aboard the Yamanote Line",
-                      text: "Press play, change the speed, and reverse. Turnouts have straight and branch routes in their selection panel. Your train stops at an open end or a turnout set the other way. Try the full 11-car train on Tokyo Railway.",
+                      text: "Choose any train length from 3 to 11 cars. The Switch control desk numbers each turnout and sets its straight or branch route. A clear switch can change while the train runs; an occupied switch waits for the train to pass. Your train stops at an open end or points set the other way.",
+                    },
+                    {
+                      title: "Check before building for real",
+                      text: "The simulator blocks tracks, platforms, poles, and low bridges that obstruct its train envelope. A catenary gantry may straddle a track when its posts and beam clear the train. Check before shopping lists geometry and support issues alongside product codes. Resolve approximate parts with the shop; quantities count pieces, not retail packs.",
                     },
                     {
                       title: "Keep your little world",

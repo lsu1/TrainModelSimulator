@@ -66,7 +66,9 @@ describe('track geometry', () => {
     expect(angleError(endpoints(straight)[0].angle, Math.PI)).toBeLessThan(1e-8)
     expect(connectedEndpoint([straight, { ...forward, angle: Math.PI / 2 }], straight.id, 1)).toBeNull()
     expect(connectedEndpoint([straight, { ...forward, x: forward.x + 4 }], straight.id, 1)).toBeNull()
-    expect(connectedEndpoint([straight, { ...forward, x: forward.x + 2 }], straight.id, 1)).not.toBeNull()
+    expect(connectedEndpoint([straight, { ...forward, x: forward.x + 2 }], straight.id, 1)).toBeNull()
+    expect(connectedEndpoint([straight, { ...forward, x: forward.x + 0.2 }], straight.id, 1)).not.toBeNull()
+    expect(connectedEndpoint([straight, { ...forward, angle: forward.angle + Math.PI / 180 }], straight.id, 1)).toBeNull()
   })
 
   it.each(['oval', 'compact'] as const)('builds a closed %s with continuous tangents', (kind) => {
@@ -178,7 +180,7 @@ describe('elevation and drag joins', () => {
     const ramp: Track = { ...straight, elevation: 20, endElevation: 80 }
     const middle = pointAt(ramp, 124)
     expect(middle.z).toBe(50)
-    expect(middle.slope).toBeCloseTo(60 / 248)
+    expect(middle.slope).toBeCloseTo(60 / Math.sqrt(248 ** 2 - 60 ** 2))
     expect(pointAt(ramp, -30).z).toBe(20)
     expect(pointAt(ramp, 500).z).toBe(80)
     const upper = attachTrack('s124', 1, endpoints(ramp)[1], 'upper')
@@ -187,15 +189,27 @@ describe('elevation and drag joins', () => {
     const advanced = advanceTrain([ramp, upper], initial(ramp), 258)
     expect(advanced.position.trackId).toBe(upper.id)
     expect(sampleBehind([ramp, upper], advanced.position, 20)?.z).toBeCloseTo(20 + 60 * 238 / 248)
-    expect(sampleBehind([ramp], { ...initial(ramp, -1), distance: 120 }, 20)?.slope).toBeCloseTo(-60 / 248)
+    expect(sampleBehind([ramp], { ...initial(ramp, -1), distance: 120 }, 20)?.slope).toBeCloseTo(-60 / Math.sqrt(248 ** 2 - 60 ** 2))
+  })
+
+  it.each(['s248', 'ds248'])('keeps every graded %s route at its purchased three-dimensional length', (kind) => {
+    const ramp: Track = { ...straight, kind, elevation: 20, endElevation: 80, angle: Math.PI / 5 }
+    for (const route of pathsFor(ramp)) {
+      const start = route.pointAt(0)
+      const end = route.pointAt(route.length)
+      expect(Math.hypot(end.x - start.x, end.y - start.y, end.z - start.z)).toBeCloseTo(248, 10)
+      expect(Math.hypot(end.x - start.x, end.y - start.y)).toBeCloseTo(Math.sqrt(248 ** 2 - 60 ** 2), 10)
+      expect(end.z - start.z).toBe(60)
+      expect(route.length).toBe(248)
+    }
   })
 
   it('rejects a visually overlapping connection on another level', () => {
     const upper: Track = { ...straight, id: 'upper', x: 248, elevation: 80 }
     expect(connectedEndpoint([straight, upper], straight.id, 1)).toBeNull()
     expect(advanceTrain([straight, upper], initial(straight), 270).stopped).toBe(true)
-    expect(connectedEndpoint([straight, { ...upper, elevation: 0.9 }], straight.id, 1)).not.toBeNull()
-    expect(connectedEndpoint([straight, { ...upper, elevation: 1.1 }], straight.id, 1)).toBeNull()
+    expect(connectedEndpoint([straight, { ...upper, elevation: 0.2 }], straight.id, 1)).not.toBeNull()
+    expect(connectedEndpoint([straight, { ...upper, elevation: 0.3 }], straight.id, 1)).toBeNull()
   })
 
   it('snaps dragged pieces with tangent alignment and retains their height', () => {
@@ -217,6 +231,19 @@ describe('elevation and drag joins', () => {
     expect(snapTrack([straight], far)).toBe(far)
   })
 
+  it('makes snapped ports mathematically continuous in position, tangent, and height', () => {
+    const elevated = { ...straight, elevation: 80, endElevation: 80 }
+    const candidate: Track = { ...straight, id: 'candidate', x: 260, y: 4, angle: 0.2, elevation: 79.9, endElevation: 100 }
+    const snapped = snapTrack([elevated], candidate)
+    const a = endpoints(elevated)[1]
+    const b = endpoints(snapped)[0]
+    expect(Math.hypot(a.position.x - b.position.x, a.position.y - b.position.y)).toBeLessThan(1e-10)
+    expect(angleError(a.angle + Math.PI, b.angle)).toBeLessThan(1e-10)
+    expect(a.position.z).toBe(b.position.z)
+    expect((snapped.endElevation ?? 0) - (snapped.elevation ?? 0)).toBeCloseTo(20.1)
+    expect(connectedEndpoint([elevated, snapped], elevated.id, 1)?.track.id).toBe(snapped.id)
+  })
+
   it('creates a closed city layout using actual R381-30 catalog pieces', () => {
     const tracks = makeCityLayout()
     expect(tracks.filter((track) => TRACK_CATALOG.find((spec) => spec.kind === track.kind)?.radius === 381)).toHaveLength(12)
@@ -226,15 +253,16 @@ describe('elevation and drag joins', () => {
 
   it('creates an elevated circuit and a separate ground railway underneath it', () => {
     const tracks = makeViaductLayout()
-    const upper = tracks.filter((track) => track.elevation === 80)
+    const upper = tracks.filter((track) => track.elevation === 60)
     const ground = tracks.filter((track) => !track.elevation)
     expect(upper).toHaveLength(16)
     expect(ground).toHaveLength(5)
+    expect(ground.every(track => Math.abs(track.x - 124) < 1e-8)).toBe(true)
     expect(openEndpoints(upper)).toHaveLength(0)
     expect(openEndpoints(ground)).toHaveLength(2)
     expect(closedRouteLength(tracks, initial(tracks[0]))).not.toBeNull()
     const journey = advanceTrain(tracks, initial(tracks[0]), 300)
-    expect(sampleBehind(tracks, journey.position, 0)?.z).toBe(80)
+    expect(sampleBehind(tracks, journey.position, 0)?.z).toBe(60)
   })
 })
 

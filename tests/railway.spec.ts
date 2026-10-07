@@ -55,6 +55,7 @@ async function trainPoint(page: Page) {
 
 async function pickPoint(page: Page, id: string) {
   const canvas = scene(page);
+  await canvas.scrollIntoViewIfNeeded();
   let previous = '';
   let stableSince = 0;
   await expect.poll(async () => canvas.evaluate((element, pieceId) => {
@@ -111,7 +112,7 @@ test('Tokyo starter renders a real 3D railway and an eleven-car E235 without bro
   await expect(page.getByRole('heading', { name: 'Tokyo Railway', exact: true })).toBeVisible();
   await expect(page.getByText('20 tracks · 5 scenery pieces', { exact: true })).toBeVisible();
   await expect(page.getByText('Connected loop · ready to ride', { exact: true })).toBeVisible();
-  await expect(page.getByText('135 catalog pieces to discover.', { exact: true })).toBeVisible();
+  await expect(page.getByText('136 catalog pieces to discover.', { exact: true })).toBeVisible();
   await expect(scene(page)).toHaveAttribute('data-car-count', '11');
   expect(await canvasColors(scene(page))).toBeGreaterThan(32);
   expect(errors).toEqual([]);
@@ -171,16 +172,17 @@ test('3D train moves at the selected speed, pauses, and reverses without jumping
 test('train formations rebuild in 3D and the chosen formation survives a reload', async ({ page }) => {
   await openRailway(page);
   const formation = page.getByRole('combobox', { name: 'Train car count' });
-  for (const count of ['3', '6', '11']) {
+  await expect(formation.locator('option')).toHaveCount(9);
+  for (const count of ['3', '4', '5', '6', '7', '8', '9', '10', '11']) {
     await formation.selectOption(count);
     await expect(scene(page)).toHaveAttribute('data-car-count', count);
     expect((await savedLayout(page)).carCount).toBe(Number(count));
   }
-  await formation.selectOption('6');
+  await formation.selectOption('7');
   await page.reload();
   await expect(scene(page)).toHaveAttribute('data-ready', 'true');
-  await expect(formation).toHaveValue('6');
-  await expect(scene(page)).toHaveAttribute('data-car-count', '6');
+  await expect(formation).toHaveValue('7');
+  await expect(scene(page)).toHaveAttribute('data-car-count', '7');
 });
 
 test('catalog categories and product-number search expose referenced Kato pieces', async ({ page }) => {
@@ -202,8 +204,8 @@ test('catalog categories and product-number search expose referenced Kato pieces
   await expect(search).toHaveValue('');
   await page.getByRole('button', { name: 'Catalog & model references', exact: true }).click();
   const links = page.getByRole('dialog').getByRole('link');
-  await expect(links).toHaveCount(7);
-  for (const link of await links.all()) expect(await link.getAttribute('href')).toMatch(/^https:\/\/(katousa\.com|www\.katomodels\.com)\//);
+  await expect(links).toHaveCount(8);
+  for (const link of await links.all()) expect(await link.getAttribute('href')).toMatch(/^https:\/\/(katousa\.com|www\.katomodels\.com|unitrack\.katomodels\.com)\//);
 });
 
 test('eight curves build a closed 3D loop, with removal and undo restoring the connection', async ({ page }) => {
@@ -285,11 +287,14 @@ test('Sky Railway renders an elevated loop above its separate ground-level under
   const elevated = layout.tracks.filter((track: { id: string }) => !track.id.startsWith('ground-'));
   const ground = layout.tracks.filter((track: { id: string }) => track.id.startsWith('ground-'));
   expect(elevated.length).toBeGreaterThan(10);
-  expect(elevated.every((track: { elevation: number; endElevation: number }) => track.elevation === 80 && track.endElevation === 80)).toBe(true);
+  expect(elevated.every((track: { elevation: number; endElevation: number }) => track.elevation === 60 && track.endElevation === 60)).toBe(true);
   expect(ground).toHaveLength(5);
   expect(ground.every((track: { elevation: number }) => track.elevation === 0)).toBe(true);
-  await expect.poll(async () => (await trainPoint(page)).z).toBe(80);
-  await expect(page.getByLabel('New piece height')).toHaveValue('80');
+  const piers = layout.accessories.filter((piece: { kind: string }) => piece.kind === 'a-pier-tapered');
+  expect(piers).toHaveLength(16);
+  expect(piers.every((piece: { elevation: number }) => piece.elevation === 0)).toBe(true);
+  await expect.poll(async () => (await trainPoint(page)).z).toBe(60);
+  await expect(page.getByLabel('New piece height')).toHaveValue('60');
 });
 
 test('a selected turnout switches the running train onto its branch and persists the route', async ({ page }) => {
@@ -436,4 +441,207 @@ test('help traps and restores focus, and a small screen has no horizontal overfl
   await page.keyboard.press('Escape');
   await expect(dialog).toHaveCount(0);
   await expect(helpButton).toBeFocused();
+});
+
+function fixtureTrack(id: string, x: number, y = 0, patch: Record<string, unknown> = {}) {
+  return { id, kind: 's248', x, y, angle: 0, bend: 1, elevation: 0, endElevation: 0, ...patch };
+}
+
+function fixtureAccessory(id: string, kind: string, x: number, y: number) {
+  return { id, kind, x, y, angle: 0, elevation: 0 };
+}
+
+function fixtureLayout(name: string, tracks: Record<string, unknown>[], accessories: Record<string, unknown>[] = []) {
+  return { version: 2, name, tracks, accessories, carCount: 3 };
+}
+
+async function seedLayout(page: Page, layout: ReturnType<typeof fixtureLayout>) {
+  await page.addInitScript(value => {
+    if (!localStorage.getItem('little-railways-layout-v2')) {
+      localStorage.setItem('little-railways-layout-v2', JSON.stringify(value));
+    }
+  }, layout);
+  await openRailway(page);
+}
+
+async function reviewLayout(page: Page) {
+  await page.getByRole('button', { name: 'Check before shopping', exact: true }).click();
+  return page.getByRole('dialog', { name: 'Check your physical layout', exact: true });
+}
+
+test('numbered switches operate live without resetting a clear train and reject occupied changes', async ({ page }) => {
+  await freezeAnimationClock(page);
+  await seedLayout(page, fixtureLayout('Switch desk test', [
+    fixtureTrack('approach', 0),
+    fixtureTrack('switch-near', 248, 0, { kind: 't4l', bend: -1, switchNumber: 1 }),
+    fixtureTrack('switch-away', 900, 220, { kind: 't4r', switchNumber: 7 }),
+  ]));
+  const desk = page.getByRole('region', { name: 'Turnout switch controls' });
+  await expect(desk.getByRole('group', { name: 'Switch 1', exact: true })).toBeVisible();
+  await expect(desk.getByRole('group', { name: 'Switch 7', exact: true })).toBeVisible();
+  await page.getByRole('slider', { name: 'Train speed' }).focus();
+  await page.keyboard.press('End');
+  await page.getByRole('button', { name: 'Run train', exact: true }).click();
+  await advanceAnimation(page, 100);
+  const beforeSwitch = await trainPoint(page);
+  await desk.getByRole('button', { name: 'Switch 7 branch', exact: true }).click();
+  await advanceAnimation(page, 0);
+  const afterSwitch = await trainPoint(page);
+  expect(afterSwitch.x).toBeGreaterThanOrEqual(beforeSwitch.x);
+  expect(afterSwitch.x - beforeSwitch.x).toBeLessThanOrEqual(7);
+  expect(afterSwitch.y).toBe(beforeSwitch.y);
+  expect(afterSwitch.z).toBe(beforeSwitch.z);
+  await expect(page.getByRole('button', { name: 'Pause train', exact: true })).toBeVisible();
+  await expect(desk.getByRole('button', { name: 'Switch 7 branch', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await advanceAnimation(page, 650);
+  expect((await trainPoint(page)).x).toBeGreaterThan(beforeSwitch.x);
+  await desk.getByRole('button', { name: 'Switch 1 branch', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('Switch 1 is occupied');
+  await expect(desk.getByRole('button', { name: 'Switch 1 straight', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('button', { name: 'Pause train', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Pause train', exact: true }).click();
+  await desk.getByRole('button', { name: 'Switch 1 branch', exact: true }).click();
+  await expect(desk.getByRole('button', { name: 'Switch 1 branch', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await advanceAnimation(page, 200);
+  const badges = await scene(page).evaluate(element => JSON.parse((element as HTMLCanvasElement).dataset.switchNumbers!));
+  expect(badges).toEqual([
+    { id: 'switch-near', number: 1, state: 'branch' },
+    { id: 'switch-away', number: 7, state: 'branch' },
+  ]);
+  const saved = await savedLayout(page);
+  await page.reload();
+  await expect(scene(page)).toHaveAttribute('data-ready', 'true');
+  expect(await savedLayout(page)).toEqual(saved);
+  await expect(desk.getByRole('button', { name: 'Switch 7 branch', exact: true })).toHaveAttribute('aria-pressed', 'true');
+});
+
+test('guided ramp uses real S248 pieces, a grounded catalog pier, and a reviewable CSV', async ({ page }, testInfo) => {
+  await seedLayout(page, fixtureLayout('Ramp shopping test', []));
+  const builder = page.getByRole('region', { name: 'Ramp builder' });
+  await expect(builder.getByRole('combobox', { name: 'Ramp target height' })).toHaveValue('60');
+  await expect(builder.getByRole('combobox', { name: 'Ramp maximum grade' })).toHaveValue('3');
+  await expect(builder).toContainText('9 × S248');
+  await expect(builder).toContainText('support heights still need physical verification');
+  await builder.getByRole('button', { name: 'Build ramp', exact: true }).click();
+  const layout = await savedLayout(page);
+  expect(layout.tracks).toHaveLength(9);
+  expect(layout.tracks.every((track: { kind: string }) => track.kind === 's248')).toBe(true);
+  expect(layout.tracks[0].elevation).toBe(0);
+  expect(layout.tracks.at(-1).endElevation).toBe(60);
+  for (const track of layout.tracks) {
+    const rise = track.endElevation - track.elevation;
+    expect(rise).toBeGreaterThan(0);
+    expect(rise / Math.sqrt(248 ** 2 - rise ** 2) * 100).toBeLessThanOrEqual(3);
+  }
+  expect(layout.accessories).toHaveLength(1);
+  expect(layout.accessories[0]).toMatchObject({ kind: 'a-pier-tapered', elevation: 0 });
+  const report = await reviewLayout(page);
+  await expect(report.getByText('Raised track ends need verified supports', { exact: true }).first()).toBeVisible();
+  await expect(report.getByRole('row').filter({ hasText: '20-000' }).getByRole('cell').nth(2)).toHaveText('9');
+  await expect(report.getByRole('row').filter({ hasText: '23-069' }).getByRole('cell').nth(2)).toHaveText('1');
+  const downloadPromise = page.waitForEvent('download');
+  await report.getByRole('button', { name: 'Save shopping report', exact: true }).click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe('kato-layout-shopping-review.csv');
+  const exportPath = testInfo.outputPath('shopping-review.csv');
+  await download.saveAs(exportPath);
+  const csv = await readFile(exportPath, 'utf8');
+  expect(csv.split('\r\n').find(row => row.startsWith('"20-000",'))).toMatch(/^"20-000","[^"]*","9",/);
+  expect(csv.split('\r\n').find(row => row.startsWith('"23-069",'))).toMatch(/^"23-069","[^"]*","1",/);
+  expect(csv).toContain('Individual placed pieces, not retail packs');
+  expect(csv).toContain('Raised track ends need verified supports');
+  expect(csv).toContain('E235 minimum radius and maximum grade remain unconfirmed');
+});
+
+test('matching piers support a sixty-millimeter track without floating or duplicate pieces', async ({ page }) => {
+  await seedLayout(page, fixtureLayout('Supported track', []));
+  await page.getByRole('button', { name: straightButton, exact: true }).click();
+  await page.getByLabel('Selected piece height').fill('60');
+  await page.getByRole('button', { name: 'Add matching piers', exact: true }).click();
+  const supported = await savedLayout(page);
+  expect(supported.accessories).toHaveLength(2);
+  expect(supported.accessories.every((piece: { kind: string; elevation: number }) => piece.kind === 'a-pier-tapered' && piece.elevation === 0)).toBe(true);
+  await page.getByRole('button', { name: 'Add matching piers', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('No additional matching catalog piers');
+  expect((await savedLayout(page)).accessories).toHaveLength(2);
+  const report = await reviewLayout(page);
+  await expect(report.getByText('Raised track ends need verified supports', { exact: true })).toHaveCount(0);
+  await expect(report.getByRole('row').filter({ hasText: '23-069' }).getByRole('cell').nth(2)).toHaveText('2');
+});
+
+test('moving a platform into the train corridor is rejected and its rendered position rolls back', async ({ page }) => {
+  await seedLayout(page, fixtureLayout('Platform clearance', [fixtureTrack('rail', -124)], [
+    fixtureAccessory('platform', 'a-platform', 0, 90),
+  ]));
+  await page.getByRole('button', { name: 'Top view', exact: true }).click();
+  await page.getByRole('button', { name: 'Move pieces', exact: true }).click();
+  const original = (await savedLayout(page)).accessories[0];
+  const from = await pickPoint(page, 'platform');
+  const to = await pickPoint(page, 'rail');
+  await moveMouse(page, from, to);
+  await expect(page.getByRole('alert')).toContainText('Placement blocked:');
+  expect((await savedLayout(page)).accessories[0]).toEqual(original);
+  const rolledBack = await pickPoint(page, 'platform');
+  expect(Math.hypot(rolledBack.x - from.x, rolledBack.y - from.y)).toBeLessThan(3);
+  await expect(page.getByRole('button', { name: 'Undo last change' })).toBeDisabled();
+});
+
+test('a centered catenary drop is allowed but moving its post onto the rails is rejected', async ({ page }) => {
+  await seedLayout(page, fixtureLayout('Catenary clearance', [fixtureTrack('rail', -124)], [
+    fixtureAccessory('reference-gantry', 'a-catenary', 0, 100),
+  ]));
+  await page.getByRole('button', { name: 'Top view', exact: true }).click();
+  await page.getByRole('searchbox', { name: 'Search Kato catalog' }).fill('23-059-1');
+  const target = await pickPoint(page, 'rail');
+  const bounds = (await scene(page).boundingBox())!;
+  await page.getByRole('button', { name: 'Add Single-track catenary pole', exact: true }).dragTo(scene(page), {
+    targetPosition: { x: target.x - bounds.x, y: target.y - bounds.y },
+  });
+  await expect(page.getByText('1 tracks · 2 scenery pieces', { exact: true })).toBeVisible();
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  const added = (await savedLayout(page)).accessories.find((piece: { id: string }) => piece.id !== 'reference-gantry');
+  expect(Math.abs(added.y)).toBeLessThan(2);
+  await page.getByRole('button', { name: 'Move pieces', exact: true }).click();
+  const center = await pickPoint(page, added.id);
+  const reference = await pickPoint(page, 'reference-gantry');
+  const shift = { x: (reference.x - center.x) * 17 / 100, y: (reference.y - center.y) * 17 / 100 };
+  const post = { x: center.x + shift.x, y: center.y + shift.y };
+  await moveMouse(page, post, { x: post.x + shift.x, y: post.y + shift.y });
+  await expect(page.getByRole('alert')).toContainText('catenary post is in the train');
+  expect((await savedLayout(page)).accessories.find((piece: { id: string }) => piece.id === added.id)).toEqual(added);
+});
+
+test('physical review identifies a three-millimeter join gap, angular mismatch, and nominal turnout', async ({ page }) => {
+  await seedLayout(page, fixtureLayout('Physical fit review', [
+    fixtureTrack('first', 0),
+    fixtureTrack('near-fit', 251, 0, { angle: Math.PI / 180 }),
+    fixtureTrack('turnout', 1000, 150, { kind: 't4l', bend: -1, switchNumber: 4 }),
+  ]));
+  const report = await reviewLayout(page);
+  await expect(report.getByText('Nearby connectors have a 3 mm gap', { exact: true })).toBeVisible();
+  await expect(report.getByText('Nearby connectors differ by 1°', { exact: true })).toBeVisible();
+  await expect(report.getByText('#4 Left uses nominal geometry', { exact: true })).toBeVisible();
+  await expect(report.getByRole('row').filter({ hasText: '20-220' }).getByRole('cell').nth(3)).toHaveText('Approximate model · verify fit');
+  await expect(report).toContainText('Connections must meet within 0.25 mm and 0.25°');
+  await expect(report.getByText('Fix the reported conflicts before buying.', { exact: true })).toBeVisible();
+});
+
+test('an earlier colliding layout can be imported, inspected, and repaired rather than silently discarded', async ({ page }) => {
+  await seedLayout(page, fixtureLayout('Empty import test', []));
+  const colliding = fixtureLayout('Old colliding railway', [fixtureTrack('rail', -124)], [
+    fixtureAccessory('platform', 'a-platform', 0, 0),
+  ]);
+  await importData(page, colliding);
+  await expect(page.getByRole('heading', { name: colliding.name, exact: true })).toBeVisible();
+  expect((await savedLayout(page)).accessories).toHaveLength(1);
+  await expect.poll(async () => scene(page).evaluate(element => JSON.parse((element as HTMLCanvasElement).dataset.errorPieceIds ?? '[]'))).toEqual(expect.arrayContaining(['rail', 'platform']));
+  const report = await reviewLayout(page);
+  const conflict = report.locator('.check-issue.error').filter({ hasText: 'platform' }).first();
+  await expect(conflict).toBeVisible();
+  await conflict.getByRole('button', { name: 'Show DX island platform', exact: true }).click();
+  await expect(report).toHaveCount(0);
+  await page.getByRole('button', { name: 'Remove', exact: true }).click();
+  expect((await savedLayout(page)).accessories).toHaveLength(0);
+  const repaired = await reviewLayout(page);
+  await expect(repaired.locator('.check-issue.error')).toHaveCount(0);
 });

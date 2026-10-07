@@ -45,6 +45,10 @@ export interface CatalogItem {
     | "crossingGate"
     | "building";
   footprint?: { length: number; width: number; height: number };
+  /** Documented roadbed-base height of a complete support assembly, in mm. */
+  supportDeckHeight?: number;
+  /** Physical pier-column height; may differ from the attached roadbed height. */
+  supportComponentHeight?: number;
   color?: string;
   sourceUrl: string;
   verification: "verified" | "nominal";

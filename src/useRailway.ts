@@ -12,15 +12,17 @@ import {
 } from "./track";
 import type { Endpoint, Track, TrainPosition } from "./track";
 import { STORAGE_KEY, createLayout, loadLayout, parseLayout } from "./layout";
-import type { LayoutData, LayoutPreset } from "./layout";
+import type { LayoutData, LayoutPreset, PlacedAccessory } from "./layout";
 import { TRAIN_SCALE } from "./trainModel";
-import { advanceConsist } from "./trainMotion";
+import { advanceConsist, occupiedTrackIds } from "./trainMotion";
+import { auditClearances, checkPlacement } from "./clearance";
+import { auditEngineering, planRamp, trackGradePercent } from "./engineering";
 
 export const CATALOG = new Map(
   KATO_CATALOG.map((piece) => [piece.kind, piece]),
 );
 type Anchor = Endpoint & { trackId: string; end: number };
-export type Modal = "layouts" | "help" | "references" | null;
+export type Modal = "layouts" | "help" | "references" | "checks" | null;
 const initialTrain = (tracks: Track[]): TrainPosition => {
   const first = tracks[0];
   const shape = first && CATALOG.get(first.kind)?.shape;
@@ -68,6 +70,9 @@ export function useRailway() {
   const [cabForward, setCabForward] = useState(true);
   const [modal, setModal] = useState<Modal>(null);
   const [toast, setToast] = useState("");
+  const [toastError, setToastError] = useState(false);
+  const [rampTarget, setRampTarget] = useState(60);
+  const [rampGrade, setRampGrade] = useState(3);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [saved, setSaved] = useState(true);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -100,10 +105,110 @@ export function useRailway() {
     [category, search],
   );
 
-  const notify = (message: string) => {
+  const switches = useMemo(
+    () =>
+      tracks
+        .filter((track) => {
+          const shape = CATALOG.get(track.kind)?.shape;
+          return shape === "turnout" || shape === "scissors";
+        })
+        .sort((a, b) => (a.switchNumber ?? 0) - (b.switchNumber ?? 0)),
+    [tracks],
+  );
+  const issues = useMemo(
+    () => [...auditClearances(layout), ...auditEngineering(layout)],
+    [layout],
+  );
+  const errors = issues.filter((issue) => issue.severity === "error");
+  const warnings = issues.filter((issue) => issue.severity === "warning");
+  const rampOrigin = useMemo(
+    () => ({
+      x: tracks.length
+        ? Math.max(
+            ...tracks.flatMap((track) =>
+              endpoints(track).map((end) => end.position.x),
+            ),
+          ) + 90
+        : -300,
+      y: 0,
+      angle: 0,
+      elevation: buildHeight,
+    }),
+    [tracks, buildHeight],
+  );
+  const rampPlan = useMemo(
+    () =>
+      planRamp({
+        anchor: anchor ?? undefined,
+        origin: rampOrigin,
+        targetHeight: rampTarget,
+        maxGradePercent: rampGrade,
+        idPrefix: "ramp-preview",
+        existingAccessories: accessories,
+      }),
+    [anchor, rampOrigin, rampTarget, rampGrade, accessories],
+  );
+  const shoppingRows = useMemo(() => {
+    const grouped = new Map<
+      string,
+      {
+        sku: string;
+        name: string;
+        quantity: number;
+        verified: boolean;
+        sourceUrl: string;
+        notes: string[];
+      }
+    >();
+    for (const piece of [...tracks, ...accessories]) {
+      const spec = CATALOG.get(piece.kind)!;
+      const key = spec.sku ?? spec.kind;
+      const row = grouped.get(key);
+      if (row) {
+        row.quantity += 1;
+        row.verified &&= spec.verification === "verified";
+        if (!row.name.includes(spec.label)) row.name += ` / ${spec.label}`;
+        if (spec.notes && !row.notes.includes(spec.notes))
+          row.notes.push(spec.notes);
+      } else
+        grouped.set(key, {
+          sku: spec.sku ?? "Needs identification",
+          name: `${spec.label} · ${spec.name}`,
+          quantity: 1,
+          verified: spec.verification === "verified",
+          sourceUrl: spec.sourceUrl,
+          notes: spec.notes ? [spec.notes] : [],
+        });
+    }
+    return [...grouped.values()].sort((a, b) => a.sku.localeCompare(b.sku));
+  }, [tracks, accessories]);
+
+  const notify = (message: string, error = false) => {
     setToast(message);
+    setToastError(error);
     if (toastTimer.current) clearTimeout(toastTimer.current);
-    toastTimer.current = setTimeout(() => setToast(""), 4200);
+    toastTimer.current = setTimeout(() => setToast(""), error ? 12000 : 4200);
+  };
+  const canPlace = (piece: Track | PlacedAccessory) => {
+    const shape = CATALOG.get(piece.kind)?.shape;
+    if (
+      "bend" in piece &&
+      (shape === "straight" || shape === "doubleStraight") &&
+      !Number.isFinite(trackGradePercent(piece))
+    ) {
+      notify(
+        "Placement blocked: this rise is longer than the purchased track piece. Build a longer, gradual ramp.",
+        true,
+      );
+      return false;
+    }
+    const result = checkPlacement(layout, piece);
+    if (!result.allowed)
+      notify(
+        `Placement blocked: ${result.issues.find((issue) => issue.severity === "error")?.message ?? "This piece obstructs the railway."}`,
+        true,
+      );
+    return result.allowed;
   };
   const resetTrain = (nextTracks: Track[]) => {
     const next = initialTrain(nextTracks);
@@ -163,6 +268,7 @@ export function useRailway() {
         angle: 0,
         elevation: buildHeight,
       };
+      if (!canPlace(piece)) return;
       changeLayout({ ...layout, accessories: [...accessories, piece] });
       setSelectedId(id);
       notify(`Placed ${spec.label}. Switch to Move pieces to drag it.`);
@@ -189,6 +295,10 @@ export function useRailway() {
               endElevation: buildHeight,
             };
       const next = drop ? snapTrack(tracks, base) : base;
+      if (spec.shape === "turnout" || spec.shape === "scissors")
+        next.switchNumber =
+          Math.max(0, ...switches.map((track) => track.switchNumber ?? 0)) + 1;
+      if (!canPlace(next)) return;
       const newTracks = [...tracks, next];
       changeLayout({ ...layout, tracks: newTracks });
       setSelectedId(id);
@@ -208,11 +318,14 @@ export function useRailway() {
         tracks.filter((t) => t.id !== id),
         { ...track, x, y },
       );
+      if (!canPlace(next)) return;
       changeLayout(
         { ...layout, tracks: tracks.map((t) => (t.id === id ? next : t)) },
         true,
       );
-    } else
+    } else {
+      const accessory = accessories.find((piece) => piece.id === id);
+      if (!accessory || !canPlace({ ...accessory, x, y })) return;
       changeLayout(
         {
           ...layout,
@@ -222,6 +335,7 @@ export function useRailway() {
         },
         true,
       );
+    }
     setSelectedId(id);
   };
   const updateSelection = (patch: {
@@ -230,7 +344,12 @@ export function useRailway() {
     endElevation?: number;
     switchState?: "straight" | "branch";
   }) => {
-    if (selectedTrack)
+    if (patch.switchState && selectedTrack) {
+      setSwitchState(selectedTrack.id, patch.switchState);
+      return;
+    }
+    if (selectedTrack) {
+      if (!canPlace({ ...selectedTrack, ...patch })) return;
       changeLayout(
         {
           ...layout,
@@ -240,7 +359,8 @@ export function useRailway() {
         },
         true,
       );
-    else if (selectedAccessory)
+    } else if (selectedAccessory) {
+      if (!canPlace({ ...selectedAccessory, ...patch })) return;
       changeLayout(
         {
           ...layout,
@@ -258,6 +378,202 @@ export function useRailway() {
         },
         true,
       );
+    }
+  };
+  const setSwitchState = (id: string, state: "straight" | "branch") => {
+    const track = tracks.find((piece) => piece.id === id);
+    if (!track || (track.switchState ?? "straight") === state) return;
+    if (
+      running &&
+      occupiedTrackIds(
+        tracks,
+        positionRef.current,
+        cabForward,
+        layout.carCount,
+      ).has(id)
+    ) {
+      notify(
+        `Switch ${track.switchNumber} is occupied. Wait until the train clears it.`,
+        true,
+      );
+      return;
+    }
+    const nextTracks = tracks.map((piece) =>
+      piece.id === id ? { ...piece, switchState: state } : piece,
+    );
+    setHistory((previous) => [...previous.slice(-49), layout]);
+    setLayout({ ...layout, tracks: nextTracks });
+    lapProgressRef.current = 0;
+    if (!running && positionRef.current.trackId === id) {
+      const lane = (positionRef.current.route ?? 0) % 2;
+      const route =
+        CATALOG.get(track.kind)?.shape === "scissors"
+          ? lane + (state === "branch" ? 2 : 0)
+          : state === "branch"
+            ? 1
+            : 0;
+      const next = {
+        ...positionRef.current,
+        route,
+        distance: Math.min(
+          positionRef.current.distance,
+          trackLength(nextTracks.find((piece) => piece.id === id)!, route),
+        ),
+      };
+      positionRef.current = next;
+      setPosition(next);
+    }
+    notify(
+      `Switch ${track.switchNumber}: ${state === "branch" ? "branch" : "straight"} route.`,
+    );
+  };
+  const buildRamp = () => {
+    const plan = planRamp({
+      anchor: anchor ?? undefined,
+      origin: rampOrigin,
+      targetHeight: rampTarget,
+      maxGradePercent: rampGrade,
+      idPrefix: `ramp-${crypto.randomUUID()}`,
+      existingAccessories: accessories,
+    });
+    const invalid = plan.issues.find((issue) => issue.severity === "error");
+    if (invalid) {
+      notify(invalid.message, true);
+      return;
+    }
+    if (pieceCount + plan.tracks.length + plan.accessories.length > 300) {
+      notify(
+        "There is not enough room in the 300-piece limit for this ramp.",
+        true,
+      );
+      return;
+    }
+    const next = {
+      ...layout,
+      tracks: [...tracks, ...plan.tracks],
+      accessories: [...accessories, ...plan.accessories],
+    };
+    const ids = new Set(
+      [...plan.tracks, ...plan.accessories].map((piece) => piece.id),
+    );
+    const conflict = auditClearances(next).find(
+      (issue) =>
+        issue.severity === "error" && issue.pieceIds.some((id) => ids.has(id)),
+    );
+    if (conflict) {
+      notify(`Ramp blocked: ${conflict.message}`, true);
+      return;
+    }
+    changeLayout(next);
+    const last = plan.tracks.at(-1);
+    if (last) {
+      setSelectedId(last.id);
+      setAnchor({ ...endpoints(last)[1], trackId: last.id, end: 1 });
+    }
+    setBuildHeight(rampTarget);
+    setViewRevision((value) => value + 1);
+    notify(
+      `Built ${plan.pieceCount} pieces at ${plan.gradePercent.toFixed(1)}%. Check the report for any supports still needed.`,
+    );
+  };
+  const addMatchingPiers = () => {
+    if (!selectedTrack) return;
+    const additions: PlacedAccessory[] = [];
+    for (const end of endpoints(selectedTrack)) {
+      const height = end.position.z ?? 0;
+      if (
+        height <= 0 ||
+        accessories.some(
+          (piece) =>
+            CATALOG.get(piece.kind)?.accessoryType === "pier" &&
+            Math.hypot(piece.x - end.position.x, piece.y - end.position.y) <
+              0.5,
+        )
+      )
+        continue;
+      const support = KATO_CATALOG.find(
+        (piece) =>
+          piece.accessoryType === "pier" &&
+          Math.abs((piece.supportDeckHeight ?? -1) - height) < 0.25,
+      );
+      if (!support) continue;
+      const piece = {
+        id: crypto.randomUUID(),
+        kind: support.kind,
+        x: end.position.x,
+        y: end.position.y,
+        angle: end.angle,
+        elevation: 0,
+      };
+      if (!canPlace(piece)) return;
+      additions.push(piece);
+    }
+    if (!additions.length) {
+      notify(
+        "No additional matching catalog piers found. The documented 23-069 assembly supports a 60 mm roadbed; other heights need verified supports.",
+        true,
+      );
+      return;
+    }
+    if (pieceCount + additions.length > 300) {
+      notify("Remove a piece before adding more piers.", true);
+      return;
+    }
+    changeLayout(
+      { ...layout, accessories: [...accessories, ...additions] },
+      true,
+    );
+    notify(
+      `Added ${additions.length} matching pier${additions.length === 1 ? "" : "s"}.`,
+    );
+  };
+  const exportShoppingReport = () => {
+    const quote = (value: string | number) =>
+      `"${String(value).replaceAll('"', '""')}"`;
+    const rows: (string | number)[][] = [
+      ["Layout", layout.name],
+      ["Review", `${errors.length} errors; ${warnings.length} items to verify`],
+      [
+        "Quantities",
+        "Individual placed pieces, not retail packs. Confirm packs and physical fit with the shop.",
+      ],
+      [
+        "Hardware",
+        "The switch desk is virtual. Physical controllers, wiring, power supplies, and extra adapters are not included.",
+      ],
+      [],
+      ["Kato product", "Placed model", "Pieces", "Geometry", "Source", "Notes"],
+      ...shoppingRows.map((row) => [
+        row.sku,
+        row.name,
+        row.quantity,
+        row.verified
+          ? "Catalog dimensions"
+          : "Approximate model: verify physical geometry",
+        row.sourceUrl,
+        row.notes.join(" "),
+      ]),
+      [],
+      ["Layout issues"],
+      ...issues.map((issue) => [
+        issue.severity,
+        issue.message,
+        issue.detail ?? "",
+      ]),
+    ];
+    const url = URL.createObjectURL(
+      new Blob([rows.map((row) => row.map(quote).join(",")).join("\r\n")], {
+        type: "text/csv;charset=utf-8",
+      }),
+    );
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "kato-layout-shopping-review.csv";
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    notify(
+      "Saved the parts and geometry review. Quantities are pieces, not packs.",
+    );
   };
   const removeSelected = () => {
     if (!selection) return;
@@ -431,7 +747,7 @@ export function useRailway() {
   }, [modal]);
   const chooseLayout = (preset: LayoutPreset) => {
     changeLayout(createLayout(preset));
-    setBuildHeight(preset === "viaduct" ? 80 : 0);
+    setBuildHeight(preset === "viaduct" ? 60 : 0);
     setCameraPreset("perspective");
     setViewRevision((v) => v + 1);
     setModal(null);
@@ -474,14 +790,7 @@ export function useRailway() {
     }
     if (fileInput.current) fileInput.current.value = "";
   };
-  const grade = selectedTrack
-    ? (Math.abs(
-        (selectedTrack.endElevation ?? selectedTrack.elevation ?? 0) -
-          (selectedTrack.elevation ?? 0),
-      ) /
-        trackLength(selectedTrack)) *
-      100
-    : 0;
+  const grade = selectedTrack ? trackGradePercent(selectedTrack) : 0;
   return {
     layout,
     tracks,
@@ -516,6 +825,17 @@ export function useRailway() {
     modal,
     setModal,
     toast,
+    toastError,
+    switches,
+    issues,
+    errors,
+    warnings,
+    rampTarget,
+    setRampTarget,
+    rampGrade,
+    setRampGrade,
+    rampPlan,
+    shoppingRows,
     saved,
     fileInput,
     selection,
@@ -533,6 +853,10 @@ export function useRailway() {
     addPiece,
     movePiece,
     updateSelection,
+    setSwitchState,
+    buildRamp,
+    addMatchingPiers,
+    exportShoppingReport,
     removeSelected,
     toggleRunning,
     reverse,

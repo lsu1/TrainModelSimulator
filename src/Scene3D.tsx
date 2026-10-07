@@ -4,6 +4,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { KATO_CATALOG } from './catalog';
 import type { PlacedAccessory } from './layout';
+import type { LayoutIssue } from './clearance';
 import { connectedEndpoint, endpoints, pathsFor, sampleBehind } from './track';
 import type { Endpoint, Track, TrainPosition } from './track';
 import { CAR_LENGTH, CAR_SPACING, createE235Car, disposeTrainModel } from './trainModel';
@@ -24,6 +25,7 @@ interface Scene3DProps {
   onAnchor: (anchor: Endpoint & { trackId: string; end: number }) => void;
   onDropItem?: (kind: string, x: number, y: number) => void;
   placementHeight?: number;
+  issues?: LayoutIssue[];
   onReady?: (ready: boolean) => void;
 }
 
@@ -168,6 +170,28 @@ function setTangent(object: THREE.Object3D, angle: number, slope = 0) {
   const sideways = forward.clone().cross(UP).normalize();
   const up = sideways.clone().cross(forward).normalize();
   object.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(forward, up, sideways));
+}
+
+function switchBadge(number: number, branch: boolean): THREE.Sprite {
+  const canvas = document.createElement('canvas'); canvas.width = 192; canvas.height = 128;
+  const context = canvas.getContext('2d')!;
+  context.beginPath(); context.roundRect(4, 4, 184, 120, 24);
+  context.fillStyle = '#244c40'; context.fill();
+  context.lineWidth = 5; context.strokeStyle = '#f5f7ec'; context.stroke();
+  context.lineCap = 'round'; context.lineJoin = 'round'; context.lineWidth = 7;
+  context.beginPath(); context.moveTo(34, 98); context.lineTo(34, 30);
+  context.strokeStyle = branch ? '#849a85' : '#bedc79'; context.stroke();
+  context.beginPath(); context.moveTo(34, 72); context.lineTo(56, 45); context.lineTo(56, 30);
+  context.strokeStyle = branch ? '#bedc79' : '#849a85'; context.stroke();
+  context.fillStyle = '#f5f7ec'; context.font = 'bold 59px sans-serif';
+  context.textAlign = 'center'; context.textBaseline = 'middle'; context.fillText(String(number), 124, 66);
+  const texture = new THREE.CanvasTexture(canvas); texture.colorSpace = THREE.SRGBColorSpace;
+  const material = new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false, depthWrite: false, toneMapped: false, sizeAttenuation: false });
+  material.userData.temporary = true;
+  const sprite = new THREE.Sprite(material);
+  sprite.userData.switchBadge = true; sprite.userData.switchNumber = number;
+  sprite.renderOrder = 8;
+  return sprite;
 }
 
 function makeTrack(track: Track, library: ModelLibrary): THREE.Group {
@@ -315,18 +339,6 @@ function makeTrack(track: Track, library: ModelLibrary): THREE.Group {
       void b;
       }
     }
-    // Supports are generated below the elevated deck; explicit piers remain placeable too.
-    for (let d = 10; d < paths[0].length; d += 124) {
-      const p = paths[0].pointAt(d);
-      if (p.z < 18) continue;
-      const pier = new THREE.Group();
-      pier.position.set(p.x - track.x, 0, p.y - track.y); setTangent(pier, p.angle);
-      const offset = (item.lanes ?? 1) > 1 ? (item.laneSpacing ?? 33) / 2 : 0;
-      box(pier, library, 17, 4, width - 3, 0, 2, offset, '#b8bcb1');
-      box(pier, library, 9, p.z - 7, 12, 0, (p.z - 7) / 2 + 4, offset, '#b5b9b0');
-      box(pier, library, 14, 4, width - 4, 0, p.z - 2, offset, '#c5c9bd');
-      group.add(pier);
-    }
   }
 
   if (item.category === 'turnout') {
@@ -335,6 +347,12 @@ function makeTrack(track: Track, library: ModelLibrary): THREE.Group {
     box(lever, library, 21, 2.5, 5, 0, 0, -14, '#444b45');
     box(lever, library, 6, 2, 3.3, track.switchState === 'branch' ? 4 : -4, 2, -14, '#a2b67b');
     group.add(lever);
+    if (track.switchNumber !== undefined) {
+      const badge = switchBadge(track.switchNumber, track.switchState === 'branch');
+      const side = track.bend === 1 ? -1 : 1;
+      badge.position.set(p.x - track.x - Math.sin(p.angle) * side * 23, p.z + 25, p.y - track.y + Math.cos(p.angle) * side * 23);
+      group.add(badge);
+    }
   }
   return group;
 }
@@ -422,11 +440,24 @@ function makeAccessory(accessory: PlacedAccessory, library: ModelLibrary): THREE
       box(group, library, entry + 5, 2, Math.min(width / 2, 23) + 6, -length / 3, 39, 0, '#627d69');
     }
   } else if (kind === 'pier') {
+    if (accessory.kind === 'a-pier-tapered') {
+      const componentHeight = item.supportComponentHeight ?? 50;
+      const assemblyHeight = item.supportDeckHeight ?? 60;
+      box(group, library, length, 4, width, 0, 2, 0, '#b7bbb0');
+      const shaft = new THREE.Mesh(new THREE.CylinderGeometry(7.5 * Math.SQRT2, 12.5 * Math.SQRT2, componentHeight - 7, 4), library.material('#bfc3b8'));
+      shaft.rotation.y = Math.PI / 4; shaft.position.y = (componentHeight - 7) / 2 + 4;
+      shaft.castShadow = shaft.receiveShadow = true; group.add(shaft);
+      box(group, library, 24, 3, 24, 0, componentHeight - 1.5, 0, '#c9ccbf');
+      const attachmentHeight = assemblyHeight - componentHeight;
+      box(group, library, 15, attachmentHeight - 2, 18, 0, componentHeight + (attachmentHeight - 2) / 2, 0, '#969e92');
+      box(group, library, 28, 2, 28, 0, assemblyHeight - 1, 0, '#aeb7a6');
+    } else {
     box(group, library, length, 4, width, 0, 2, 0, '#b7bbb0');
     const columns = width > 40 ? [-width / 3, width / 3] : [0];
     for (const z of columns) box(group, library, Math.max(8, length * .46), Math.max(8, height - 8), 9, 0, height / 2, z, '#bfc3b8');
     box(group, library, length, 5, width, 0, height - 2.5, 0, '#c9ccbf');
     box(group, library, length + 2, 1, width + 2, 0, height + .3, 0, '#dde0d2');
+    }
   } else if (kind === 'catenary') {
     const span = Math.max(width, (item.lanes ?? 1) > 1 ? 70 : 33), top = Math.max(height, 54);
     for (const side of [-1, 1]) {
@@ -493,12 +524,16 @@ function makeAccessory(accessory: PlacedAccessory, library: ModelLibrary): THREE
 function disposePiece(group: THREE.Object3D, library: ModelLibrary) {
   const geometries = new Set<THREE.BufferGeometry>(), materials = new Set<THREE.Material>();
   group.traverse(object => {
+    if (object instanceof THREE.Sprite) {
+      if (object.material.userData.temporary) materials.add(object.material);
+      return;
+    }
     if (!(object instanceof THREE.Mesh)) return;
     if (!library.geometry.has(object.geometry)) geometries.add(object.geometry);
     for (const material of Array.isArray(object.material) ? object.material : [object.material]) if (material.userData.temporary) materials.add(material);
   });
   for (const geometry of geometries) geometry.dispose();
-  for (const material of materials) { if (material instanceof THREE.MeshStandardMaterial) material.map?.dispose(); material.dispose(); }
+  for (const material of materials) { if (material instanceof THREE.MeshStandardMaterial || material instanceof THREE.SpriteMaterial) material.map?.dispose(); material.dispose(); }
 }
 
 interface Runtime {
@@ -512,6 +547,7 @@ interface Runtime {
   trains: THREE.Group;
   library: ModelLibrary;
   selected: THREE.BoxHelper | null;
+  issueOutlines: THREE.BoxHelper[];
   updateLayout: () => void;
   fitCamera: () => void;
   publishPickPoints: () => void;
@@ -590,6 +626,7 @@ export default function Scene3D(props: Scene3DProps) {
     let frame = 0, stopped = false, pickDirty = true, lastPickTime = 0;
     let previousCameraPreset: Scene3DProps['cameraPreset'] = 'perspective';
     const selectionMaterial = new THREE.LineBasicMaterial({ color: '#d79e4c', transparent: true, opacity: .6, depthTest: false });
+    const errorMaterial = new THREE.LineBasicMaterial({ color: '#c64d3d', transparent: true, opacity: .85, depthTest: false });
     const markerMaterial = new THREE.MeshStandardMaterial({ color: '#66a58d', roughness: .7, transparent: true, opacity: .9 });
     const activeMarkerMaterial = new THREE.MeshStandardMaterial({ color: '#d9a349', roughness: .7 });
     const markerGeometry = new THREE.CylinderGeometry(7.8, 7.8, .8, 32);
@@ -637,6 +674,13 @@ export default function Scene3D(props: Scene3DProps) {
       renderer.domElement.dataset.pickPoints = JSON.stringify(points);
       pickDirty = false;
     };
+    const sizeSwitchBadges = () => {
+      const height = Math.max(1, renderer.domElement.clientHeight);
+      const millimeters = 2 * 22 / (height * camera.projectionMatrix.elements[5] * SCALE);
+      pieces.traverse(object => {
+        if (object.userData.switchBadge) object.scale.set(millimeters * 1.5, millimeters, 1);
+      });
+    };
     const fitCamera = () => {
       if (latest.current.cameraPreset === 'ride') return;
       const bounds = new THREE.Box3().setFromObject(pieces);
@@ -680,13 +724,20 @@ export default function Scene3D(props: Scene3DProps) {
     const updateSelection = () => {
       const r = runtime.current; if (!r) return;
       if (r.selected) { r.selected.removeFromParent(); r.selected.geometry.dispose(); r.selected = null; }
-      const selected = pieces.children.find(piece => piece.userData.pieceId === latest.current.selectedId);
-      if (selected) {
-        const outline = new THREE.BoxHelper(selected, '#d79e4c');
-        outline.material.dispose(); outline.material = selectionMaterial;
+      for (const outline of r.issueOutlines) { outline.removeFromParent(); outline.geometry.dispose(); }
+      r.issueOutlines = [];
+      const errorIds = new Set((latest.current.issues ?? []).filter(issue => issue.severity === 'error').flatMap(issue => issue.pieceIds));
+      const addOutline = (piece: THREE.Object3D, error: boolean) => {
+        const outline = new THREE.BoxHelper(piece, error ? '#c64d3d' : '#d79e4c');
+        outline.material.dispose(); outline.material = error ? errorMaterial : selectionMaterial;
         // BoxHelper supplies coordinates in the scene's scaled world already.
-        scene.add(outline); r.selected = outline;
-      }
+        scene.add(outline);
+        return outline;
+      };
+      const selected = pieces.children.find(piece => piece.userData.pieceId === latest.current.selectedId);
+      if (selected) r.selected = addOutline(selected, errorIds.has(selected.userData.pieceId));
+      for (const piece of pieces.children) if (piece !== selected && errorIds.has(piece.userData.pieceId)) r.issueOutlines.push(addOutline(piece, true));
+      renderer.domElement.dataset.errorPieceIds = JSON.stringify([...errorIds]);
     };
     const updateAnchors = () => {
       anchors.clear();
@@ -729,7 +780,8 @@ export default function Scene3D(props: Scene3DProps) {
           makeTree(x, bounds.max.z + margin + (i % 2) * 29, 38 + i % 3 * 7);
         }
       }
-      updateAnchors(); updateSelection(); pickDirty = true;
+      sizeSwitchBadges(); updateAnchors(); updateSelection(); pickDirty = true;
+      renderer.domElement.dataset.switchNumbers = JSON.stringify(latest.current.tracks.filter(track => track.switchNumber !== undefined).map(track => ({ id: track.id, number: track.switchNumber, state: track.switchState ?? 'straight' })));
     };
     const onDown = (event: PointerEvent) => {
       if (event.button !== 0) return;
@@ -765,9 +817,13 @@ export default function Scene3D(props: Scene3DProps) {
         controls.enabled = latest.current.cameraPreset !== 'ride';
         renderer.domElement.style.cursor = 'grab';
         if (renderer.domElement.hasPointerCapture(event.pointerId)) renderer.domElement.releasePointerCapture(event.pointerId);
+        const x = current.group.position.x, y = current.group.position.z;
+        // A rejected placement leaves the authoritative layout and its rendering intact.
+        current.group.position.copy(current.original);
+        current.group.updateMatrixWorld(true);
+        runtime.current?.selected?.update();
         latest.current.onSelect(current.id);
-        if (current.moved) latest.current.onMove(current.id, current.group.position.x, current.group.position.z);
-        else current.group.position.copy(current.original);
+        if (current.moved) latest.current.onMove(current.id, x, y);
         pickDirty = true; pointerDown = null; return;
       }
       if (pointerDown && Math.hypot(event.clientX - pointerDown.x, event.clientY - pointerDown.y) < 5) {
@@ -778,7 +834,7 @@ export default function Scene3D(props: Scene3DProps) {
       pointerDown = null;
     };
     const onCancel = () => {
-      if (drag) drag.group.position.copy(drag.original);
+      if (drag) { drag.group.position.copy(drag.original); drag.group.updateMatrixWorld(true); }
       drag = null; pointerDown = null; controls.enabled = latest.current.cameraPreset !== 'ride';
     };
     const onDragOver = (event: DragEvent) => { if (event.dataTransfer?.types.includes('application/x-kato-piece')) { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; } };
@@ -788,7 +844,7 @@ export default function Scene3D(props: Scene3DProps) {
       event.preventDefault(); const point = getPlanePoint(event, latest.current.placementHeight ?? 0);
       if (point) latest.current.onDropItem?.(kind, point.x, point.z);
     };
-    renderer.domElement.addEventListener('pointerdown', onDown);
+    renderer.domElement.addEventListener('pointerdown', onDown, true);
     renderer.domElement.addEventListener('pointermove', onMove);
     renderer.domElement.addEventListener('pointerup', onUp);
     renderer.domElement.addEventListener('pointercancel', onCancel);
@@ -796,11 +852,11 @@ export default function Scene3D(props: Scene3DProps) {
     controls.addEventListener('change', () => { pickDirty = true; });
     const resize = () => {
       const width = Math.max(1, element.clientWidth), height = Math.max(1, element.clientHeight);
-      renderer.setSize(width, height, false); camera.aspect = width / height; camera.updateProjectionMatrix(); pickDirty = true;
+      renderer.setSize(width, height, false); camera.aspect = width / height; camera.updateProjectionMatrix(); sizeSwitchBadges(); pickDirty = true;
       if (runtime.current) fitCamera();
     };
     const resizeObserver = new ResizeObserver(resize); resizeObserver.observe(element); resize();
-    runtime.current = { renderer, scene, camera, controls, world, pieces, anchors, trains, library, selected: null, updateLayout, fitCamera, publishPickPoints };
+    runtime.current = { renderer, scene, camera, controls, world, pieces, anchors, trains, library, selected: null, issueOutlines: [], updateLayout, fitCamera, publishPickPoints };
     updateLayout(); fitCamera(); publishPickPoints();
     const animate = () => {
       if (stopped) return;
@@ -859,7 +915,7 @@ export default function Scene3D(props: Scene3DProps) {
     animate();
     return () => {
       stopped = true; cancelAnimationFrame(frame); resizeObserver.disconnect();
-      renderer.domElement.removeEventListener('pointerdown', onDown);
+      renderer.domElement.removeEventListener('pointerdown', onDown, true);
       renderer.domElement.removeEventListener('pointermove', onMove);
       renderer.domElement.removeEventListener('pointerup', onUp);
       renderer.domElement.removeEventListener('pointercancel', onCancel);
@@ -868,13 +924,14 @@ export default function Scene3D(props: Scene3DProps) {
       for (const piece of pieces.children) disposePiece(piece, library);
       for (const car of trains.children) disposeTrainModel(car);
       if (runtime.current?.selected) { scene.remove(runtime.current.selected); runtime.current.selected.geometry.dispose(); }
+      for (const outline of runtime.current?.issueOutlines ?? []) { outline.removeFromParent(); outline.geometry.dispose(); }
       ground.geometry.dispose(); grid.geometry.dispose(); (grid.material as THREE.Material).dispose();
-      markerGeometry.dispose(); plusGeometry.dispose(); markerMaterial.dispose(); activeMarkerMaterial.dispose(); plusMaterial.dispose(); selectionMaterial.dispose();
+      markerGeometry.dispose(); plusGeometry.dispose(); markerMaterial.dispose(); activeMarkerMaterial.dispose(); plusMaterial.dispose(); selectionMaterial.dispose(); errorMaterial.dispose();
       library.dispose(); environment.dispose(); renderer.dispose(); renderer.domElement.remove(); runtime.current = null;
     };
   }, []);
 
-  useEffect(() => { runtime.current?.updateLayout(); }, [props.tracks, props.accessories, props.selectedId, props.activeAnchor]);
+  useEffect(() => { runtime.current?.updateLayout(); }, [props.tracks, props.accessories, props.selectedId, props.activeAnchor, props.issues]);
   useEffect(() => {
     const r = runtime.current; if (!r) return;
     r.controls.enabled = props.cameraPreset !== 'ride'; r.fitCamera();

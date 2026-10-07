@@ -5,6 +5,7 @@ const PC = 'https://www.katomodels.com/product/n/unitrack_pc_tie2'
 const PLATFORM = 'https://www.katomodels.com/product/n/platform'
 const PLATFORM_DX = 'https://www.katomodels.com/product/n/kinko_homu_dx'
 const STATION = 'https://www.katomodels.com/product/n/unitrack_koukaeki'
+const ELEVATED = 'https://unitrack.katomodels.com/products/line_single/elevated_line'
 const page = (n: number) => `${PDF}#page=${n}`
 const radians = (degrees: number) => degrees * Math.PI / 180
 
@@ -30,7 +31,10 @@ function doubleCurve(kind: string, sku: string, innerRadius: number, outerRadius
     label: `WR${outerRadius}/${innerRadius}-${degrees}`, name: `${outerRadius}/${innerRadius} mm double ${bed} curve · ${degrees}°`,
     category: bed === 'viaduct' ? 'viaduct' : 'double', shape: 'doubleCurve', bed, innerRadius, outerRadius, lanes: 2, laneSpacing: 33,
     sourceUrl: page(bed === 'slab' ? 20 : bed === 'viaduct' ? 21 : 19),
-    notes: 'Catalog centerline radii are exact; banking and banking transitions are simplified in the simulator.',
+    ...(degrees === 22.5 ? { verification: 'nominal' as const } : {}),
+    notes: degrees === 22.5
+      ? 'Catalog radii and 22.5° plan angle are verified. The retail pack contains distinct left/right banking approaches, with flat and banked ends. Those end roles are not modeled, so physical compatibility requires review.'
+      : 'Catalog centerline radii and angle are verified. This is banked track; flat straights must connect through the matching approach pieces. Banking geometry and end compatibility are simplified in the simulator.',
   })
 }
 function accessory(kind: string, sku: string, label: string, name: string, accessoryType: CatalogItem['accessoryType'], footprint: NonNullable<CatalogItem['footprint']>, sourceUrl: string): CatalogItem {
@@ -83,8 +87,8 @@ export const KATO_CATALOG: CatalogItem[] = [
     label: `#${branchRadius === 718 ? 6 : 4} ${direction}`, category: 'turnout', shape: 'turnout', branchRadius, branchAngle: radians(15), branchLength: branchRadius * radians(15),
     sourceUrl: page(16), verification: 'nominal', notes: 'Catalog SKU and branch radius are verified. Frog, lead-in, and branch endpoints use simplified nominal geometry; not a construction template.',
   })),
-  straight('x15l', '20-300', 186, '15° left diamond crossing', { label: 'X15 Left', category: 'crossing', shape: 'crossing', crossingAngle: radians(-15), sourceUrl: page(16) }),
-  straight('x15r', '20-301', 186, '15° right diamond crossing', { label: 'X15 Right', category: 'crossing', shape: 'crossing', crossingAngle: radians(15), sourceUrl: page(16) }),
+  straight('x15l', '20-300', 186, '15° left diamond crossing', { label: 'X15 Left', category: 'crossing', shape: 'crossing', crossingAngle: radians(-15), sourceUrl: page(16), verification: 'nominal', notes: 'The 186 mm main route and 15° crossing angle are catalog sourced. The secondary route length and four connector positions are not an exact verified product template.' }),
+  straight('x15r', '20-301', 186, '15° right diamond crossing', { label: 'X15 Right', category: 'crossing', shape: 'crossing', crossingAngle: radians(15), sourceUrl: page(16), verification: 'nominal', notes: 'The 186 mm main route and 15° crossing angle are catalog sourced. The secondary route length and four connector positions are not an exact verified product template.' }),
   straight('x90', '20-320', 124, '90° diamond crossing', { label: 'X90', category: 'crossing', shape: 'crossing', crossingAngle: radians(90), sourceUrl: page(16) }),
   straight('scissors', '20-210', 310, '310 mm double crossover', { label: 'WX310', category: 'turnout', shape: 'scissors', lanes: 2, laneSpacing: 33, sourceUrl: page(16), verification: 'nominal', notes: '310 mm overall length and product identity are catalog sourced. Crossover paths and frogs are nominal.' }),
   doubleStraight('ds248', '20-004', 248),
@@ -161,6 +165,8 @@ export const KATO_CATALOG: CatalogItem[] = [
   accessory('a-pier-double', '23-019', 'Double pier', '50 mm double-track pier', 'pier', { length: 24, width: 65, height: 50 }, page(22)),
   accessory('a-pier-frame', '23-020', 'Frame pier', 'Double-track viaduct framework pier', 'pier', { length: 32, width: 70, height: 50 }, page(22)),
   accessory('a-pier-cone', '23-047', 'Bridge pier', 'Single-track bridge pier No. 5', 'pier', { length: 30, width: 30, height: 50 }, page(13)),
+  { ...accessory('a-pier-tapered', '23-069', '60 mm track support', 'Tapered No. 5 pier · 50 mm pier / 60 mm roadbed', 'pier', { length: 30, width: 30, height: 60 }, ELEVATED), supportDeckHeight: 60, supportComponentHeight: 50,
+    notes: 'KATO documents the pier component at 50 mm and supported roadbed bottom at 60 mm. The rendered 60 mm height represents the support assembly including its additional 10 mm attachment/viaduct structure. The lateral footprint and appearance remain nominal.' },
   accessory('a-catenary', '23-059-1', 'Catenary', 'Single-track catenary pole', 'catenary', { length: 8, width: 34, height: 45 }, page(26)),
   accessory('a-catenary-double', '23-060-1', 'Double catenary', 'Double-track square-corner catenary poles', 'catenary', { length: 8, width: 70, height: 45 }, page(26)),
   accessory('a-catenary-wide', '23-061', 'Wide catenary', 'Double-track wide catenary poles', 'catenary', { length: 8, width: 86, height: 45 }, page(26)),
@@ -179,5 +185,34 @@ export const CATALOG_SOURCES: { title: string; url: string; note?: string }[] = 
   { title: 'KATO modern DX platforms', url: PLATFORM_DX, note: 'Official platform lengths, product codes, platform doors, and station scenery.' },
   { title: 'KATO island and side platforms', url: PLATFORM, note: 'Current replacement SKUs, 248 mm platforms and 200 mm ends.' },
   { title: 'KATO viaduct stations', url: STATION, note: 'Official 248 × 113 mm station and shop footprints.' },
+  { title: 'KATO viaducts and support heights', url: ELEVATED, note: 'Banking approach requirements and the explicit 23-069 support datum: 50 mm pier height, 60 mm roadbed-bottom height.' },
   { title: 'KATO USA UNITRACK', url: 'https://katousa.com/unitrack/', note: 'Official track system introduction and current catalog links.' },
 ]
+
+/** Only trackElevation is a confirmed support datum; pier height alone is insufficient. */
+export interface CatalogSupport {
+  kind: string;
+  pierHeight: number;
+  /** Height of the supported track's roadbed bottom above the table, in millimeters. */
+  trackElevation?: number;
+  verified: boolean;
+  sourceUrl: string;
+  notes?: string;
+}
+
+export const KATO_SUPPORT_DATA: CatalogSupport[] = [
+  { kind: 'a-pier', pierHeight: 50, verified: true, sourceUrl: page(13), notes: 'Official component height is 50 mm. Its roadbed-bottom datum was not separately dimensioned in the inspected source, so this entry must not automatically certify a track elevation.' },
+  { kind: 'a-pier-double', pierHeight: 50, verified: true, sourceUrl: page(22), notes: 'Official component height is 50 mm. Supported roadbed elevation is unconfirmed.' },
+  { kind: 'a-pier-frame', pierHeight: 50, verified: false, sourceUrl: page(22), notes: '50 mm is only the current visual mesh height; the inspected catalog does not give a component or support datum.' },
+  { kind: 'a-pier-cone', pierHeight: 50, verified: true, sourceUrl: page(13), notes: 'Official component height is 50 mm. Use only a separately confirmed support datum for physical planning.' },
+  { kind: 'a-pier-tapered', pierHeight: 50, trackElevation: 60, verified: true, sourceUrl: ELEVATED, notes: 'KATO explicitly documents 50 mm pier height and 60 mm track-bottom height for 23-069. This is the roadbed-bottom datum, not top of rail. The adapter/viaduct structure must bridge the additional 10 mm. Footprint and appearance remain nominal.' },
+]
+
+/** R315 is an official starter-set choice, not a published minimum or traction guarantee. */
+export const E235_ENGINEERING_DATA: { minimumRadiusMm?: number; recommendedRadiusMm: number; generalDesignRadiusMm: number; generalDesignSourceUrl: string; sourceUrl: string; notes: string } = {
+  recommendedRadiusMm: 315,
+  generalDesignRadiusMm: 249,
+  generalDesignSourceUrl: 'https://katousa.com/faq/',
+  sourceUrl: 'https://www.katomodels.com/product/n/e235_yamanote_slm',
+  notes: 'The current KATO E235 starter set uses R315 for smooth running. KATO USA separately gives R249 ground-level track as its general N-scale factory-coupler design curve, with individual evaluation required below that radius or on viaducts. This general reference is not a published E235-specific minimum. The inspected E235 page does not publish a minimum radius or maximum gradient; both remain unconfirmed. A planning gradient target is an application choice, not a manufacturer specification.',
+}
