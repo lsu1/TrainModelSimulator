@@ -20,6 +20,7 @@ import {
   Plus,
   RotateCcw,
   Route,
+  Save,
   Search,
   TrainFront,
   Trash2,
@@ -28,6 +29,7 @@ import {
   Waypoints,
   X,
 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import Scene3D from "./Scene3D";
 import { KATO_CATALOG, CATALOG_SOURCES } from "./catalog";
 import type { CatalogCategory, CatalogItem } from "./catalogTypes";
@@ -139,6 +141,20 @@ export default function App() {
     selection,
     selectedTrack,
   } = h;
+  const [saveName, setSaveName] = useState(layout.name);
+  const [deleteDesignId, setDeleteDesignId] = useState<string | null>(null);
+  const saveNameInput = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    setDeleteDesignId(null);
+    if (h.modal === "save") {
+      setSaveName(layout.name);
+      saveNameInput.current?.focus();
+      saveNameInput.current?.select();
+    }
+  }, [h.modal, layout.name]);
+  const saveDesign = (asCopy = false) => {
+    if (h.saveDesign(saveName, asCopy)) h.setModal(null);
+  };
   return (
     <div className="app-shell">
       <header className="app-header">
@@ -156,7 +172,7 @@ export default function App() {
         <div className="header-actions">
           <span className="saved-label">
             {h.saved ? <Check size={14} /> : <ArrowDownToLine size={14} />}
-            {h.saved ? "Saved on this computer" : "Download to save"}
+            {h.saved ? "Current design autosaved" : "Autosave unavailable"}
           </span>
           <button
             className="icon-button"
@@ -208,6 +224,16 @@ export default function App() {
                   <Undo2 size={19} />
                 </button>
                 <button
+                  className="button primary"
+                  onClick={() => {
+                    setSaveName(layout.name);
+                    h.setModal("save");
+                  }}
+                >
+                  <Save size={17} />
+                  Save layout
+                </button>
+                <button
                   className="button secondary"
                   onClick={() => h.setModal("layouts")}
                 >
@@ -250,6 +276,7 @@ export default function App() {
                 mode={h.mode}
                 cameraPreset={h.cameraPreset}
                 viewRevision={h.viewRevision}
+                layoutRevision={h.layoutRevision}
                 placementHeight={h.buildHeight}
                 onDropItem={(kind, x, y) => h.addPiece(kind, { x, y })}
                 onSelect={(id) => {
@@ -801,6 +828,10 @@ export default function App() {
               <ArrowDownToLine size={16} />
               Save a layout file
             </button>
+            <p className="layout-backup-hint">
+              Saved layouts stay in this browser. Download a file for a backup
+              or to use another computer.
+            </p>
             <button
               className="reference-button"
               onClick={() => h.setModal("references")}
@@ -852,20 +883,24 @@ export default function App() {
                 <div className="panel-eyebrow">
                   {h.modal === "checks"
                     ? "PHYSICAL LAYOUT REVIEW"
-                    : h.modal === "layouts"
-                      ? "THE NEXT ADVENTURE"
-                      : h.modal === "references"
-                        ? "REAL-WORLD INSPIRATION"
-                        : "WELCOME, CONDUCTOR"}
+                    : h.modal === "save"
+                      ? "KEEP THIS ADVENTURE"
+                      : h.modal === "layouts"
+                        ? "THE NEXT ADVENTURE"
+                        : h.modal === "references"
+                          ? "REAL-WORLD INSPIRATION"
+                          : "WELCOME, CONDUCTOR"}
                 </div>
                 <h2 id="modal-title">
                   {h.modal === "checks"
                     ? "Check your physical layout"
-                    : h.modal === "layouts"
-                      ? "Where shall we go?"
-                      : h.modal === "references"
-                        ? "From Kato to your little world"
-                        : "A railway you can explore in 3D"}
+                    : h.modal === "save"
+                      ? "Save your railway"
+                      : h.modal === "layouts"
+                        ? "Where shall we go?"
+                        : h.modal === "references"
+                          ? "From Kato to your little world"
+                          : "A railway you can explore in 3D"}
                 </h2>
               </div>
               <button
@@ -878,12 +913,150 @@ export default function App() {
             </div>
             {h.modal === "checks" ? (
               <ShoppingReview h={h} />
+            ) : h.modal === "save" ? (
+              <form
+                className="save-layout-form"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  saveDesign();
+                }}
+              >
+                <p className="modal-intro">
+                  Keep this design in Your saved layouts so you can try a new
+                  idea and come back to it later.
+                </p>
+                <label htmlFor="saved-layout-name">Layout name</label>
+                <input
+                  ref={saveNameInput}
+                  id="saved-layout-name"
+                  type="text"
+                  maxLength={60}
+                  required
+                  value={saveName}
+                  onChange={(event) => setSaveName(event.target.value)}
+                  placeholder="My railway adventure"
+                />
+                <p className="saved-layout-hint">
+                  Saved in this browser on this computer. Use Save a layout file
+                  for a separate backup.
+                </p>
+                {h.savedDesignsError && (
+                  <p className="saved-layout-error" role="alert">
+                    {h.savedDesignsError}
+                  </p>
+                )}
+                <div className="modal-actions">
+                  {h.activeSavedDesignId && (
+                    <button
+                      className="button secondary"
+                      type="button"
+                      disabled={!saveName.trim()}
+                      onClick={() => saveDesign(true)}
+                    >
+                      <Plus size={16} />
+                      Save as copy
+                    </button>
+                  )}
+                  <button
+                    className="button primary"
+                    type="submit"
+                    disabled={!saveName.trim()}
+                  >
+                    <Save size={16} />
+                    {h.activeSavedDesignId ? "Save changes" : "Save layout"}
+                  </button>
+                </div>
+              </form>
             ) : h.modal === "layouts" ? (
               <>
                 <p className="modal-intro">
-                  Choose a starting point. Undo brings back your previous
-                  railway.
+                  Save your design before starting a new idea. Undo brings back
+                  your previous railway.
                 </p>
+                <h3 className="saved-layout-heading">Your saved layouts</h3>
+                <p className="saved-layout-hint">
+                  These designs stay in this browser on this computer.
+                </p>
+                {h.savedDesignsError && (
+                  <p className="saved-layout-error" role="alert">
+                    {h.savedDesignsError}
+                  </p>
+                )}
+                {h.savedDesigns.length ? (
+                  <div className="saved-layout-list">
+                    {h.savedDesigns.map((design) => (
+                      <div className="saved-layout-row" key={design.id}>
+                        <div className="saved-layout-description">
+                          <strong>{design.name}</strong>
+                          <small>
+                            {design.layout.tracks.length} tracks ·{" "}
+                            {design.layout.accessories.length} scenery ·{" "}
+                            {new Date(design.updatedAt).toLocaleDateString(
+                              undefined,
+                              { year: "numeric", month: "short", day: "numeric" },
+                            )}
+                          </small>
+                          {h.activeSavedDesignId === design.id && (
+                            <span className="saved-layout-current">
+                              Current saved design
+                            </span>
+                          )}
+                        </div>
+                        {deleteDesignId === design.id ? (
+                          <div className="saved-layout-delete-confirm">
+                            <p>Delete this saved layout?</p>
+                            <div>
+                              <button
+                                className="button secondary"
+                                autoFocus
+                                onClick={() => setDeleteDesignId(null)}
+                              >
+                                Keep layout
+                              </button>
+                              <button
+                                className="button delete-layout-button"
+                                aria-label={`Confirm delete ${design.name}`}
+                                onClick={() => {
+                                  if (h.deleteSavedDesign(design.id)) {
+                                    setDeleteDesignId(null);
+                                  }
+                                }}
+                              >
+                                Delete layout
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="saved-layout-actions">
+                            <button
+                              className="button secondary"
+                              aria-label={`Open saved layout ${design.name}`}
+                              onClick={() => h.openSavedDesign(design.id)}
+                            >
+                              <FolderOpen size={16} />
+                              Open
+                            </button>
+                            <button
+                              className="icon-button"
+                              aria-label={`Delete saved layout ${design.name}`}
+                              onClick={() => setDeleteDesignId(design.id)}
+                            >
+                              <Trash2 size={17} />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="saved-layout-empty">
+                    No saved layouts yet. Choose Save layout to keep your
+                    current design.
+                  </p>
+                )}
+                <h3 className="saved-layout-heading preset-heading">
+                  Start a new layout
+                </h3>
                 <div className="layout-options">
                   {(
                     [
@@ -1012,7 +1185,7 @@ export default function App() {
                     },
                     {
                       title: "All aboard the Yamanote Line",
-                      text: "Choose any train length from 3 to 11 cars. The Switch control desk numbers each turnout and sets its straight or branch route. A clear switch can change while the train runs; an occupied switch waits for the train to pass. Your train stops at an open end or points set the other way.",
+                      text: "Choose any train length from 3 to 11 cars. The Switch control desk numbers each turnout and sets its straight or branch route. Zoom in to watch the point blades move. A clear switch can change while the train runs; an occupied switch waits for the train to pass. Your train stops at an open end or points set the other way.",
                     },
                     {
                       title: "Check before building for real",
@@ -1020,7 +1193,7 @@ export default function App() {
                     },
                     {
                       title: "Keep your little world",
-                      text: "Undo restores a change. Layouts save in this browser. Download a layout file to keep a spare copy, or open an earlier layout file—including original 2D layouts.",
+                      text: "Choose Save layout, give your design a name, then start a new idea in Layouts. Open Your saved layouts to return to it. Save changes updates an opened design; Save as copy keeps another version. The current design also autosaves in this browser. Download a layout file for a spare copy or another computer.",
                     },
                   ].map((step, index) => (
                     <div className="help-row" key={step.title}>

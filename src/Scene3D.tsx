@@ -9,6 +9,7 @@ import { connectedEndpoint, endpoints, pathsFor } from './track';
 import type { Endpoint, Track, TrainPosition } from './track';
 import { CAR_LENGTH, createE235Car, createE235Connection, updateE235Connection, disposeTrainModel } from './trainModel';
 import { solveConsistPoses } from './consistPose';
+import { TurnoutPoints, staticRailRanges } from './turnoutPoints';
 
 interface Scene3DProps {
   tracks: Track[];
@@ -21,6 +22,8 @@ interface Scene3DProps {
   mode: 'orbit' | 'move';
   cameraPreset: 'perspective' | 'top' | 'ride';
   viewRevision: number;
+  /** Changes only when a complete layout is opened/imported, not on switch clicks. */
+  layoutRevision?: number;
   onSelect: (id: string | null) => void;
   onMove: (id: string, x: number, y: number) => void;
   onAnchor: (anchor: Endpoint & { trackId: string; end: number }) => void;
@@ -124,17 +127,17 @@ function beam(group: THREE.Group, library: ModelLibrary, a: THREE.Vector3, b: TH
 }
 
 /** A continuous swept cross section keeps the true 9 mm rail gauge on curves. */
-function sweep(path: Path, profile: { offset: number; height: number }[], origin: { x: number; y: number }, material: THREE.Material, start = 0): THREE.Mesh {
+function sweep(path: Path, profile: { offset: number; height: number }[], origin: { x: number; y: number }, material: THREE.Material, start = 0, end = path.length): THREE.Mesh {
   const area = profile.reduce((sum, p, i) => {
     const next = profile[(i + 1) % profile.length];
     return sum + p.offset * next.height - next.offset * p.height;
   }, 0);
   if (area > 0) profile = [...profile].reverse();
-  const count = Math.max(2, Math.ceil((path.length - start) / 4));
+  const count = Math.max(2, Math.ceil((end - start) / 4));
   const positions: number[] = [], uv: number[] = [], indices: number[] = [];
   const n = profile.length;
   for (let i = 0; i <= count; i++) {
-    const distance = start + (path.length - start) * i / count;
+    const distance = start + (end - start) * i / count;
     const p = path.pointAt(distance);
     const sx = -Math.sin(p.angle), sz = Math.cos(p.angle);
     profile.forEach((vertex, j) => {
@@ -211,13 +214,19 @@ function makeTrack(track: Track, library: ModelLibrary): THREE.Group {
       const p = path.pointAt(d), key = `${Math.round(p.x * 2)}:${Math.round(p.y * 2)}`;
       if (!tieKeys.has(key)) { ties.push(p); tieKeys.add(key); }
     }
-    group.add(sweep(path, railProfile(-RAIL_CENTER), track, library.material('#b9c2c4', .86, .26)));
-    group.add(sweep(path, railProfile(RAIL_CENTER), track, library.material('#b9c2c4', .86, .26)));
-    // Narrow bright running surfaces contrast with the darker rail web.
-    for (const offset of [-RAIL_CENTER, RAIL_CENTER]) group.add(sweep(path, [
-      { offset: offset - .45, height: 7.28 }, { offset: offset + .45, height: 7.28 },
-      { offset: offset + .45, height: RAIL_TOP }, { offset: offset - .45, height: RAIL_TOP },
-    ], track, library.material('#e6edef', .84, .18)));
+    for (const side of [-1, 1] as const) {
+      const offset = side * RAIL_CENTER;
+      // The inner switch rails are real moving blades from toe to heel.
+      // Removing their static copies makes the opening visible at close range.
+      for (const [start, end] of staticRailRanges(track, path.route, side)) {
+        group.add(sweep(path, railProfile(offset), track, library.material('#b9c2c4', .86, .26), start, end));
+        // Narrow bright running surfaces contrast with the darker rail web.
+        group.add(sweep(path, [
+          { offset: offset - .45, height: 7.28 }, { offset: offset + .45, height: 7.28 },
+          { offset: offset + .45, height: RAIL_TOP }, { offset: offset - .45, height: RAIL_TOP },
+        ], track, library.material('#e6edef', .84, .18), start, end));
+      }
+    }
     for (const distance of [0, path.length]) {
       const p = path.pointAt(distance);
       for (const offset of [-RAIL_CENTER, RAIL_CENTER]) {
@@ -343,10 +352,14 @@ function makeTrack(track: Track, library: ModelLibrary): THREE.Group {
   }
 
   if (item.category === 'turnout') {
+    const points = new TurnoutPoints(track, library.material('#d8e1e3', .86, .2), library.material('#414944', .55, .4));
+    group.userData.turnoutPoints = points;
+    group.add(points.group);
     const p = paths[0].pointAt(Math.min(38, paths[0].length / 4));
     const lever = new THREE.Group(); lever.position.copy(pose(p, track, 4.1)); setTangent(lever, p.angle);
     box(lever, library, 21, 2.5, 5, 0, 0, -14, '#444b45');
-    box(lever, library, 6, 2, 3.3, track.switchState === 'branch' ? 4 : -4, 2, -14, '#a2b67b');
+    const slider = box(lever, library, 6, 2, 3.3, points.fraction * 8 - 4, 2, -14, '#a2b67b');
+    group.userData.pointLeverSlider = slider;
     group.add(lever);
     if (track.switchNumber !== undefined) {
       const badge = switchBadge(track.switchNumber, track.switchState === 'branch');
@@ -354,8 +367,29 @@ function makeTrack(track: Track, library: ModelLibrary): THREE.Group {
       badge.position.set(p.x - track.x - Math.sin(p.angle) * side * 23, p.z + 25, p.y - track.y + Math.cos(p.angle) * side * 23);
       group.add(badge);
     }
+    group.userData.switchBadgeNumber = track.switchNumber;
+    group.userData.switchBadgeState = track.switchState ?? 'straight';
   }
   return group;
+}
+
+function syncTurnoutState(group: THREE.Object3D, track: Track, library: ModelLibrary, now: number, settle: boolean) {
+  const points = group.userData.turnoutPoints as TurnoutPoints | undefined;
+  if (!points) return;
+  points.setState(track.switchState ?? 'straight', now, settle);
+  if (group.userData.switchBadgeNumber === track.switchNumber
+    && group.userData.switchBadgeState === (track.switchState ?? 'straight')) return;
+  const existing = group.children.find(child => child.userData.switchBadge);
+  if (existing) { group.remove(existing); disposePiece(existing, library); }
+  if (track.switchNumber !== undefined) {
+    const p = pathsFor(track)[0].pointAt(Math.min(38, pathsFor(track)[0].length / 4));
+    const badge = switchBadge(track.switchNumber, track.switchState === 'branch');
+    const side = track.bend === 1 ? -1 : 1;
+    badge.position.set(p.x - track.x - Math.sin(p.angle) * side * 23, p.z + 25, p.y - track.y + Math.cos(p.angle) * side * 23);
+    group.add(badge);
+  }
+  group.userData.switchBadgeNumber = track.switchNumber;
+  group.userData.switchBadgeState = track.switchState ?? 'straight';
 }
 
 function sign(group: THREE.Group, width: number, height: number, x: number, y: number, z: number, label: string, background = '#f2f3e9') {
@@ -667,6 +701,8 @@ export default function Scene3D(props: Scene3DProps) {
     let drag: { id: string; group: THREE.Object3D; start: THREE.Vector3; original: THREE.Vector3; initial: THREE.Vector2; moved: boolean; height: number } | null = null;
     let pointerDown: { x: number; y: number } | null = null;
     let frame = 0, stopped = false, pickDirty = true, lastPickTime = 0;
+    let pointDiagnosticsDirty = true;
+    let previousLayoutRevision = latest.current.layoutRevision;
     let previousCameraPreset: Scene3DProps['cameraPreset'] = 'perspective';
     const selectionMaterial = new THREE.LineBasicMaterial({ color: '#d79e4c', transparent: true, opacity: .6, depthTest: false });
     const errorMaterial = new THREE.LineBasicMaterial({ color: '#c64d3d', transparent: true, opacity: .85, depthTest: false });
@@ -761,6 +797,15 @@ export default function Scene3D(props: Scene3DProps) {
         points[accessory.id] = { x: Math.round((projected.x + 1) * width / 2), y: Math.round((1 - projected.y) * height / 2) };
       }
       renderer.domElement.dataset.pickPoints = JSON.stringify(points);
+      const turnoutPoints: Record<string, { x: number; y: number }> = {};
+      for (const piece of pieces.children) {
+        const mechanism = piece.userData.turnoutPoints as TurnoutPoints | undefined;
+        if (!mechanism?.pairs[0]) continue;
+        const bar = mechanism.pairs[0].tieBar;
+        const projected = bar.position.clone().applyMatrix4(piece.matrixWorld).project(camera);
+        turnoutPoints[piece.userData.pieceId] = { x: Math.round((projected.x + 1) * width / 2), y: Math.round((1 - projected.y) * height / 2) };
+      }
+      renderer.domElement.dataset.turnoutPickPoints = JSON.stringify(turnoutPoints);
       pickDirty = false;
     };
     const sizeSwitchBadges = () => {
@@ -843,12 +888,20 @@ export default function Scene3D(props: Scene3DProps) {
       });
     };
     const updateLayout = () => {
+      const settlePoints = previousLayoutRevision !== latest.current.layoutRevision;
+      previousLayoutRevision = latest.current.layoutRevision;
       const ids = new Set([...latest.current.tracks, ...latest.current.accessories].map(piece => piece.id));
       for (const existing of [...pieces.children]) if (!ids.has(existing.userData.pieceId)) { pieces.remove(existing); disposePiece(existing, library); }
       for (const track of latest.current.tracks) {
-        const signature = JSON.stringify(track);
+        // State/labels do not rebuild the rail meshes: retain the actual pose
+        // throughout throws, selections and rapidly reversed switch clicks.
+        const { switchState: _state, switchNumber: _number, route: _route, ...geometry } = track;
+        const signature = JSON.stringify(geometry);
         const existing = pieces.children.find(piece => piece.userData.pieceId === track.id);
-        if (existing?.userData.signature === signature) continue;
+        if (existing?.userData.signature === signature) {
+          syncTurnoutState(existing, track, library, performance.now(), settlePoints);
+          continue;
+        }
         if (existing) { pieces.remove(existing); disposePiece(existing, library); }
         const piece = makeTrack(track, library); piece.userData.signature = signature; pieces.add(piece);
       }
@@ -870,6 +923,7 @@ export default function Scene3D(props: Scene3DProps) {
         }
       }
       sizeSwitchBadges(); updateAnchors(); updateSelection(); pickDirty = true;
+      pointDiagnosticsDirty = true;
       renderer.domElement.dataset.switchNumbers = JSON.stringify(latest.current.tracks.filter(track => track.switchNumber !== undefined).map(track => ({ id: track.id, number: track.switchNumber, state: track.switchState ?? 'straight' })));
     };
     const onDown = (event: PointerEvent) => {
@@ -951,6 +1005,21 @@ export default function Scene3D(props: Scene3DProps) {
       if (stopped) return;
       frame = requestAnimationFrame(animate);
       const current = latest.current;
+      for (const piece of pieces.children) {
+        const points = piece.userData.turnoutPoints as TurnoutPoints | undefined;
+        if (!points) continue;
+        pointDiagnosticsDirty = points.update(performance.now()) || pointDiagnosticsDirty;
+        const slider = piece.userData.pointLeverSlider as THREE.Mesh;
+        slider.position.x = points.fraction * 8 - 4;
+      }
+      if (pointDiagnosticsDirty) {
+        world.updateMatrixWorld(true);
+        renderer.domElement.dataset.turnoutPoints = JSON.stringify(pieces.children.flatMap(piece => {
+          const points = piece.userData.turnoutPoints as TurnoutPoints | undefined;
+          return points ? [points.snapshot(point => layoutPoint(point.applyMatrix4(piece.matrixWorld).divideScalar(SCALE)))] : [];
+        }));
+        pointDiagnosticsDirty = false;
+      }
       const cameraPresetChanged = current.cameraPreset !== previousCameraPreset;
       previousCameraPreset = current.cameraPreset;
       if (carCountBuilt !== current.carCount) {
@@ -1035,7 +1104,7 @@ export default function Scene3D(props: Scene3DProps) {
     };
   }, []);
 
-  useEffect(() => { runtime.current?.updateLayout(); }, [props.tracks, props.accessories, props.selectedId, props.activeAnchor, props.issues]);
+  useEffect(() => { runtime.current?.updateLayout(); }, [props.tracks, props.accessories, props.selectedId, props.activeAnchor, props.issues, props.layoutRevision]);
   useEffect(() => {
     const r = runtime.current; if (!r) return;
     r.controls.enabled = props.cameraPreset !== 'ride'; r.fitCamera();

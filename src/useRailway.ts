@@ -17,12 +17,21 @@ import { CAR_LENGTH, TRAIN_SCALE } from "./trainModel";
 import { advanceConsist, occupiedTrackIds } from "./trainMotion";
 import { auditClearances, checkPlacement } from "./clearance";
 import { auditEngineering, planRamp, trackGradePercent } from "./engineering";
+import {
+  SAVED_DESIGNS_KEY,
+  persistSavedDesigns,
+  readSavedDesigns,
+  readWorkingDesignId,
+  removeDesignSnapshot,
+  saveDesignSnapshot,
+} from "./savedDesigns";
 
 export const CATALOG = new Map(
   KATO_CATALOG.map((piece) => [piece.kind, piece]),
 );
 type Anchor = Endpoint & { trackId: string; end: number };
-export type Modal = "layouts" | "help" | "references" | "checks" | null;
+export type Modal = "layouts" | "save" | "help" | "references" | "checks" | null;
+type HistoryEntry = { layout: LayoutData; savedDesignId: string | null };
 const initialTrain = (tracks: Track[]): TrainPosition => {
   const first = tracks[0];
   const shape = first && CATALOG.get(first.kind)?.shape;
@@ -47,7 +56,13 @@ const initialTrain = (tracks: Track[]): TrainPosition => {
 export function useRailway() {
   const [layout, setLayout] = useState<LayoutData>(loadLayout);
   const { tracks, accessories } = layout;
-  const [history, setHistory] = useState<LayoutData[]>([]);
+  const [designLibrary, setDesignLibrary] = useState(readSavedDesigns);
+  const [activeSavedDesignId, setActiveSavedDesignId] = useState<string | null>(() =>
+    readWorkingDesignId(designLibrary.library),
+  );
+  const savedDesigns = designLibrary.library.designs;
+  const [savedDesignsError, setSavedDesignsError] = useState(designLibrary.error);
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [anchor, setAnchor] = useState<Anchor | null>(null);
   const [category, setCategory] = useState<CatalogCategory>("straight");
@@ -59,6 +74,7 @@ export function useRailway() {
     "perspective" | "top" | "ride"
   >("perspective");
   const [viewRevision, setViewRevision] = useState(0);
+  const [layoutRevision, setLayoutRevision] = useState(0);
   const [ready, setReady] = useState(false);
   const [running, setRunning] = useState(false);
   const [speed, setSpeed] = useState(65);
@@ -189,6 +205,23 @@ export function useRailway() {
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(""), error ? 12000 : 4200);
   };
+  useEffect(() => {
+    if (designLibrary.error) notify(designLibrary.error, true);
+    // Reading a damaged library must never overwrite the recoverable original.
+    // Recovery is backed up only when the user next changes a saved snapshot.
+  }, []);
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== null && event.key !== SAVED_DESIGNS_KEY) return;
+      const next = readSavedDesigns();
+      setDesignLibrary(next);
+      setSavedDesignsError(next.error);
+      setActiveSavedDesignId((id) => next.library.designs.some((design) => design.id === id) ? id : null);
+      if (next.error) notify(next.error, true);
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
   const canPlace = (piece: Track | PlacedAccessory) => {
     const shape = CATALOG.get(piece.kind)?.shape;
     if (
@@ -219,7 +252,7 @@ export function useRailway() {
     setCabForward(true);
   };
   const changeLayout = (next: LayoutData, preserveSelection = false) => {
-    setHistory((previous) => [...previous.slice(-49), layout]);
+    setHistory((previous) => [...previous.slice(-49), { layout, savedDesignId: activeSavedDesignId }]);
     setLayout(next);
     resetTrain(next.tracks);
     if (!preserveSelection) setSelectedId(null);
@@ -229,20 +262,26 @@ export function useRailway() {
     const previous = history.at(-1);
     if (!previous) return;
     setHistory(history.slice(0, -1));
-    setLayout(previous);
-    resetTrain(previous.tracks);
+    setLayout(previous.layout);
+    setActiveSavedDesignId(savedDesigns.some((design) => design.id === previous.savedDesignId)
+      ? previous.savedDesignId : null);
+    resetTrain(previous.layout.tracks);
     setSelectedId(null);
     setAnchor(null);
+    setLayoutRevision((value) => value + 1);
     notify("Back one step. Keep building!");
   };
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(layout));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        ...layout,
+        ...(activeSavedDesignId === null ? {} : { savedDesignId: activeSavedDesignId }),
+      }));
       setSaved(true);
     } catch {
       setSaved(false);
     }
-  }, [layout]);
+  }, [layout, activeSavedDesignId]);
   const addPiece = (kind: string, drop?: { x: number; y: number }) => {
     const spec = CATALOG.get(kind);
     if (!spec) return;
@@ -401,7 +440,7 @@ export function useRailway() {
     const nextTracks = tracks.map((piece) =>
       piece.id === id ? { ...piece, switchState: state } : piece,
     );
-    setHistory((previous) => [...previous.slice(-49), layout]);
+    setHistory((previous) => [...previous.slice(-49), { layout, savedDesignId: activeSavedDesignId }]);
     setLayout({ ...layout, tracks: nextTracks });
     lapProgressRef.current = 0;
     if (!running && positionRef.current.trackId === id) {
@@ -747,6 +786,8 @@ export function useRailway() {
   }, [modal]);
   const chooseLayout = (preset: LayoutPreset) => {
     changeLayout(createLayout(preset));
+    setActiveSavedDesignId(null);
+    setLayoutRevision((value) => value + 1);
     setBuildHeight(preset === "viaduct" ? 60 : 0);
     setCameraPreset("perspective");
     setViewRevision((v) => v + 1);
@@ -756,6 +797,67 @@ export function useRailway() {
         ? "Drag a piece from your track box to start a new world."
         : "Your 3D railway is ready. All aboard!",
     );
+  };
+  const saveDesign = (name: string, asCopy = false): boolean => {
+    try {
+      // Refresh before writing in case another tab has saved or deleted a design.
+      const current = readSavedDesigns();
+      if (current.unavailable) {
+        throw new Error("Your design was not saved. Enable browser storage and reload, or download a backup.");
+      }
+      const result = saveDesignSnapshot(current.library, layout, name, activeSavedDesignId, asCopy);
+      persistSavedDesigns(result.library, current.recoveryRaw);
+      setDesignLibrary({ library: result.library, recoveryRaw: null, error: null, unavailable: false });
+      setSavedDesignsError(null);
+      setActiveSavedDesignId(result.design.id);
+      setLayout(parseLayout(result.design.layout));
+      notify(`Saved ${result.design.name}. Find it in Layouts → Your saved layouts.`);
+      return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Your design could not be saved.";
+      setSavedDesignsError(message);
+      notify(message, true);
+      return false;
+    }
+  };
+  const openSavedDesign = (id: string): void => {
+    const design = savedDesigns.find((entry) => entry.id === id);
+    if (!design) {
+      notify("This saved design is no longer available.", true);
+      return;
+    }
+    changeLayout(parseLayout(design.layout));
+    setActiveSavedDesignId(id);
+    setLayoutRevision((value) => value + 1);
+    setBuildHeight(0);
+    setCameraPreset("perspective");
+    setViewRevision((value) => value + 1);
+    setModal(null);
+    notify(`Opened ${design.name}. All aboard!`);
+  };
+  const deleteSavedDesign = (id: string): boolean => {
+    try {
+      const current = readSavedDesigns();
+      if (current.unavailable) throw new Error("This saved design could not be deleted. Enable browser storage and reload.");
+      const next = removeDesignSnapshot(current.library, id);
+      if (next === current.library) {
+        setDesignLibrary(current);
+        setSavedDesignsError(current.error);
+        if (activeSavedDesignId === id) setActiveSavedDesignId(null);
+        return true;
+      }
+      persistSavedDesigns(next, current.recoveryRaw);
+      setDesignLibrary({ library: next, recoveryRaw: null, error: null, unavailable: false });
+      setSavedDesignsError(null);
+      if (activeSavedDesignId === id) setActiveSavedDesignId(null);
+      notify("Saved design deleted. Your open railway is still here.");
+      return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "This saved design could not be deleted.";
+      setSavedDesignsError(message);
+      notify(message, true);
+      return false;
+    }
   };
   const exportLayout = () => {
     const url = URL.createObjectURL(
@@ -777,6 +879,8 @@ export function useRailway() {
         );
       const next = parseLayout(JSON.parse(await file.text()));
       changeLayout(next);
+      setActiveSavedDesignId(null);
+      setLayoutRevision((value) => value + 1);
       setCameraPreset("perspective");
       setViewRevision((v) => v + 1);
       setModal(null);
@@ -813,6 +917,7 @@ export function useRailway() {
     cameraPreset,
     setCameraPreset,
     viewRevision,
+    layoutRevision,
     setViewRevision,
     ready,
     setReady,
@@ -837,6 +942,9 @@ export function useRailway() {
     rampPlan,
     shoppingRows,
     saved,
+    savedDesigns,
+    savedDesignsError,
+    activeSavedDesignId,
     fileInput,
     selection,
     selectedTrack,
@@ -862,6 +970,9 @@ export function useRailway() {
     reverse,
     horn,
     chooseLayout,
+    saveDesign,
+    openSavedDesign,
+    deleteSavedDesign,
     exportLayout,
     importLayout,
   };

@@ -9,6 +9,7 @@ import type { Track } from '../src/track';
 test.setTimeout(60_000);
 
 const STORAGE_KEY = 'little-railways-layout-v2';
+const SAVED_DESIGNS_KEY = 'little-railways-saved-designs-v1';
 const canvasName = '3D railway layout: rotate, zoom, and move Kato track pieces';
 const straightButton = 'Add 248 mm straight';
 const curveButton = 'Add 282 mm radius · 45° curve';
@@ -31,6 +32,32 @@ async function startFresh(page: Page) {
 
 async function savedLayout(page: Page) {
   return page.evaluate(key => JSON.parse(localStorage.getItem(key)!), STORAGE_KEY);
+}
+
+async function currentRailway(page: Page) {
+  const railway = { ...await savedLayout(page) };
+  delete railway.savedDesignId;
+  return railway;
+}
+
+async function savedDesigns(page: Page) {
+  return page.evaluate(key => JSON.parse(localStorage.getItem(key) ?? '{"version":1,"designs":[]}'), SAVED_DESIGNS_KEY);
+}
+
+async function saveDesign(page: Page, name: string, action: 'Save layout' | 'Save changes' | 'Save as copy' = 'Save layout') {
+  await page.getByRole('button', { name: 'Save layout', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Save your railway', exact: true });
+  await dialog.getByRole('textbox', { name: 'Layout name', exact: true }).fill(name);
+  await dialog.getByRole('button', { name: action, exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByRole('heading', { name, exact: true })).toBeVisible();
+}
+
+async function openSavedDesign(page: Page, name: string) {
+  await page.getByRole('button', { name: 'Layouts', exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: `Open saved layout ${name}`, exact: true }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.getByRole('heading', { name, exact: true })).toBeVisible();
 }
 
 async function freezeAnimationClock(page: Page) {
@@ -518,6 +545,209 @@ function fixtureLayout(name: string, tracks: Record<string, unknown>[], accessor
   return { version: 2, name, tracks, accessories, carCount: 3 };
 }
 
+function savedIdeaFixture() {
+  return {
+    ...fixtureLayout('An edited KATO adventure', [
+      fixtureTrack('idea-flat', -248),
+      fixtureTrack('idea-slope', 0, 0, { kind: 'v248', endElevation: 20 }),
+      fixtureTrack('idea-switch', 350, 180, { kind: 't6l', bend: -1, switchNumber: 4, switchState: 'branch' }),
+    ], [fixtureAccessory('idea-platform', 'a-platform', 124, -66)]),
+    sourcePlan: 'kato-plan02-1a',
+    carCount: 5,
+  };
+}
+
+test('named saved layouts keep independent designs through fresh starts, reloads, updates, copies, and deletion', async ({ page }) => {
+  test.setTimeout(120_000);
+  await seedLayout(page, savedIdeaFixture());
+  await saveDesign(page, 'Our overpass');
+  const overpass = await currentRailway(page);
+  const firstId = (await savedLayout(page)).savedDesignId;
+  expect(firstId).toBeTruthy();
+  const secondIdea = {
+    ...fixtureLayout('Another idea', [
+      fixtureTrack('other-elevated', -124, 0, { elevation: 60, endElevation: 80 }),
+      fixtureTrack('other-switch', 300, 160, { kind: 't4r', switchNumber: 2, switchState: 'straight' }),
+    ], [fixtureAccessory('other-station', 'a-station-local', 0, -180)]),
+    carCount: 8,
+  };
+  await importData(page, secondIdea);
+  await saveDesign(page, 'Station idea');
+  const station = await currentRailway(page);
+  const secondId = (await savedLayout(page)).savedDesignId;
+  expect(secondId).not.toBe(firstId);
+  expect((await savedDesigns(page)).designs).toHaveLength(2);
+  await startFresh(page);
+  await page.reload();
+  await expect(scene(page)).toHaveAttribute('data-ready', 'true');
+  expect((await currentRailway(page)).tracks).toHaveLength(0);
+  await openSavedDesign(page, 'Our overpass');
+  expect(await currentRailway(page)).toEqual(overpass);
+  await expect(scene(page)).toHaveAttribute('data-car-count', '5');
+  await expect(page.getByRole('button', { name: 'Switch 4 branch', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('.layout-plan-info')).toBeVisible();
+  await page.reload();
+  await expect(scene(page)).toHaveAttribute('data-ready', 'true');
+  expect((await savedLayout(page)).savedDesignId).toBe(firstId);
+  expect(await currentRailway(page)).toEqual(overpass);
+  await page.getByRole('combobox', { name: 'Train car count' }).selectOption('7');
+  await saveDesign(page, 'Our overpass on Sunday', 'Save changes');
+  const revised = await currentRailway(page);
+  expect(revised.carCount).toBe(7);
+  expect((await savedLayout(page)).savedDesignId).toBe(firstId);
+  const revisedLibrary = (await savedDesigns(page)).designs;
+  expect(revisedLibrary).toHaveLength(2);
+  expect(revisedLibrary.find((entry: { id: string }) => entry.id === firstId).layout).toEqual(revised);
+  expect(revisedLibrary.find((entry: { id: string }) => entry.id === secondId).layout).toEqual(station);
+  await openSavedDesign(page, 'Station idea');
+  expect(await currentRailway(page)).toEqual(station);
+  await expect(scene(page)).toHaveAttribute('data-car-count', '8');
+  await expect(page.locator('.layout-plan-info')).toHaveCount(0);
+  await saveDesign(page, 'Station at night', 'Save as copy');
+  const fork = await currentRailway(page);
+  const forkId = (await savedLayout(page)).savedDesignId;
+  expect([firstId, secondId]).not.toContain(forkId);
+  const copiedLibrary = (await savedDesigns(page)).designs;
+  expect(copiedLibrary).toHaveLength(3);
+  expect(copiedLibrary.find((entry: { id: string }) => entry.id === secondId).layout).toEqual(station);
+  expect(copiedLibrary.find((entry: { id: string }) => entry.id === firstId).layout).toEqual(revised);
+  await page.getByRole('button', { name: 'Layouts', exact: true }).click();
+  const libraryDialog = page.getByRole('dialog');
+  await libraryDialog.getByRole('button', { name: 'Delete saved layout Station at night', exact: true }).click();
+  await libraryDialog.getByRole('button', { name: 'Keep layout', exact: true }).click();
+  expect((await savedDesigns(page)).designs).toHaveLength(3);
+  await libraryDialog.getByRole('button', { name: 'Delete saved layout Station at night', exact: true }).click();
+  await libraryDialog.getByRole('button', { name: 'Confirm delete Station at night', exact: true }).click();
+  await expect(libraryDialog.getByRole('button', { name: 'Open saved layout Station at night', exact: true })).toHaveCount(0);
+  expect((await savedDesigns(page)).designs).toHaveLength(2);
+  expect(await currentRailway(page), 'Deleting a saved snapshot keeps the design on the table').toEqual(fork);
+  expect((await savedLayout(page)).savedDesignId).toBeUndefined();
+  await page.keyboard.press('Escape');
+  await saveDesign(page, 'Station at night again');
+  expect((await savedDesigns(page)).designs).toHaveLength(3);
+});
+
+test('undo restores the saved design identity so Save changes updates the design that is actually open', async ({ page }) => {
+  await seedLayout(page, fixtureLayout('First draft', [fixtureTrack('draft-a', -124)]));
+  await saveDesign(page, 'Layout A');
+  const aId = (await savedLayout(page)).savedDesignId;
+  await startFresh(page);
+  await page.getByRole('button', { name: 'Curves', exact: true }).click();
+  await page.getByRole('button', { name: curveButton, exact: true }).click();
+  await saveDesign(page, 'Layout B');
+  const bId = (await savedLayout(page)).savedDesignId;
+  const bSnapshot = (await savedDesigns(page)).designs.find((entry: { id: string }) => entry.id === bId);
+  await openSavedDesign(page, 'Layout A');
+  await openSavedDesign(page, 'Layout B');
+  await page.getByRole('button', { name: 'Undo last change', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Layout A', exact: true })).toBeVisible();
+  expect((await savedLayout(page)).savedDesignId).toBe(aId);
+  await page.getByRole('combobox', { name: 'Train car count' }).selectOption('6');
+  await saveDesign(page, 'Layout A revised', 'Save changes');
+  const library = (await savedDesigns(page)).designs;
+  expect(library).toHaveLength(2);
+  expect(library.find((entry: { id: string }) => entry.id === aId).layout).toEqual(await currentRailway(page));
+  expect(library.find((entry: { id: string }) => entry.id === bId)).toEqual(bSnapshot);
+});
+
+test('a file backup of a saved design reopens as an independent draft while its saved snapshot remains intact', async ({ page }, testInfo) => {
+  await seedLayout(page, savedIdeaFixture());
+  await saveDesign(page, 'Keep our bridge');
+  const original = await currentRailway(page);
+  const originalId = (await savedLayout(page)).savedDesignId;
+  const originalEntry = (await savedDesigns(page)).designs[0];
+  const downloadPromise = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Save a layout file', exact: true }).click();
+  const download = await downloadPromise;
+  const exportPath = testInfo.outputPath('saved-design-backup.json');
+  await download.saveAs(exportPath);
+  expect(JSON.parse(await readFile(exportPath, 'utf8'))).toEqual(original);
+  await startFresh(page);
+  await page.getByRole('button', { name: 'Layouts', exact: true }).click();
+  await page.getByLabel('Open railway file').setInputFiles(exportPath);
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  expect(await currentRailway(page)).toEqual(original);
+  expect((await savedLayout(page)).savedDesignId).toBeUndefined();
+  await saveDesign(page, 'Bridge backup copy');
+  const library = (await savedDesigns(page)).designs;
+  expect(library).toHaveLength(2);
+  expect(library.find((entry: { id: string }) => entry.id === originalId)).toEqual(originalEntry);
+  expect((await savedLayout(page)).savedDesignId).not.toBe(originalId);
+});
+
+test('a browser storage failure keeps named layouts intact and leaves failed saves open for a backup', async ({ page }) => {
+  await seedLayout(page, fixtureLayout('Reliable draft', [fixtureTrack('quota-track', -124)]));
+  await saveDesign(page, 'Protected design');
+  const libraryBefore = await savedDesigns(page);
+  await page.getByRole('combobox', { name: 'Train car count' }).selectOption('6');
+  const unsavedChanges = await currentRailway(page);
+  await page.evaluate(key => {
+    const original = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (storageKey: string, value: string) {
+      if (storageKey === key) throw new DOMException('Simulated full browser storage', 'QuotaExceededError');
+      return original.call(this, storageKey, value);
+    };
+  }, SAVED_DESIGNS_KEY);
+  await page.getByRole('button', { name: 'Save layout', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Save your railway', exact: true });
+  await dialog.getByRole('textbox', { name: 'Layout name', exact: true }).fill('An update that cannot be saved');
+  await dialog.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole('alert')).toBeVisible();
+  expect(await savedDesigns(page)).toEqual(libraryBefore);
+  expect(await currentRailway(page)).toEqual(unsavedChanges);
+  await dialog.getByRole('button', { name: 'Save as copy', exact: true }).click();
+  expect(await savedDesigns(page)).toEqual(libraryBefore);
+  expect(await currentRailway(page)).toEqual(unsavedChanges);
+  await page.keyboard.press('Escape');
+  await startFresh(page);
+  const newDraft = await currentRailway(page);
+  await page.getByRole('button', { name: 'Save layout', exact: true }).click();
+  await dialog.getByRole('textbox', { name: 'Layout name', exact: true }).fill('A new unsaved idea');
+  await dialog.getByRole('button', { name: 'Save layout', exact: true }).click();
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole('alert')).toBeVisible();
+  expect(await savedDesigns(page)).toEqual(libraryBefore);
+  expect(await currentRailway(page)).toEqual(newDraft);
+  expect((await savedLayout(page)).savedDesignId).toBeUndefined();
+});
+
+test('Save layout focuses the name, traps keyboard focus, and fits a small screen with long saved names', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await seedLayout(page, fixtureLayout('Our small screen railway', [fixtureTrack('small-track', -124)]));
+  const saveButton = page.getByRole('button', { name: 'Save layout', exact: true });
+  await saveButton.click();
+  const dialog = page.getByRole('dialog', { name: 'Save your railway', exact: true });
+  const name = dialog.getByRole('textbox', { name: 'Layout name', exact: true });
+  await expect(name).toBeFocused();
+  expect(await name.evaluate(element => {
+    const input = element as HTMLInputElement;
+    return [input.selectionStart, input.selectionEnd];
+  })).toEqual([0, 'Our small screen railway'.length]);
+  await page.keyboard.press('Shift+Tab');
+  await expect(dialog.getByRole('button', { name: 'Close dialog', exact: true })).toBeFocused();
+  await page.keyboard.press('Shift+Tab');
+  await expect(dialog.getByRole('button', { name: 'Save layout', exact: true })).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(dialog.getByRole('button', { name: 'Close dialog', exact: true })).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(name).toBeFocused();
+  const longName = 'Our elevated station and passing siding on a rainy Sunday';
+  await name.fill(longName);
+  await name.press('Enter');
+  await expect(dialog).toHaveCount(0);
+  await expect(saveButton).toBeFocused();
+  await page.getByRole('button', { name: 'Layouts', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Your saved layouts', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: `Open saved layout ${longName}`, exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.keyboard.press('Escape');
+  await saveButton.click();
+  await expect(dialog.getByRole('button', { name: 'Save changes', exact: true })).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Save as copy', exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});
+
 function curvedConsistFixture(carCount: 3 | 11, turnout: boolean) {
   const tracks: Track[] = [];
   let anchor = { position: { x: -992, y: 0 }, angle: 0 };
@@ -549,6 +779,19 @@ function curvedConsistFixture(carCount: 3 | 11, turnout: boolean) {
 }
 
 type RenderedPoint = { x: number; y: number; z: number };
+type RenderedTurnoutPoints = {
+  id: string;
+  kind: string;
+  state: 'straight' | 'branch';
+  fraction: number;
+  target: number;
+  animating: boolean;
+  pairs: {
+    id: string;
+    blades: { route: number; side: number; closed: boolean; tip: RenderedPoint; heel: RenderedPoint; stockTip: RenderedPoint; gap: number }[];
+    tieBar: { first: RenderedPoint; second: RenderedPoint };
+  }[];
+};
 type RenderedCar = {
   index: number;
   visible: boolean;
@@ -571,6 +814,126 @@ type RenderedCoupler = {
 };
 
 const pointGap = (a: RenderedPoint, b: RenderedPoint) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+
+async function renderedTurnoutPoints(page: Page) {
+  return scene(page).evaluate(element =>
+    JSON.parse((element as HTMLCanvasElement).dataset.turnoutPoints ?? '[]') as RenderedTurnoutPoints[]);
+}
+
+function expectPointBladeEndpoint(points: RenderedTurnoutPoints[], branch: boolean) {
+  for (const turnout of points) {
+    expect(turnout.state).toBe(branch ? 'branch' : 'straight');
+    expect(turnout.fraction).toBe(branch ? 1 : 0);
+    expect(turnout.target).toBe(branch ? 1 : 0);
+    expect(turnout.animating).toBe(false);
+    expect(turnout.pairs).toHaveLength(turnout.kind === 'scissors' ? 4 : 1);
+    for (const pair of turnout.pairs) {
+      expect(pair.blades).toHaveLength(2);
+      for (const blade of pair.blades) {
+        const branchBlade = turnout.kind === 'scissors' ? blade.route >= 2 : blade.route === 1;
+        const closed = branchBlade === branch;
+        expect(blade.closed, `${turnout.kind} pair ${pair.id} closes the selected route`).toBe(closed);
+        // Diagnostics give rail center points. Subtract the stock rail's
+        // 0.49 mm half-head and the tapered tip's 0.055 mm half-head to
+        // measure the actual air gap between their facing surfaces.
+        expect(blade.gap, `${turnout.kind} blade gap matches its rendered tip`).toBeCloseTo(pointGap(blade.tip, blade.stockTip) - .545, 2);
+        if (closed) expect(blade.gap).toBeLessThan(.06);
+        else expect(blade.gap).toBeGreaterThan(1.5);
+      }
+    }
+  }
+}
+
+test('all rendered turnout point blades and scissors pairs move gradually and return to their original rail positions', async ({ page }) => {
+  test.setTimeout(90_000);
+  await freezeAnimationClock(page);
+  const kinds = ['t4l', 't4r', 't6l', 't6r', 'scissors'];
+  await seedLayout(page, fixtureLayout('Point blade detail test', [
+    fixtureTrack('safe-approach', -750, -300),
+    ...kinds.map((kind, index) => fixtureTrack(`points-${kind}`, index % 2 === 0 ? -248 : 220,
+      Math.floor(index / 2) * 240, { kind, bend: kind.endsWith('l') ? -1 : 1, switchNumber: index + 1 })),
+  ]));
+  await advanceAnimation(page, 100);
+  const initial = await renderedTurnoutPoints(page);
+  expect(initial).toHaveLength(5);
+  expectPointBladeEndpoint(initial, false);
+  const desk = page.getByRole('region', { name: 'Turnout switch controls' });
+  for (let number = 1; number <= 5; number += 1) {
+    await desk.getByRole('button', { name: `Switch ${number} branch`, exact: true }).click();
+  }
+  await advanceAnimation(page, 80);
+  const intermediate = await renderedTurnoutPoints(page);
+  for (const [index, turnout] of intermediate.entries()) {
+    expect(turnout.target).toBe(1);
+    expect(turnout.animating).toBe(true);
+    expect(turnout.fraction).toBeGreaterThan(0);
+    expect(turnout.fraction).toBeLessThan(1);
+    for (const [pairIndex, pair] of turnout.pairs.entries()) {
+      for (const [bladeIndex, blade] of pair.blades.entries()) {
+        expect(pointGap(blade.tip, initial[index].pairs[pairIndex].blades[bladeIndex].tip), 'Actual blade mesh has moved before animation finishes').toBeGreaterThan(.05);
+      }
+    }
+  }
+  await advanceAnimation(page, 400);
+  const branched = await renderedTurnoutPoints(page);
+  expectPointBladeEndpoint(branched, true);
+  for (const [index, turnout] of branched.entries()) {
+    for (const [pairIndex, pair] of turnout.pairs.entries()) {
+      const originalPair = initial[index].pairs[pairIndex];
+      for (const [bladeIndex, blade] of pair.blades.entries()) {
+        const original = originalPair.blades[bladeIndex];
+        expect(pointGap(blade.tip, original.tip), 'The blade tip visibly throws to the other route').toBeGreaterThan(1.5);
+        expect(pointGap(blade.tip, original.tip)).toBeGreaterThan(pointGap(intermediate[index].pairs[pairIndex].blades[bladeIndex].tip, original.tip));
+        expect(pointGap(blade.heel, original.heel), 'The point blade remains attached at its heel').toBeLessThan(.05);
+        expect(pointGap(blade.stockTip, original.stockTip), 'The stock rail stays fixed').toBeLessThan(.005);
+      }
+      expect(pointGap(pair.tieBar.first, originalPair.tieBar.first), 'Each point-pair tie bar also moves').toBeGreaterThan(.1);
+    }
+  }
+  const left = branched.findIndex(points => points.kind === 't4l');
+  const right = branched.findIndex(points => points.kind === 't4r');
+  const leftThrow = branched[left].pairs[0].blades[0].tip.y - initial[left].pairs[0].blades[0].tip.y;
+  const rightThrow = branched[right].pairs[0].blades[0].tip.y - initial[right].pairs[0].blades[0].tip.y;
+  expect(Math.sign(leftThrow), 'Left and right turnout throws are mirrored').toBe(-Math.sign(rightThrow));
+  for (let number = 1; number <= 5; number += 1) {
+    await desk.getByRole('button', { name: `Switch ${number} straight`, exact: true }).click();
+  }
+  await advanceAnimation(page, 80);
+  for (const turnout of await renderedTurnoutPoints(page)) {
+    expect(turnout.target).toBe(0);
+    expect(turnout.animating).toBe(true);
+    expect(turnout.fraction).toBeGreaterThan(0);
+    expect(turnout.fraction).toBeLessThan(1);
+  }
+  await advanceAnimation(page, 400);
+  const returned = await renderedTurnoutPoints(page);
+  expectPointBladeEndpoint(returned, false);
+  for (const [index, turnout] of returned.entries()) {
+    for (const [pairIndex, pair] of turnout.pairs.entries()) {
+      for (const [bladeIndex, blade] of pair.blades.entries()) {
+        expect(pointGap(blade.tip, initial[index].pairs[pairIndex].blades[bladeIndex].tip), 'A reverse throw returns the actual mesh to its original position').toBeLessThan(.005);
+      }
+    }
+  }
+  // A second click while the points are still moving must start from the
+  // visible position, without replacing the mesh or snapping to an endpoint.
+  await desk.getByRole('button', { name: 'Switch 1 branch', exact: true }).click();
+  await advanceAnimation(page, 80);
+  const midThrow = (await renderedTurnoutPoints(page))[0];
+  expect(midThrow.fraction).toBeGreaterThan(0);
+  expect(midThrow.fraction).toBeLessThan(1);
+  await desk.getByRole('button', { name: 'Switch 1 straight', exact: true }).click();
+  await advanceAnimation(page, 0);
+  const changedMind = (await renderedTurnoutPoints(page))[0];
+  expect(changedMind.target).toBe(0);
+  expect(changedMind.fraction).toBeGreaterThan(0);
+  expect(changedMind.fraction).toBeLessThanOrEqual(midThrow.fraction);
+  for (const [index, blade] of changedMind.pairs[0].blades.entries()) {
+    expect(pointGap(blade.tip, midThrow.pairs[0].blades[index].tip), 'Rapid reversal continues from the last rendered pose').toBeLessThan(.05);
+  }
+  await advanceAnimation(page, 400);
+  expectPointBladeEndpoint(await renderedTurnoutPoints(page), false);
+});
 
 async function renderedConsist(page: Page) {
   return scene(page).evaluate(element => {
@@ -797,10 +1160,13 @@ test('numbered switches operate live without resetting a clear train and reject 
   await expect(desk.getByRole('button', { name: 'Switch 7 branch', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await advanceAnimation(page, 650);
   expect((await trainPoint(page)).x).toBeGreaterThan(beforeSwitch.x);
+  const occupiedPoints = (await renderedTurnoutPoints(page)).find(points => points.id === 'switch-near');
   await desk.getByRole('button', { name: 'Switch 1 branch', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('Switch 1 is occupied');
   await expect(desk.getByRole('button', { name: 'Switch 1 straight', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByRole('button', { name: 'Pause train', exact: true })).toBeVisible();
+  await advanceAnimation(page, 0);
+  expect((await renderedTurnoutPoints(page)).find(points => points.id === 'switch-near'), 'A rejected occupied-switch command does not move its point blades').toEqual(occupiedPoints);
   await page.getByRole('button', { name: 'Pause train', exact: true }).click();
   await desk.getByRole('button', { name: 'Switch 1 branch', exact: true }).click();
   await expect(desk.getByRole('button', { name: 'Switch 1 branch', exact: true })).toHaveAttribute('aria-pressed', 'true');
