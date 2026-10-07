@@ -1,6 +1,6 @@
 {
   "name": "little-railways",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -13,13 +13,15 @@
   "dependencies": {
     "lucide-react": "^0.468.0",
     "react": "^19.1.1",
-    "react-dom": "^19.1.1"
+    "react-dom": "^19.1.1",
+    "three": "^0.186.1"
   },
   "devDependencies": {
     "@playwright/test": "^1.56.0",
     "@types/node": "^24.0.0",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
+    "@types/three": "^0.186.0",
     "@vitejs/plugin-react": "^5.0.0",
     "typescript": "^5.9.2",
     "vite": "^7.1.7",
