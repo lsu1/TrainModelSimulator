@@ -217,6 +217,27 @@ export default function App() {
                 </button>
               </div>
             </div>
+            {layout.sourcePlan === "kato-plan02-1a" && (
+              <div className="layout-plan-info">
+                <div>
+                  <p>
+                    KATO plan 02-1A uses M1 + V1 + V2 plus four additional R315-45
+                    curves.
+                  </p>
+                  <p className="layout-plan-note">
+                    Pier heights are modeled; check KATO's kit instructions
+                    before building.
+                  </p>
+                </div>
+                <a
+                  href="https://www.katomodels.com/unitrackplan/plan/plan02-1a.pdf"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  View KATO plan <ChevronRight size={14} />
+                </a>
+              </div>
+            )}
             <div className="scene-wrap">
               <Scene3D
                 tracks={tracks}
@@ -866,6 +887,12 @@ export default function App() {
                 <div className="layout-options">
                   {(
                     [
+                      {
+                        kind: "kato-plan02",
+                        title: "KATO M1 + V1 + V2",
+                        text: "Plan 02-1A · a red bridge, slopes and a passing siding.",
+                        icon: Mountain,
+                      },
                       {
                         kind: "city",
                         title: "Tokyo Railway",

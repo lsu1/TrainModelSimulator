@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import type { Locator, Page } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
+import { KATO_CATALOG } from '../src/catalog';
 import { attachTrack, endpoints, pathsFor } from '../src/track';
 import type { Track } from '../src/track';
 
@@ -114,7 +115,7 @@ test('Tokyo starter renders a real 3D railway and an eleven-car E235 without bro
   await expect(page.getByRole('heading', { name: 'Tokyo Railway', exact: true })).toBeVisible();
   await expect(page.getByText('20 tracks · 5 scenery pieces', { exact: true })).toBeVisible();
   await expect(page.getByText('Connected loop · ready to ride', { exact: true })).toBeVisible();
-  await expect(page.getByText('136 catalog pieces to discover.', { exact: true })).toBeVisible();
+  await expect(page.getByText(`${KATO_CATALOG.length} catalog pieces to discover.`, { exact: true })).toBeVisible();
   await expect(scene(page)).toHaveAttribute('data-car-count', '11');
   expect(await canvasColors(scene(page))).toBeGreaterThan(32);
   expect(errors).toEqual([]);
@@ -297,6 +298,66 @@ test('Sky Railway renders an elevated loop above its separate ground-level under
   expect(piers.every((piece: { elevation: number }) => piece.elevation === 0)).toBe(true);
   await expect.poll(async () => (await trainPoint(page)).z).toBe(60);
   await expect(page.getByLabel('New piece height')).toHaveValue('60');
+});
+
+test('KATO plan02 opens in 3D with its numbered switches and retains its source across undo, saves, and imports', async ({ page }, testInfo) => {
+  await openRailway(page);
+  const previous = await savedLayout(page);
+  await chooseLayout(page, 'KATO M1');
+  await expect(page.getByRole('heading', { name: 'KATO M1 + V1 + V2', exact: true })).toBeVisible();
+  await expect(page.getByText('51 tracks · 18 scenery pieces', { exact: true })).toBeVisible();
+  await expect(page.getByText('Connected loop · ready to ride', { exact: true })).toBeVisible();
+  await expect(scene(page)).toHaveAttribute('data-car-count', '3');
+  await expect(page.getByRole('combobox', { name: 'Train car count' })).toHaveValue('3');
+  await expect(page.locator('.layout-plan-info')).toContainText('four additional R315-45 curves');
+  await expect(page.locator('.layout-plan-info')).toContainText('Pier heights are modeled');
+  await expect(page.getByRole('link', { name: 'View KATO plan' })).toHaveAttribute('href',
+    'https://www.katomodels.com/unitrackplan/plan/plan02-1a.pdf');
+  await expect.poll(() => scene(page).evaluate(element =>
+    JSON.parse((element as HTMLCanvasElement).dataset.errorPieceIds ?? '[]'))).toEqual([]);
+  const preset = await savedLayout(page);
+  expect(preset.sourcePlan).toBe('kato-plan02-1a');
+  expect(preset.tracks).toHaveLength(51);
+  expect(preset.accessories).toHaveLength(18);
+  expect(preset.accessories.every((support: { elevation: number }) => support.elevation === 0)).toBe(true);
+  await page.getByRole('button', { name: 'Undo last change' }).click();
+  await expect(page.getByRole('heading', { name: previous.name, exact: true })).toBeVisible();
+  expect(await savedLayout(page)).toEqual(previous);
+  await expect(page.locator('.layout-plan-info')).toHaveCount(0);
+  await chooseLayout(page, 'KATO M1');
+  const desk = page.getByRole('region', { name: 'Turnout switch controls' });
+  await expect(desk.getByRole('group')).toHaveCount(2);
+  for (const number of [1, 2]) {
+    await expect(desk.getByRole('group', { name: `Switch ${number}`, exact: true })).toBeVisible();
+    await expect(desk.getByRole('button', { name: `Switch ${number} straight`, exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await desk.getByRole('button', { name: `Switch ${number} branch`, exact: true }).click();
+    await expect(desk.getByRole('button', { name: `Switch ${number} branch`, exact: true })).toHaveAttribute('aria-pressed', 'true');
+  }
+  const saved = await savedLayout(page);
+  expect(saved.sourcePlan).toBe('kato-plan02-1a');
+  expect(saved.tracks.filter((track: { switchNumber?: number }) => track.switchNumber)
+    .map((track: { switchNumber: number; switchState: string }) => [track.switchNumber, track.switchState]))
+    .toEqual([[1, 'branch'], [2, 'branch']]);
+  await page.reload();
+  await expect(scene(page)).toHaveAttribute('data-ready', 'true');
+  expect(await savedLayout(page)).toEqual(saved);
+  await expect(page.getByRole('link', { name: 'View KATO plan' })).toBeVisible();
+  await expect(desk.getByRole('button', { name: 'Switch 2 branch', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  const downloadPromise = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Save a layout file', exact: true }).click();
+  const download = await downloadPromise;
+  const exportPath = testInfo.outputPath('kato-plan02.json');
+  await download.saveAs(exportPath);
+  expect(JSON.parse(await readFile(exportPath, 'utf8'))).toEqual(saved);
+  await startFresh(page);
+  await page.getByRole('button', { name: 'Layouts', exact: true }).click();
+  await page.getByLabel('Open railway file').setInputFiles(exportPath);
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: saved.name, exact: true })).toBeVisible();
+  expect(await savedLayout(page)).toEqual(saved);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator('.layout-plan-info')).toBeVisible();
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
 
 test('a selected turnout switches the running train onto its branch and persists the route', async ({ page }) => {
@@ -576,6 +637,72 @@ function expectConnectedConsist(
     expect(pointGap(leading.rearEnd, following.frontEnd), 'Cars retain a short connected gap').toBeLessThan(12);
   }
 }
+
+test('KATO plan02 renders a connected three-car train climbing onto its red bridge and reversing smoothly', async ({ page }, testInfo) => {
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await freezeAnimationClock(page);
+  await openRailway(page);
+  await chooseLayout(page, 'KATO M1');
+  const layout = await savedLayout(page);
+  // The complete routes are exercised in the geometry suite. Retain this
+  // exact railway, but start near its summit to check the rendered ascent
+  // and bridge without spending a full software-WebGL lap on approach.
+  const start = layout.tracks.find((track: Track) => track.id === 'kato-plan02-main-24');
+  layout.tracks = [start, ...layout.tracks.filter((track: Track) => track !== start)];
+  await importData(page, layout);
+  await advanceAnimation(page, 100);
+  const rails = selectedRailSamples(layout);
+  expectConnectedConsist(await renderedConsist(page), 3, rails);
+  const initial = await trainPoint(page);
+  expect(initial.z).toBeGreaterThan(55);
+  expect(initial.z).toBeLessThan(60);
+  const ascending = (await renderedConsist(page)).cars[0];
+  expect(ascending.frontBogie.z).toBeGreaterThan(ascending.rearBogie.z);
+  await page.getByRole('slider', { name: 'Train speed' }).focus();
+  await page.keyboard.press('End');
+  await page.getByRole('button', { name: 'Run train', exact: true }).click();
+  let previous = (await renderedConsist(page)).cars;
+  for (let step = 0; step < 12; step += 1) {
+    await advanceAnimation(page, 250);
+    const rendered = await renderedConsist(page);
+    expectConnectedConsist(rendered, 3, rails);
+    for (const car of rendered.cars) {
+      expect(pointGap(car.center, previous[car.index].center), 'Car climbs without jumping').toBeLessThan(75);
+    }
+    previous = rendered.cars;
+  }
+  await expect(page.getByRole('button', { name: 'Pause train', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Pause train', exact: true }).click();
+  await advanceAnimation(page, 100);
+  const paused = await renderedConsist(page);
+  expect((await trainPoint(page)).z).toBe(60);
+  const bridge = layout.tracks.find((track: Track) => track.kind === 'b248-red') as Track;
+  const bridgePath = pathsFor(bridge)[0];
+  const bridgeStart = bridgePath.pointAt(0), bridgeEnd = bridgePath.pointAt(bridgePath.length);
+  const dx = bridgeEnd.x - bridgeStart.x, dy = bridgeEnd.y - bridgeStart.y;
+  const lead = paused.cars[0].center;
+  const along = ((lead.x - bridgeStart.x) * dx + (lead.y - bridgeStart.y) * dy) / (dx * dx + dy * dy);
+  expect(along, 'The leading car is inside the red bridge span').toBeGreaterThan(0);
+  expect(along).toBeLessThan(1);
+  expect(Math.hypot(lead.x - bridgeStart.x - along * dx, lead.y - bridgeStart.y - along * dy)).toBeLessThan(.05);
+  const screenshotPath = testInfo.outputPath('kato-plan02-red-bridge.png');
+  await scene(page).screenshot({ path: screenshotPath });
+  await testInfo.attach('kato-plan02-red-bridge', { path: screenshotPath, contentType: 'image/png' });
+  await page.getByRole('button', { name: 'Reverse train direction' }).click();
+  await advanceAnimation(page, 100);
+  expect(await renderedConsist(page), 'Reversal preserves every car and coupling').toEqual(paused);
+  await page.getByRole('button', { name: 'Run train', exact: true }).click();
+  await advanceAnimation(page, 250);
+  const reversed = await renderedConsist(page);
+  expectConnectedConsist(reversed, 3, rails);
+  const before = paused.cars[0], after = reversed.cars[0];
+  expect(pointGap(before.center, after.center)).toBeGreaterThan(5);
+  expect(pointGap(before.center, after.center)).toBeLessThan(75);
+  expect((after.center.x - before.center.x) * (before.frontEnd.x - before.rearEnd.x)
+    + (after.center.y - before.center.y) * (before.frontEnd.y - before.rearEnd.y)).toBeLessThan(0);
+  expect(errors).toEqual([]);
+});
 
 for (const [count, turnout] of [[3, true], [11, false]] as const) {
   test(`${count} rendered cars stay connected through ${turnout ? 'a turnout and curve' : 'tight curves'} and reverse smoothly`, async ({ page }, testInfo) => {

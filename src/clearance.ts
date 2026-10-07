@@ -1,7 +1,7 @@
 import { KATO_CATALOG } from './catalog'
 import type { CatalogItem } from './catalogTypes'
 import type { LayoutData, PlacedAccessory } from './layout'
-import { endpoints, pathsFor } from './track'
+import { connectedEndpoint, endpoints, pathsFor } from './track'
 import type { Track, TrackPoint, TrackRoute } from './track'
 
 export interface LayoutIssue {
@@ -133,6 +133,28 @@ function accessoryGeometry(accessory: PlacedAccessory): SceneryGeometry {
     box(0, 0, 2, span + 2, top - 3, top - 1, 'beam')
     // Contact-wire arms intentionally meet the raised pantograph: they are not
     // solid obstacles. The structural gantry beam and both posts are checked.
+  } else if (accessory.kind.startsWith('a-pier-incline-') || accessory.kind === 'a-incline-spacer') {
+    const componentHeight = item.supportComponentHeight!, assemblyHeight = item.supportDeckHeight!
+    if (accessory.kind === 'a-incline-spacer') {
+      box(0, 0, length, width, 0, componentHeight, 'support')
+      box(0, 0, length, width, componentHeight, assemblyHeight, 'support')
+    } else if (accessory.kind === 'a-pier-incline-s') {
+      for (let step = 0; step < 3; step++)
+        box(-length / 2 + (step + .5) * length / 3, 0, length / 3, width, 0, componentHeight * (step + 1) / 3, 'support')
+      box(length / 3, 0, 8, 14, componentHeight, assemblyHeight - 2, 'support')
+      box(0, 0, length, width, assemblyHeight - 2, assemblyHeight, 'support')
+    } else {
+      box(0, 0, length, width, 0, 4, 'support')
+      // Conservative cross-sections mirror the rectangular 1-to-.6 taper.
+      for (let layer = 0; layer < 6; layer++) {
+        const fraction = 1 - .4 * layer / 6
+        box(0, 0, (length - 4) * fraction, (width - 8) * fraction,
+          4 + layer * (componentHeight - 7) / 6, 4 + (layer + 1) * (componentHeight - 7) / 6, 'support')
+      }
+      box(0, 0, length - 2, width - 2, componentHeight - 3, componentHeight, 'support')
+      box(0, 0, 14, 20, componentHeight, assemblyHeight - 2, 'support')
+      box(0, 0, length, width, assemblyHeight - 2, assemblyHeight, 'support')
+    }
   } else if (accessory.kind === 'a-pier-tapered') {
     box(0, 0, 30, 30, 0, 4, 'support')
     // Match the 50 mm component and 10 mm attachment displayed by Scene3D.
@@ -260,9 +282,34 @@ function connectedPortPositions(a: TrackGeometry, b: TrackGeometry): { position:
   }
   return result
 }
-function trackPairIssue(a: TrackGeometry, b: TrackGeometry): LayoutIssue | undefined {
+interface TurnoutExitPort { trackId: string; position: Point2; routes: number[] }
+function connectedTurnoutExits(tracks: Track[]): [TurnoutExitPort, TurnoutExitPort][] {
+  const result: [TurnoutExitPort, TurnoutExitPort][] = []
+  for (const turnout of tracks) {
+    if (turnout.kind !== 't6l' && turnout.kind !== 't6r') continue
+    const straight = connectedEndpoint(tracks, turnout.id, 1), branch = connectedEndpoint(tracks, turnout.id, 2)
+    if (!straight || !branch || straight.track.id === branch.track.id) continue
+    // Both links must satisfy the train router's strict position, height and yaw
+    // tolerances in both directions; a nearby unconnected track does not qualify.
+    const straightBack = connectedEndpoint(tracks, straight.track.id, straight.end)
+    const branchBack = connectedEndpoint(tracks, branch.track.id, branch.end)
+    if (straightBack?.track.id !== turnout.id || straightBack.end !== 1
+      || branchBack?.track.id !== turnout.id || branchBack.end !== 2) continue
+    const port = (connection: NonNullable<typeof straight>): TurnoutExitPort => ({
+      trackId: connection.track.id, position: endpoints(connection.track)[connection.end].position,
+      routes: pathsFor(connection.track).filter(route => route.startPort === connection.end || route.endPort === connection.end).map(route => route.route),
+    })
+    result.push([port(straight), port(branch)])
+  }
+  return result
+}
+function trackPairIssue(a: TrackGeometry, b: TrackGeometry, turnoutExits: [TurnoutExitPort, TurnoutExitPort][]): LayoutIssue | undefined {
   if (!intersects(a.bounds, b.bounds)) return undefined
   const joins = connectedPortPositions(a, b)
+  const sharedTurnoutExits = turnoutExits.flatMap(pair => {
+    const first = pair.find(port => port.trackId === a.track.id), second = pair.find(port => port.trackId === b.track.id)
+    return first && second ? [{ first, second }] : []
+  })
   const designedJunction = ['turnout', 'scissors', 'crossing'].includes(a.item.shape) || ['turnout', 'scissors', 'crossing'].includes(b.item.shape)
   for (const first of a.segments) for (const second of b.segments) {
     if (!intersects(first.bounds, second.bounds)) continue
@@ -285,6 +332,15 @@ function trackPairIssue(a: TrackGeometry, b: TrackGeometry): LayoutIssue | undef
       return Math.hypot(firstPoint.x - join.position.x, firstPoint.y - join.position.y) <= reach
         && Math.hypot(secondPoint.x - join.position.x, secondPoint.y - join.position.y) <= reach
     })) continue
+    // The nominal #6 outlets are 24.47 mm apart: their modeled 25 mm bed
+    // flanges meet briefly beyond the turnout. Permit that local connection
+    // only while the complete stock corridors remain separate. Every other
+    // track, route, height conflict and collision farther from the outlets is
+    // still checked, including curves whose body overhang closes the gap.
+    if (height <= EPSILON && closest.distance >= first.halfWidth + second.halfWidth - EPSILON
+      && sharedTurnoutExits.some(join => join.first.routes.includes(first.route) && join.second.routes.includes(second.route)
+        && Math.hypot(firstPoint.x - join.first.position.x, firstPoint.y - join.first.position.y) <= 50
+        && Math.hypot(secondPoint.x - join.second.position.x, secondPoint.y - join.second.position.y) <= 50)) continue
     if (height < 8) return issue('track-overlap', 'error', [a.track.id, b.track.id],
       'These tracks overlap. Use a crossing piece or move one track.',
       'Independent track beds and train corridors intersect at the same level. Proper end-to-end joints and routes inside one turnout or crossing are allowed.')
@@ -299,7 +355,7 @@ function sceneryTrackIssue(scenery: SceneryGeometry, geometry: TrackGeometry, tr
   if (scenery.accessory && bufferAtOpenEnd(scenery.accessory, tracks, geometry.track)) return undefined
   const accessory = scenery.accessory
   const support = accessory && ITEM_BY_KIND.get(accessory.kind)
-  // A documented support head intentionally contacts its own roadbed at a joint.
+  // A modeled support head intentionally contacts its own roadbed at a joint.
   // A nominal flat attachment can slightly overlap the sloping roadbed mesh;
   // that contact is not a train obstruction. Keep checking the shaft, all stock
   // volumes, and every other track. The engineering report retains the need to
@@ -333,12 +389,13 @@ function sceneryTrackIssue(scenery: SceneryGeometry, geometry: TrackGeometry, tr
  */
 export function auditClearances(layout: Pick<LayoutData, 'tracks' | 'accessories'>): LayoutIssue[] {
   const tracks = layout.tracks.map(trackGeometry), scenery = layout.accessories.map(accessoryGeometry)
+  const turnoutExits = connectedTurnoutExits(layout.tracks)
   const issues: LayoutIssue[] = [], reported = new Set<string>()
   const add = (value: LayoutIssue | undefined) => {
     if (value && !reported.has(value.id)) { reported.add(value.id); issues.push(value) }
   }
   for (let first = 0; first < tracks.length; first++) for (let second = first + 1; second < tracks.length; second++)
-    add(trackPairIssue(tracks[first], tracks[second]))
+    add(trackPairIssue(tracks[first], tracks[second], turnoutExits))
   for (const piece of scenery) for (const track of tracks)
     add(sceneryTrackIssue(piece, track, layout.tracks))
   if (layout.accessories.length) add(issue('scenery-dimensions-nominal', 'warning', layout.accessories.map(piece => piece.id),

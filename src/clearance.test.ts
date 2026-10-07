@@ -133,6 +133,30 @@ describe('track and support clearance', () => {
     expect(errors([double, doubleNext])).toEqual([])
   })
 
+  it.each([-1, 1] as const)('allows local bed-flange contact only at the connected #6 turnout exits, bend %s', bend => {
+    const turnout: Track = { ...straight, id: 'turnout', kind: bend === -1 ? 't6l' : 't6r', bend, angle: .4 }
+    const main = attachTrack('s248', 1, endpoints(turnout)[1], 'main')
+    const branch = attachTrack('s64', 1, endpoints(turnout)[2], 'branch')
+    expect(errors([turnout, main, branch])).toEqual([])
+    // Identical nearby track geometry without its shared turnout remains a
+    // prohibited independent bed overlap, as does a misplaced branch joint.
+    expect(errors([main, branch])[0]?.code).toBe('track-overlap')
+    const misplaced = { ...branch, x: branch.x + Math.sin(turnout.angle) * bend * .5, y: branch.y - Math.cos(turnout.angle) * bend * .5 }
+    expect(errors([turnout, main, misplaced]).some(issue => issue.code === 'track-overlap'
+      && issue.pieceIds.includes(main.id) && issue.pieceIds.includes(branch.id))).toBe(true)
+    const differentLevel = { ...branch, elevation: .15, endElevation: .15 }
+    expect(errors([turnout, main, differentLevel]).some(issue => issue.code === 'track-overlap'
+      && issue.pieceIds.includes(main.id) && issue.pieceIds.includes(branch.id))).toBe(true)
+    const unrelated = { ...main, id: 'unrelated', x: main.x - Math.sin(main.angle) * 20, y: main.y + Math.cos(main.angle) * 20 }
+    expect(errors([turnout, main, branch, unrelated]).some(issue => issue.code === 'track-overlap'
+      && issue.pieceIds.includes(main.id) && issue.pieceIds.includes(unrelated.id))).toBe(true)
+    // An attached curve still fails when its E235 body overhang intrudes into
+    // the neighboring stock corridor, even right beside the shared outlets.
+    const tightCurve = attachTrack('c117', -bend as 1 | -1, endpoints(turnout)[2], 'tight-curve')
+    expect(errors([turnout, main, tightCurve]).some(issue => issue.code === 'track-overlap'
+      && issue.pieceIds.includes(main.id) && issue.pieceIds.includes(tightCurve.id))).toBe(true)
+  })
+
   it('permits native 33 mm parallel track but detects overlapping beds', () => {
     expect(errors([straight, { ...straight, id: 'other', y: 33 }])).toEqual([])
     expect(errors([straight, { ...straight, id: 'other', y: 20 }])[0]?.code).toBe('track-overlap')

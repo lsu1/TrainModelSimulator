@@ -1,6 +1,7 @@
 import { KATO_CATALOG } from './catalog';
 import { endpoints, makeCityLayout, makeStarterLayout, makeViaductLayout } from './track';
 import type { Track } from './track';
+import { makeKatoPlan02 } from './katoPlan';
 
 export interface PlacedAccessory {
   id: string;
@@ -17,6 +18,8 @@ export interface LayoutData {
   tracks: Track[];
   accessories: PlacedAccessory[];
   carCount: number;
+  /** Source drawing retained when a preset is saved, edited, or exported. */
+  sourcePlan?: 'kato-plan02-1a';
 }
 
 export const STORAGE_KEY = 'little-railways-layout-v2';
@@ -49,6 +52,9 @@ export function parseLayout(value: unknown): LayoutData {
   const carCount = candidate.version === 1 ? 11 : candidate.carCount;
   if (typeof carCount !== 'number' || !Number.isInteger(carCount) || carCount < 3 || carCount > 11) {
     throw new Error('Choose a train with 3 to 11 cars.');
+  }
+  if (candidate.sourcePlan !== undefined && candidate.sourcePlan !== 'kato-plan02-1a') {
+    throw new Error('This layout has an unrecognized source plan.');
   }
   if (candidate.tracks.length + accessoriesData.length > MAX_PIECES) {
     throw new Error(`This railway has more than ${MAX_PIECES} pieces.`);
@@ -142,13 +148,15 @@ export function parseLayout(value: unknown): LayoutData {
     tracks,
     accessories,
     carCount,
+    ...(candidate.sourcePlan === 'kato-plan02-1a' ? { sourcePlan: candidate.sourcePlan } : {}),
   };
 }
 
-export type LayoutPreset = 'city' | 'viaduct' | 'empty' | 'compact';
+export type LayoutPreset = 'city' | 'viaduct' | 'empty' | 'compact' | 'kato-plan02';
 
 /** Ready-to-play scenery keeps its catalog identity when saved or exported. */
 export function createLayout(kind: LayoutPreset = 'city'): LayoutData {
+  if (kind === 'kato-plan02') return parseLayout(makeKatoPlan02());
   const tracks = kind === 'city' ? makeCityLayout()
     : kind === 'viaduct' ? makeViaductLayout()
       : kind === 'compact' ? makeStarterLayout('compact') : [];

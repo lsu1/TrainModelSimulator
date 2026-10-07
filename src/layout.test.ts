@@ -35,6 +35,15 @@ describe('layout file validation', () => {
     expect(parseLayout({ ...original, tracks: [], accessories: [] }).tracks).toEqual([])
   })
 
+  it('retains a source drawing through saving and rejects unknown source markers', () => {
+    const original = { ...layout(), sourcePlan: 'kato-plan02-1a' as const }
+    expect(parseLayout(JSON.parse(JSON.stringify(original)))).toEqual(original)
+    expect(parseLayout({ ...original, name: 'Our edited KATO railway' }).sourcePlan).toBe('kato-plan02-1a')
+    for (const sourcePlan of ['other-plan', null, 12]) {
+      expect(() => parseLayout({ ...original, sourcePlan })).toThrow(/source plan/)
+    }
+  })
+
   it('migrates the original 2D format without losing the railway', () => {
     const original = legacy()
     const migrated = parseLayout(original)

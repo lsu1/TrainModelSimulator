@@ -45,9 +45,9 @@ export interface CatalogItem {
     | "crossingGate"
     | "building";
   footprint?: { length: number; width: number; height: number };
-  /** Documented roadbed-base height of a complete support assembly, in mm. */
+  /** Modeled roadbed-base height in mm; verification is recorded in KATO_SUPPORT_DATA. */
   supportDeckHeight?: number;
-  /** Physical pier-column height; may differ from the attached roadbed height. */
+  /** Pier-column height used by the model; nominal values are identified in notes. */
   supportComponentHeight?: number;
   color?: string;
   sourceUrl: string;

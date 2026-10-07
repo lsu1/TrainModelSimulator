@@ -370,6 +370,18 @@ function sign(group: THREE.Group, width: number, height: number, x: number, y: n
   material.userData.temporary = true;
   const mesh = new THREE.Mesh(new THREE.PlaneGeometry(width, height), material); mesh.position.set(x, y, z); group.add(mesh);
 }
+function supportLabel(group: THREE.Group, label: string, width: number, height: number, x: number, y: number, z: number) {
+  const canvas = document.createElement('canvas'); canvas.width = 256; canvas.height = 64;
+  const context = canvas.getContext('2d')!;
+  context.fillStyle = '#c9ccbf'; context.fillRect(0, 0, canvas.width, canvas.height);
+  context.fillStyle = '#46534b'; context.font = 'bold 46px sans-serif'; context.textAlign = 'center'; context.textBaseline = 'middle';
+  context.fillText(label, canvas.width / 2, canvas.height / 2);
+  const texture = new THREE.CanvasTexture(canvas); texture.colorSpace = THREE.SRGBColorSpace;
+  const material = new THREE.MeshStandardMaterial({ map: texture, roughness: .85, side: THREE.DoubleSide });
+  material.userData.temporary = true;
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(width, height), material);
+  mesh.position.set(x, y, z); mesh.rotation.y = Math.PI; group.add(mesh);
+}
 function makeAccessory(accessory: PlacedAccessory, library: ModelLibrary): THREE.Group {
   const item = ITEM_BY_KIND.get(accessory.kind)!;
   const group = new THREE.Group(); group.userData.pieceId = accessory.id;
@@ -441,7 +453,37 @@ function makeAccessory(accessory: PlacedAccessory, library: ModelLibrary): THREE
       box(group, library, entry + 5, 2, Math.min(width / 2, 23) + 6, -length / 3, 39, 0, '#627d69');
     }
   } else if (kind === 'pier') {
-    if (accessory.kind === 'a-pier-tapered') {
+    if (accessory.kind.startsWith('a-pier-incline-') || accessory.kind === 'a-incline-spacer') {
+      // Every tier sits on the table. These fixed component/attachment dimensions
+      // are nominal models; the catalog keeps their unverified datum warnings.
+      const componentHeight = item.supportComponentHeight!;
+      const assemblyHeight = item.supportDeckHeight!;
+      if (accessory.kind === 'a-incline-spacer') {
+        box(group, library, length, componentHeight, width, 0, componentHeight / 2, 0, '#969e92');
+        box(group, library, length, assemblyHeight - componentHeight, width, 0, (assemblyHeight + componentHeight) / 2, 0, '#c9ccbf');
+        supportLabel(group, 'SPC', 13, 3, 0, componentHeight / 2, -width / 2 - .05);
+      } else if (accessory.kind === 'a-pier-incline-s') {
+        for (let step = 0; step < 3; step++) {
+          const stepHeight = componentHeight * (step + 1) / 3;
+          box(group, library, length / 3, stepHeight, width, -length / 2 + (step + .5) * length / 3, stepHeight / 2, 0, '#bfc3b8');
+        }
+        box(group, library, 8, assemblyHeight - componentHeight - 2, 14, length / 3, (componentHeight + assemblyHeight - 2) / 2, 0, '#969e92');
+        box(group, library, length, 2, width, 0, assemblyHeight - 1, 0, '#c9ccbf');
+        supportLabel(group, 'No. S', 8, 3, length / 3, componentHeight / 2, -width / 2 - .05);
+      } else {
+        box(group, library, length, 4, width, 0, 2, 0, '#b7bbb0');
+        const shaftHeight = componentHeight - 7;
+        // The square cylinder is scaled into a rectangular, tapered column.
+        const shaft = new THREE.Mesh(new THREE.CylinderGeometry(.6 * Math.SQRT2, Math.SQRT2, shaftHeight, 4).rotateY(Math.PI / 4), library.material('#bfc3b8'));
+        shaft.scale.set((length - 4) / 2, 1, (width - 8) / 2);
+        shaft.position.y = 4 + shaftHeight / 2; shaft.castShadow = shaft.receiveShadow = true; group.add(shaft);
+        box(group, library, length - 2, 3, width - 2, 0, componentHeight - 1.5, 0, '#c9ccbf');
+        const attachmentHeight = assemblyHeight - componentHeight;
+        box(group, library, 14, attachmentHeight - 2, 20, 0, componentHeight + (attachmentHeight - 2) / 2, 0, '#969e92');
+        box(group, library, length, 2, width, 0, assemblyHeight - 1, 0, '#aeb7a6');
+        supportLabel(group, item.label, 13, 2.5, 0, componentHeight - 1.5, -(width - 2) / 2 - .05);
+      }
+    } else if (accessory.kind === 'a-pier-tapered') {
       const componentHeight = item.supportComponentHeight ?? 50;
       const assemblyHeight = item.supportDeckHeight ?? 60;
       box(group, library, length, 4, width, 0, 2, 0, '#b7bbb0');

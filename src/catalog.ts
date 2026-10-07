@@ -6,6 +6,9 @@ const PLATFORM = 'https://www.katomodels.com/product/n/platform'
 const PLATFORM_DX = 'https://www.katomodels.com/product/n/kinko_homu_dx'
 const STATION = 'https://www.katomodels.com/product/n/unitrack_koukaeki'
 const ELEVATED = 'https://unitrack.katomodels.com/products/line_single/elevated_line'
+const INCLINE_PLAN = 'https://www.katomodels.com/unitrackplan/plan/plan02-1a.pdf'
+const INCLINE_PARTS = 'https://www.katomodels.com/unitrackplan/plan/plan02-1a_partslist.pdf'
+const INCLINE_KEY = 'https://www.katomodels.com/unitrackplan/common_parts_namelist.pdf'
 const page = (n: number) => `${PDF}#page=${n}`
 const radians = (degrees: number) => degrees * Math.PI / 180
 
@@ -41,6 +44,16 @@ function accessory(kind: string, sku: string, label: string, name: string, acces
   return { kind, sku, label, name, category: 'accessory', shape: 'accessory', accessoryType, length: footprint.length,
     footprint, bed: 'none', sourceUrl, verification: 'nominal',
     notes: 'Product identity is catalog sourced. The simplified scenery model and footprint are nominal, not a measured product template.' }
+}
+
+/** Fixed tier identities from the KATO incline set; these are nominal visual datums. */
+function inclineSupport(kind: string, sku: string, label: string, name: string, componentHeight: number, roadbedHeight: number, length = 24, width = 32): CatalogItem {
+  return { ...accessory(kind, sku, label, name, 'pier', { length, width, height: roadbedHeight }, ELEVATED),
+    supportComponentHeight: componentHeight, supportDeckHeight: roadbedHeight,
+    notes: `${label} is a fixed component, not an adjustable pier. ${kind === 'a-pier-incline-5'
+      ? 'The ordinary No. 5 component height of 50 mm is catalog sourced; its 60 mm roadbed-bottom height is an unverified modeling assumption.'
+      : `Its ${componentHeight} mm component height and ${roadbedHeight} mm roadbed-bottom height are unverified modeling assumptions.`} The attachment geometry, footprint and component-to-roadbed mapping need physical measurement.`,
+  }
 }
 
 export const KATO_CATALOG: CatalogItem[] = [
@@ -167,6 +180,13 @@ export const KATO_CATALOG: CatalogItem[] = [
   accessory('a-pier-cone', '23-047', 'Bridge pier', 'Single-track bridge pier No. 5', 'pier', { length: 30, width: 30, height: 50 }, page(13)),
   { ...accessory('a-pier-tapered', '23-069', '60 mm track support', 'Tapered No. 5 pier · 50 mm pier / 60 mm roadbed', 'pier', { length: 30, width: 30, height: 60 }, ELEVATED), supportDeckHeight: 60, supportComponentHeight: 50,
     notes: 'KATO documents the pier component at 50 mm and supported roadbed bottom at 60 mm. The rendered 60 mm height represents the support assembly including its additional 10 mm attachment/viaduct structure. The lateral footprint and appearance remain nominal.' },
+  inclineSupport('a-pier-incline-s', '23-015-1', 'No. S', 'Incline starter step No. S · nominal 10 mm roadbed', 5, 10, 28, 20),
+  inclineSupport('a-pier-incline-1', '23-015-1', 'No. 1', 'Incline pier No. 1 · nominal 25 mm roadbed', 15, 25),
+  inclineSupport('a-pier-incline-2', '23-015-1', 'No. 2', 'Incline pier No. 2 · nominal 35 mm roadbed', 25, 35),
+  inclineSupport('a-pier-incline-3', '23-015-1', 'No. 3', 'Incline pier No. 3 · nominal 45 mm roadbed', 35, 45),
+  inclineSupport('a-pier-incline-4', '23-015-1', 'No. 4', 'Incline pier No. 4 · nominal 55 mm roadbed', 45, 55),
+  inclineSupport('a-pier-incline-5', '23-017-1', 'No. 5', 'Ordinary pier No. 5 · nominal 60 mm roadbed', 50, 60),
+  inclineSupport('a-incline-spacer', '23-016-1', 'SPC', 'Incline spacer SPC · nominal 5 mm roadbed', 4, 5, 28, 20),
   accessory('a-catenary', '23-059-1', 'Catenary', 'Single-track catenary pole', 'catenary', { length: 8, width: 34, height: 45 }, page(26)),
   accessory('a-catenary-double', '23-060-1', 'Double catenary', 'Double-track square-corner catenary poles', 'catenary', { length: 8, width: 70, height: 45 }, page(26)),
   accessory('a-catenary-wide', '23-061', 'Wide catenary', 'Double-track wide catenary poles', 'catenary', { length: 8, width: 86, height: 45 }, page(26)),
@@ -186,6 +206,11 @@ export const CATALOG_SOURCES: { title: string; url: string; note?: string }[] = 
   { title: 'KATO island and side platforms', url: PLATFORM, note: 'Current replacement SKUs, 248 mm platforms and 200 mm ends.' },
   { title: 'KATO viaduct stations', url: STATION, note: 'Official 248 × 113 mm station and shop footprints.' },
   { title: 'KATO viaducts and support heights', url: ELEVATED, note: 'Banking approach requirements and the explicit 23-069 support datum: 50 mm pier height, 60 mm roadbed-bottom height.' },
+  { title: 'KATO official incline plan 02-1A', url: INCLINE_PLAN, note: 'Official track arrangement and No. S / No. 1–5 incline-support sequence. Individual incline tier heights and exact assembled roadbed datums are not dimensioned.' },
+  { title: 'KATO plan 02-1A parts list', url: INCLINE_PARTS, note: 'Official plan quantities and track-kit selection. Older accessory codes are mapped to current products separately.' },
+  { title: 'KATO plan parts and support key', url: INCLINE_KEY, note: 'Identifies the fixed No. S, No. 1–5 and SPC components used in official plans.' },
+  { title: 'KATO M1/M2 starter sets', url: 'https://www.katomodels.com/product/n/m1_m2', note: 'Current starter-set contents and track identity for the official M1 + V2 incline plan.' },
+  { title: 'KATO V2 single-track viaduct set', url: 'https://www.katomodels.com/product/n/v2_set', note: 'Current incline and elevated-track set contents. Modeling an individual support height does not verify its assembled roadbed datum.' },
   { title: 'KATO USA UNITRACK', url: 'https://katousa.com/unitrack/', note: 'Official track system introduction and current catalog links.' },
 ]
 
@@ -206,6 +231,10 @@ export const KATO_SUPPORT_DATA: CatalogSupport[] = [
   { kind: 'a-pier-frame', pierHeight: 50, verified: false, sourceUrl: page(22), notes: '50 mm is only the current visual mesh height; the inspected catalog does not give a component or support datum.' },
   { kind: 'a-pier-cone', pierHeight: 50, verified: true, sourceUrl: page(13), notes: 'Official component height is 50 mm. Use only a separately confirmed support datum for physical planning.' },
   { kind: 'a-pier-tapered', pierHeight: 50, trackElevation: 60, verified: true, sourceUrl: ELEVATED, notes: 'KATO explicitly documents 50 mm pier height and 60 mm track-bottom height for 23-069. This is the roadbed-bottom datum, not top of rail. The adapter/viaduct structure must bridge the additional 10 mm. Footprint and appearance remain nominal.' },
+  ...KATO_CATALOG.filter(item => item.kind.startsWith('a-pier-incline-') || item.kind === 'a-incline-spacer').map(item => ({
+    kind: item.kind, pierHeight: item.supportComponentHeight!, trackElevation: item.supportDeckHeight,
+    verified: false, sourceUrl: ELEVATED, notes: item.notes,
+  })),
 ]
 
 /** R315 is an official starter-set choice, not a published minimum or traction guarantee. */
