@@ -1,4 +1,6 @@
 import type { TrainRuntime, TrainSnapshot } from './fleet'
+import type { CouplingGroup } from './couplingTypes'
+import { solveCoupledFormation } from './formationPose'
 import { KATO_CATALOG } from './catalog'
 import { advanceConsist, occupiedTrackIds } from './trainMotion'
 import { advanceTrain, closedRouteLength, withTrackGraph } from './track'
@@ -54,7 +56,10 @@ function conflictingJunctions(tracks: Track[], a: JunctionOccupancy, b: Junction
 
 const millimetersPerSecond = (train: TrainSnapshot, speed: number) => speed / 3.6 * 1000 / getTrainSpec(train.type).scale
 const travelDistance = (train: TrainRuntime, seconds: number) => millimetersPerSecond(train, train.actualSpeed) * seconds
-const footprintKey = (train: TrainSnapshot) => `${train.type}:${train.carCount}:${train.position?.trackId}:${train.position?.route ?? 0}:${train.position?.distance}:${train.position ? (train.cabForward ? train.position.direction : -train.position.direction) : 0}`
+const footprintKey = (train: TrainSnapshot) => {
+  const nose = (train as TrainRuntime).noseCoupling
+  return `${train.type}:${train.carCount}:${train.position?.trackId}:${train.position?.route ?? 0}:${train.position?.distance}:${train.position ? (train.cabForward ? train.position.direction : -train.position.direction) : 0}:${nose?.open ?? 0}:${nose?.extension ?? 0}:${nose?.axis?.x ?? 1}:${nose?.axis?.y ?? 0}:${nose?.axis?.z ?? 0}`
+}
 function frameCache(tracks: Track[]) {
   // React replaces edited track arrays. The fingerprint also protects callers
   // that mutate a track in place, as supported by the existing geometry tests.
@@ -111,7 +116,7 @@ function brakingParticipants(first: TrainRuntime, second: TrainRuntime, a: Train
   return [first.id.localeCompare(second.id) < 0 ? second.id : first.id]
 }
 
-function brakingLookahead(tracks: Track[], fleet: TrainRuntime[], footprints: TrainFootprint[]): Map<string, string> {
+function brakingLookahead(tracks: Track[], fleet: TrainRuntime[], footprints: TrainFootprint[], strategy?: FleetMotionStrategy): Map<string, string> {
   const reasons = new Map<string, string>()
   if (fleet.length < 2 || !fleet.some(train => train.running && train.actualSpeed > 0)) return reasons
   const hasJunctions = tracks.some(track => ['crossing', 'scissors', 'turnout'].includes(TRACK_SHAPES.get(track.kind) ?? ''))
@@ -132,8 +137,8 @@ function brakingLookahead(tracks: Track[], fleet: TrainRuntime[], footprints: Tr
       const cached = previews.get(key)
       if (cached) return cached
       const result = [.33, .67, 1].map(fraction => {
-        const future = moved(tracks, train, train.running ? travelDistance(train, horizon * fraction) : 0)
-        const footprint = trainFootprint(tracks, future)
+        const future = strategy ? strategy.move(train, train.running ? travelDistance(train, horizon * fraction) : 0) : moved(tracks, train, train.running ? travelDistance(train, horizon * fraction) : 0)
+        const footprint = strategy ? strategy.footprint(future) : trainFootprint(tracks, future)
         return { footprint, occupancy: hasJunctions ? junctionOccupancy(tracks, future, footprint) : new Map() }
       })
       previews.set(key, result); return result
@@ -191,7 +196,14 @@ function speedState(train: TrainRuntime, seconds: number, reason?: string): Trai
 /** All intentions come from one snapshot. Bounded, swept steps cap motion before
  * contact and commit the fleet together; there is no active-train update order.
  */
-function stepFleetPrepared(tracks: Track[], fleet: readonly TrainRuntime[], dtSeconds: number): TrainRuntime[] {
+export interface FleetMotionStrategy {
+  footprint: (train: TrainRuntime) => TrainFootprint
+  move: (train: TrainRuntime, distance: number) => TrainRuntime
+}
+
+function stepFleetPrepared(tracks: Track[], fleet: readonly TrainRuntime[], dtSeconds: number, strategy?: FleetMotionStrategy): TrainRuntime[] {
+  const footprint = (train: TrainRuntime) => strategy ? strategy.footprint(train) : trainFootprint(tracks, train)
+  const move = (train: TrainRuntime, distance: number) => strategy ? strategy.move(train, distance) : moved(tracks, train, distance)
   const seconds = Math.min(MAX_FLEET_FRAME_SECONDS, Math.max(0, Number.isFinite(dtSeconds) ? dtSeconds : 0))
   // The public solver also accepts injected runtimes. Normalize before the
   // lookahead/substep calculation so malformed or superseded profiles cannot
@@ -206,9 +218,9 @@ function stepFleetPrepared(tracks: Track[], fleet: readonly TrainRuntime[], dtSe
   const cached = frameCache(tracks)
   let footprints = current.map(train => {
     const previous = cached.trains.get(train.id)
-    return previous?.key === footprintKey(train) ? previous.footprint : trainFootprint(tracks, train)
+    return !strategy && previous?.key === footprintKey(train) ? previous.footprint : footprint(train)
   })
-  const reasons = brakingLookahead(tracks, current, footprints)
+  const reasons = brakingLookahead(tracks, current, footprints, strategy)
   const maxVelocity = Math.max(0, ...current.map(train => millimetersPerSecond(train, Math.max(train.actualSpeed, train.running ? train.requestedSpeed : 0))))
   const hasNearbyTrains = current.some((a, first) => current.slice(first + 1).some((b, offset) =>
     couldMeet(footprints[first], footprints[first + 1 + offset], millimetersPerSecond(a, Math.max(a.actualSpeed, a.running ? a.requestedSpeed : 0)) * seconds + millimetersPerSecond(b, Math.max(b.actualSpeed, b.running ? b.requestedSpeed : 0)) * seconds)))
@@ -217,19 +229,19 @@ function stepFleetPrepared(tracks: Track[], fleet: readonly TrainRuntime[], dtSe
   for (let step = 0; step < steps; step++) {
     const ready = current.map(train => speedState(train, dt, reasons.get(train.id)))
     const distances = ready.map(train => train.running ? travelDistance(train, dt) : 0)
-    let proposals = ready.map((train, index) => moved(tracks, train, distances[index]))
-    let proposedFootprints = proposals.map((train, index) => distances[index] > 0 ? trainFootprint(tracks, train) : footprints[index])
+    let proposals = ready.map((train, index) => move(train, distances[index]))
+    let proposedFootprints = proposals.map((train, index) => distances[index] > 0 ? footprint(train) : footprints[index])
     for (let index = 0; index < proposals.length; index++) {
       if (!distances[index] || !trainFootprintOverlapsItself(proposedFootprints[index])) continue
       let lower = 0, upper = 1
       for (let iteration = 0; iteration < 14; iteration++) {
         const fraction = (lower + upper) / 2
-        if (trainFootprintOverlapsItself(trainFootprint(tracks, moved(tracks, ready[index], distances[index] * fraction)))) upper = fraction
+        if (trainFootprintOverlapsItself(footprint(move(ready[index], distances[index] * fraction)))) upper = fraction
         else lower = fraction
       }
       distances[index] *= lower
-      proposals[index] = { ...moved(tracks, ready[index], distances[index]), actualSpeed: 0, running: false, status: 'blocked', stopReason: 'The cars would touch here. Check the curve, slope, or loop size.' }
-      proposedFootprints[index] = trainFootprint(tracks, proposals[index])
+      proposals[index] = { ...move(ready[index], distances[index]), actualSpeed: 0, running: false, status: 'blocked', stopReason: 'The cars would touch here. Check the curve, slope, or loop size.' }
+      proposedFootprints[index] = footprint(proposals[index])
     }
     // Resolve all potentially conflicting pairs. Changed proposals are checked
     // again against earlier pairs, so a three-train chain cannot invalidate a
@@ -243,8 +255,8 @@ function stepFleetPrepared(tracks: Track[], fleet: readonly TrainRuntime[], dtSe
         let lower = 0, upper = 1
         for (let iteration = 0; iteration < 14; iteration++) {
           const fraction = (lower + upper) / 2
-          const a = trainFootprint(tracks, moved(tracks, ready[first], distances[first] * fraction))
-          const b = trainFootprint(tracks, moved(tracks, ready[second], distances[second] * fraction))
+          const a = footprint(move(ready[first], distances[first] * fraction))
+          const b = footprint(move(ready[second], distances[second] * fraction))
           if (sweptTrainFootprintsConflict(footprints[first], a, footprints[second], b)) upper = fraction
           else lower = fraction
         }
@@ -252,8 +264,8 @@ function stepFleetPrepared(tracks: Track[], fleet: readonly TrainRuntime[], dtSe
           if (!distances[index]) continue
           const partner = ready[index === first ? second : first]
           distances[index] *= lower
-          proposals[index] = { ...moved(tracks, ready[index], distances[index]), running: false, actualSpeed: 0, status: 'blocked', reverseRequested: false, stopReason: `Stopped safely for ${partner.name}. Choose another route or reverse.` }
-          proposedFootprints[index] = trainFootprint(tracks, proposals[index])
+          proposals[index] = { ...move(ready[index], distances[index]), running: false, actualSpeed: 0, status: 'blocked', reverseRequested: false, stopReason: `Stopped safely for ${partner.name}. Choose another route or reverse.` }
+          proposedFootprints[index] = footprint(proposals[index])
           changed = true
         }
       }
@@ -267,16 +279,24 @@ function stepFleetPrepared(tracks: Track[], fleet: readonly TrainRuntime[], dtSe
   return current
 }
 
-export function stepFleet(tracks: Track[], fleet: readonly TrainRuntime[], dtSeconds: number): TrainRuntime[] {
-  return withTrackGraph(tracks, () => stepFleetPrepared(tracks, fleet, dtSeconds))
+export function stepFleet(tracks: Track[], fleet: readonly TrainRuntime[], dtSeconds: number, strategy?: FleetMotionStrategy): TrainRuntime[] {
+  return withTrackGraph(tracks, () => stepFleetPrepared(tracks, fleet, dtSeconds, strategy))
 }
 
 /** All parked and moving bodies lock their turnouts, including nose/tail overhang. */
-export function occupiedFleetTrackIds(tracks: Track[], fleet: readonly TrainSnapshot[]): Set<string> {
+export function occupiedFleetTrackIds(tracks: Track[], fleet: readonly TrainSnapshot[], groups: readonly CouplingGroup[] = []): Set<string> {
   return withTrackGraph(tracks, () => {
     const result = new Set<string>()
     for (const train of fleet) if (train.position)
       occupiedTrackIds(tracks, train.position, train.cabForward, train.carCount, train.type).forEach(id => result.add(id))
+    for (const group of groups) {
+      const e6 = fleet.find(train => train.id === group.e6Id), e5 = fleet.find(train => train.id === group.e5Id)
+      if (!e6?.position || !e5?.position) continue
+      const solved = solveCoupledFormation(tracks, e6, e5)
+      const direction = e6.cabForward ? e6.position.direction : -e6.position.direction
+      let trace: TrainPosition = { ...e6.position, direction: direction === 1 ? -1 : 1 }, remaining = solved.rearOffset
+      while (remaining > 0) { const distance = Math.min(20, remaining), next = advanceTrain(tracks, trace, distance); trace = next.position; result.add(trace.trackId); if (next.stopped) break; remaining -= distance }
+    }
     bodyOccupiedTurnoutIds(tracks, fleet.filter(train => train.position).map(train => trainFootprint(tracks, train))).forEach(id => result.add(id))
     return result
   })

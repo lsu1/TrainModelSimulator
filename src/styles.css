@@ -178,6 +178,35 @@ h1 { margin: 7px 0 7px; color: #2d4538; font-size: clamp(29px, 3vw, 38px); line-
 .fleet-add-row .fleet-add-count { flex: 0 0 64px; }
 .fleet-add-row .button { min-height: 37px; padding: 0 11px; font-size: 12px; }
 .fleet-note { margin: 10px 0 0; color: #6c7c61; font-size: 10px; line-height: 1.6; }
+.fleet-train div > .fleet-connected-badge { display: inline-flex; align-items: center; gap: 4px; color: var(--green); font-size: 10px; font-weight: 600; }
+.coupling-panel { padding: 16px 20px 18px; border-top: 1px solid var(--line); background: #f2f6eb; }
+.coupling-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 14px; }
+.coupling-heading > div { display: flex; align-items: center; gap: 7px; color: #52773b; }
+.coupling-heading h3 { margin: 0; color: #395a3e; font-size: 14px; font-weight: 600; }
+.coupling-heading > .coupling-heading-actions { flex-wrap: wrap; gap: 7px; }
+.coupling-view-button { min-height: 35px; padding: 0 10px; font-size: 11px; }
+.coupling-view-button[aria-pressed='true'] { background: #e6efdc; border-color: #a9be94; color: var(--green); }
+.coupling-formation-badge { padding: 4px 8px; border: 1px solid #bfcea9; border-radius: 6px; background: #e6efdc; color: var(--green); font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.coupling-intro, .coupling-guidance, .coupling-actions > p { margin: 8px 0 0; color: #5c7350; font-size: 11px; line-height: 1.6; }
+.coupling-guidance { margin-top: 9px; }
+.coupling-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px 14px; margin-top: 11px; }
+.coupling-actions > p { flex: 1; margin: 0; min-width: 0; }
+.coupling-actions .button { min-height: 38px; padding: 0 12px; font-size: 12px; flex-shrink: 0; }
+.coupling-partner-select { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; color: #546e46; font-size: 11px; }
+.coupling-partner-select select { flex: 1; min-width: 0; width: 100%; max-width: 270px; min-height: 38px; padding: 6px 8px; border: 1px solid #c9d8bb; border-radius: 7px; background: var(--surface); font-size: 12px; }
+.coupling-partner-name { color: #5c7350; font-size: 11px; overflow-wrap: anywhere; }
+.coupling-partner-name strong { color: #3e6344; font-weight: 600; }
+.coupling-operation { display: flex; align-items: center; justify-content: space-between; gap: 15px; margin-top: 12px; }
+.coupling-progress { display: flex; align-items: flex-start; gap: 9px; flex: 1; min-width: 0; }
+.coupling-progress > .status-dot { margin-top: 7px; }
+.coupling-progress strong { display: block; color: var(--green); font-size: 13px; font-weight: 600; }
+.coupling-progress p { margin: 3px 0 0; color: #5f7554; font-size: 11px; line-height: 1.6; }
+.coupling-operation .button { flex-shrink: 0; min-height: 38px; padding: 0 12px; font-size: 12px; }
+.coupling-connected-note { display: flex; align-items: flex-start; gap: 7px; margin-top: 9px; color: #51773b; }
+.coupling-connected-note svg { margin-top: 2px; }
+.coupling-connected-note p { margin: 0; color: #5c7350; font-size: 11px; line-height: 1.6; }
+.coupling-build-lock { display: block; min-inline-size: 0; padding: 0; margin: 0; border: 0; }
+.coupling-build-note { margin: 0 0 13px; padding: 8px 10px; border-radius: 7px; background: #eef3e7; color: #566d49; font-size: 11px; line-height: 1.6; }
 .train-placement-banner { position: absolute; bottom: 75px; left: 14px; right: 14px; display: flex; align-items: center; gap: 10px; padding: 12px 14px; border: 1px solid #91ad79; border-radius: 10px; background: rgb(250 252 246 / 96%); color: #46683b; box-shadow: 0 3px 12px rgb(54 76 43 / 12%); }
 .train-placement-banner > div { flex: 1; min-width: 0; }
 .train-placement-banner strong { display: block; font-size: 12px; }
@@ -186,6 +215,11 @@ h1 { margin: 7px 0 7px; color: #2d4538; font-size: clamp(29px, 3vw, 38px); line-
 .train-placement-banner .icon-button { width: 35px; height: 35px; padding: 7px; }
 
 @media (max-width: 620px) {
+  .coupling-panel { padding: 14px 16px 16px; }
+  .coupling-actions { flex-wrap: wrap; }
+  .coupling-actions > p { flex-basis: 100%; }
+  .coupling-partner-select { flex-basis: 100%; }
+  .coupling-operation { gap: 10px; }
   .fleet-panel { padding: 15px 16px 13px; }
   .fleet-list { grid-template-columns: repeat(auto-fit, minmax(155px, 1fr)); gap: 7px; }
   .fleet-train { padding: 9px 10px; }

@@ -4,6 +4,7 @@ import { trackLength } from './track'
 import type { Track, TrainPosition } from './track'
 import { clampTrainSpeed, getTrainCarSpec, getTrainSpec } from './trains'
 import type { TrainType } from './trains'
+import type { CouplingGroup, NoseCouplingState } from './couplingTypes'
 
 /** A persisted, stopped placement. Runtime animation state is never saved. */
 export interface TrainSnapshot {
@@ -27,6 +28,8 @@ export interface TrainRuntime extends TrainSnapshot {
   lapProgress: number
   stopReason?: string
   reverseRequested?: boolean
+  /** Transient animation pose, reconstructed from stable coupling relations. */
+  noseCoupling?: NoseCouplingState
 }
 
 /** Bounds imported data and rendering work; independent of model compatibility. */
@@ -60,7 +63,7 @@ export function trainSnapshot(train: TrainSnapshot): TrainSnapshot {
 
 /** All imported/reopened trains start paused, with their physical orientation intact. */
 export function restoreFleet(layout: LayoutData): TrainRuntime[] {
-  const snapshots: TrainSnapshot[] = layout.version === 3 && layout.trains
+  const snapshots: TrainSnapshot[] = layout.version >= 3 && layout.trains
     ? layout.trains
     : [{
       id: 'train-1', name: `${getTrainSpec(layout.trainType).name} 1`, type: layout.trainType ?? 'e235',
@@ -78,11 +81,13 @@ export function snapshotFleetLayout(
   layout: LayoutData,
   fleet: readonly TrainSnapshot[],
   selectedTrainId: string | null | undefined,
+  couplings: readonly CouplingGroup[] = layout.couplings ?? [],
 ): LayoutData {
   const trains = fleet.map(trainSnapshot)
   const selected = trains.find(train => train.id === selectedTrainId) ?? trains[0]
   return {
-    ...layout, version: 3, trains,
+    ...layout, version: 4, trains,
+    couplings: couplings.map(group => ({ id: group.id, e6Id: group.e6Id, e5Id: group.e5Id })),
     ...(selected ? { selectedTrainId: selected.id, trainType: selected.type, carCount: selected.carCount } : { selectedTrainId: undefined }),
   }
 }

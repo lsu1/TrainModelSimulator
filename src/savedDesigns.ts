@@ -1,4 +1,4 @@
-import { STORAGE_KEY, PREVIOUS_STORAGE_KEY, LEGACY_STORAGE_KEY, parseLayout } from './layout';
+import { LAYOUT_STORAGE_KEYS, parseLayout } from './layout';
 import type { LayoutData } from './layout';
 
 export const SAVED_DESIGNS_KEY = 'little-railways-saved-designs-v1';
@@ -144,7 +144,7 @@ export function persistSavedDesigns(
 
 /** Keep identity with the working layout so new presets cannot overwrite an old save. */
 export function readWorkingDesignId(library: SavedDesignLibrary, storage?: DesignStorage): string | null {
-  for (const key of [STORAGE_KEY, PREVIOUS_STORAGE_KEY, LEGACY_STORAGE_KEY]) {
+  for (const key of LAYOUT_STORAGE_KEYS) {
     try {
       const raw = (storage ?? localStorage).getItem(key);
       if (!raw) continue;

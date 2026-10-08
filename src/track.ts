@@ -486,15 +486,27 @@ function moveTrain(tracks: Track[], position: TrainPosition, millimeters: number
 export function advanceTrain(tracks: Track[], position: TrainPosition, millimeters: number): TrainAdvance {
   return moveTrain(tracks, position, millimeters, false)
 }
-/** Bogie pose behind the front, including joins, branches and gradients. */
-export function sampleBehind(tracks: Track[], position: TrainPosition, millimeters: number): TrackPoint | null {
-  const graph = graphFor(tracks)
+/** Exact rail cursor behind a physical cab reference. Unlike a world-point
+ * lookup, this retains the selected lane, turnout route and rail orientation.
+ * Traversing backwards does not add travel laps to the caller's reference.
+ */
+export function samplePositionBehind(tracks: Track[], position: TrainPosition, millimeters: number): TrainPosition | null {
+  return positionBehindOnGraph(tracks, position, millimeters, graphFor(tracks))
+}
+function positionBehindOnGraph(tracks: Track[], position: TrainPosition, millimeters: number, graph: TrackGraph): TrainPosition | null {
   const reversed: TrainPosition = { ...position, direction: position.direction === 1 ? -1 : 1 }
   const sampled = moveTrain(tracks, reversed, millimeters, true, graph)
   if (sampled.stopped) return null
-  const track = graph.byId.get(sampled.position.trackId)
+  return { ...sampled.position, direction: sampled.position.direction === 1 ? -1 : 1, laps: position.laps }
+}
+/** Bogie pose behind the front, including joins, branches and gradients. */
+export function sampleBehind(tracks: Track[], position: TrainPosition, millimeters: number): TrackPoint | null {
+  const graph = graphFor(tracks)
+  const cursor = positionBehindOnGraph(tracks, position, millimeters, graph)
+  if (!cursor) return null
+  const track = graph.byId.get(cursor.trackId)
   if (!track) return null
-  const point = pointAt(track, sampled.position.distance, sampled.position.route ?? 0)
-  return { ...point, angle: point.angle + (sampled.position.direction === 1 ? Math.PI : 0),
-    slope: point.slope * (sampled.position.direction === 1 ? -1 : 1) }
+  const point = pointAt(track, cursor.distance, cursor.route ?? 0)
+  return { ...point, angle: point.angle + (cursor.direction === -1 ? Math.PI : 0),
+    slope: point.slope * cursor.direction }
 }

@@ -11,6 +11,12 @@ import { createTrainCar, createTrainConnection, updateE235Connection, disposeTra
 import { getTrainCarSpec } from './trains';
 import type { TrainType } from './trains';
 import { solveConsistPoses } from './consistPose';
+import type { ConsistPoses } from './consistPose';
+import { solveCoupledFormation } from './formationPose';
+import type { CoupledFormationPoses } from './formationPose';
+import { noseCouplerProfile } from './couplingTypes';
+import type { CouplingGroup, CouplingOperation, NoseCouplingState } from './couplingTypes';
+import { getNoseCouplerDiagnostics, orientNoseCoupler, updateNoseCoupler } from './noseCoupler';
 import { TurnoutPoints, staticRailRanges } from './turnoutPoints';
 import type { TrainRuntime, TrainSnapshot } from './fleet';
 import { closestTrainPlacement, validateTrainPlacement } from './trainPlacement';
@@ -24,6 +30,8 @@ interface Scene3DProps {
   trainType?: TrainType;
   /** Omit to retain the original one-train rendering contract. */
   fleet?: readonly TrainRuntime[];
+  couplings?: readonly CouplingGroup[];
+  couplingOperation?: CouplingOperation | null;
   selectedTrainId?: string | null;
   onSelectTrain?: (id: string) => void;
   placingTrain?: TrainSnapshot | null;
@@ -32,7 +40,7 @@ interface Scene3DProps {
   selectedId: string | null;
   activeAnchor: Endpoint | null;
   mode: 'orbit' | 'move';
-  cameraPreset: 'perspective' | 'top' | 'ride';
+  cameraPreset: 'perspective' | 'top' | 'ride' | 'coupling';
   viewRevision: number;
   /** Changes only when a complete layout is opened/imported, not on switch clicks. */
   layoutRevision?: number;
@@ -716,6 +724,9 @@ export default function Scene3D(props: Scene3DProps) {
     let pointDiagnosticsDirty = true;
     let previousLayoutRevision = latest.current.layoutRevision;
     let previousCameraPreset: Scene3DProps['cameraPreset'] = 'perspective';
+    let resetCouplingCamera = true;
+    let previousCouplingFocus: THREE.Vector3 | null = null;
+    let previousCouplingPair: string | null = null;
     const selectionMaterial = new THREE.LineBasicMaterial({ color: '#d79e4c', transparent: true, opacity: .6, depthTest: false });
     const errorMaterial = new THREE.LineBasicMaterial({ color: '#c64d3d', transparent: true, opacity: .85, depthTest: false });
     const markerMaterial = new THREE.MeshStandardMaterial({ color: '#66a58d', roughness: .7, transparent: true, opacity: .9 });
@@ -723,13 +734,20 @@ export default function Scene3D(props: Scene3DProps) {
     const markerGeometry = new THREE.CylinderGeometry(7.8, 7.8, .8, 32);
     const plusMaterial = new THREE.MeshStandardMaterial({ color: '#f8faf0', roughness: .9 });
     const plusGeometry = new THREE.BoxGeometry(7.6, .6, 1.7);
-    type PoseCache = { tracks: Track[]; position: TrainPosition; cabForward: boolean; poses: ReturnType<typeof solveConsistPoses> };
+    type PoseCache = { tracks: Track[]; position: TrainPosition | null; cabForward: boolean; poses: ConsistPoses; composition?: ConsistPoses };
     type RenderedTrain = {
       id: string; type: TrainType; count: number; cars: THREE.Group; links: THREE.Group;
       cache: PoseCache | null;
       diagnostics: { cars: Record<string, unknown>[]; couplers: Record<string, unknown>[] };
     };
     const renderedFleet = new Map<string, RenderedTrain>();
+    const formationCache = new Map<string, {
+      tracks: Track[]; e6Position: TrainPosition | null; e5Position: TrainPosition | null;
+      e6Forward: boolean; e5Forward: boolean; e6Count: number; e5Count: number;
+      poses: CoupledFormationPoses;
+    }>();
+    const noseJoints = new THREE.Group(); noseJoints.name = 'shinkansen-mechanical-nose-joints'; world.add(noseJoints);
+    const renderedNoseJoints = new Map<string, THREE.Mesh>();
     let ghost: RenderedTrain | null = null;
     let ghostPosition: TrainPosition | null = null;
     let ghostTrackId: string | null = null;
@@ -743,6 +761,7 @@ export default function Scene3D(props: Scene3DProps) {
     const localPoint = new THREE.Vector3();
     const firstPin = new THREE.Vector3(), secondPin = new THREE.Vector3();
     const firstGangway = new THREE.Vector3(), secondGangway = new THREE.Vector3();
+    const closedNose: NoseCouplingState = { open: 0, extension: 0, locked: false };
     const layoutPoint = (point: THREE.Vector3) => ({ x: point.x, y: point.z, z: point.y });
     const carPoint = (car: THREE.Object3D, name: string, fallback?: THREE.Vector3) => {
       const point = car.getObjectByName(name)?.position ?? fallback;
@@ -803,6 +822,8 @@ export default function Scene3D(props: Scene3DProps) {
         const spec = getTrainCarSpec(rendered.type, index, rendered.count);
         const cab = index === 0 || index === rendered.count - 1;
         const gangwayHeight = spec.type === 'e235' ? 14.7 : (spec.height + 4.8) / 2;
+        const nose = getNoseCouplerDiagnostics(car);
+        const noseWorldPoint = (point: THREE.Vector3) => layoutPoint(point.clone().applyQuaternion(car.quaternion).add(car.position));
         return {
           index, visible: true, center: layoutPoint(car.position),
           trainType: car.userData.trainType ?? 'e235', model: car.userData.model,
@@ -817,6 +838,11 @@ export default function Scene3D(props: Scene3DProps) {
           frontGangway: layoutPoint(carPoint(car, 'gangway-front', new THREE.Vector3(spec.length / 2, gangwayHeight, 0))!),
           rearGangway: layoutPoint(carPoint(car, 'gangway-rear', new THREE.Vector3(-spec.length / 2, gangwayHeight, 0))!),
           quaternion: car.quaternion.toArray(),
+          ...(nose ? { noseCoupler: {
+            ...nose,
+            pivot: noseWorldPoint(nose.pivot), matingFace: noseWorldPoint(nose.matingFace),
+            mechanicalHead: noseWorldPoint(nose.mechanicalHead),
+          } } : {}),
           ...(rendered.type === 'e235' ? {} : appearanceDiagnostics(car)),
         };
       }),
@@ -879,8 +905,13 @@ export default function Scene3D(props: Scene3DProps) {
       } else { trains.add(cars); connections.add(links); }
       return { id: train.id, type: train.type, count: train.carCount, cars, links, cache: null, diagnostics: { cars: [], couplers: [] } };
     };
-    const updateRenderedTrain = (rendered: RenderedTrain, train: TrainSnapshot): boolean => {
-      if (!train.position) {
+    const updateRenderedTrain = (
+      rendered: RenderedTrain,
+      train: TrainSnapshot & { noseCoupling?: NoseCouplingState },
+      composition?: ConsistPoses,
+      noseTarget?: { x: number; y: number; z: number },
+    ): boolean => {
+      if (!train.position && !composition) {
         const changed = rendered.cars.visible || rendered.links.visible || !!rendered.cache;
         rendered.cars.visible = rendered.links.visible = false; rendered.cache = null;
         if (changed) rendered.diagnostics = { cars: [], couplers: [] };
@@ -888,35 +919,57 @@ export default function Scene3D(props: Scene3DProps) {
       }
       rendered.cars.visible = rendered.links.visible = true;
       const cache = rendered.cache;
-      if (cache && cache.tracks === latest.current.tracks && cache.position === train.position && cache.cabForward === train.cabForward) return false;
-      const poses = solveConsistPoses(latest.current.tracks, train.position, train.cabForward, rendered.count, rendered.type);
-      rendered.cache = { tracks: latest.current.tracks, position: train.position, cabForward: train.cabForward, poses };
-      for (let i = 0; i < rendered.cars.children.length; i++) {
-        const pose = poses.cars[i], car = rendered.cars.children[i];
-        car.visible = pose !== null;
-        if (!pose) continue;
-        const p = pose.center;
-        car.position.set(p.x, p.z + RAIL_TOP, p.y); setTangent(car, p.angle, p.slope);
-        inverse.copy(car.quaternion).invert();
-        for (const [name, point] of [['bogie-front', pose.frontBogie], ['bogie-rear', pose.rearBogie]] as const) {
-          const bogie = car.getObjectByName(name)!;
-          localPoint.set(point.x - p.x, point.z - p.z, point.y - p.y).applyQuaternion(inverse);
-          bogie.position.copy(localPoint); setTangent(bogie, point.angle, point.slope);
-          bogie.quaternion.premultiply(inverse);
+      const poseChanged = !cache || cache.tracks !== latest.current.tracks || cache.position !== train.position || cache.cabForward !== train.cabForward || cache.composition !== composition;
+      const poses = poseChanged ? composition ?? solveConsistPoses(latest.current.tracks, train.position!, train.cabForward, rendered.count, rendered.type) : cache.poses;
+      rendered.cache = { tracks: latest.current.tracks, position: train.position, cabForward: train.cabForward, poses, composition };
+      if (poseChanged) {
+        for (let i = 0; i < rendered.cars.children.length; i++) {
+          const pose = poses.cars[i], car = rendered.cars.children[i];
+          car.visible = pose !== null;
+          if (!pose) continue;
+          const p = pose.center;
+          car.position.set(p.x, p.z + RAIL_TOP, p.y); setTangent(car, p.angle, p.slope);
+          inverse.copy(car.quaternion).invert();
+          for (const [name, point] of [['bogie-front', pose.frontBogie], ['bogie-rear', pose.rearBogie]] as const) {
+            const bogie = car.getObjectByName(name)!;
+            localPoint.set(point.x - p.x, point.z - p.z, point.y - p.y).applyQuaternion(inverse);
+            bogie.position.copy(localPoint); setTangent(bogie, point.angle, point.slope);
+            bogie.quaternion.premultiply(inverse);
+          }
+        }
+        for (const connection of rendered.links.children) connection.visible = false;
+        for (const coupling of poses.couplings) {
+          const connection = rendered.links.children[coupling.frontCarIndex] as THREE.Group;
+          const firstCar = rendered.cars.children[coupling.frontCarIndex], secondCar = rendered.cars.children[coupling.rearCarIndex];
+          const firstMount = carPoint(firstCar, 'gangway-rear'), secondMount = carPoint(secondCar, 'gangway-front');
+          if (!firstMount || !secondMount) continue;
+          firstPin.set(coupling.frontPin.x, coupling.frontPin.z + RAIL_TOP, coupling.frontPin.y);
+          secondPin.set(coupling.rearPin.x, coupling.rearPin.z + RAIL_TOP, coupling.rearPin.y);
+          firstGangway.copy(firstMount); secondGangway.copy(secondMount);
+          connection.visible = true;
+          updateE235Connection(connection, firstPin, secondPin, firstGangway, secondGangway, firstCar.quaternion, secondCar.quaternion);
         }
       }
-      for (const connection of rendered.links.children) connection.visible = false;
-      for (const coupling of poses.couplings) {
-        const connection = rendered.links.children[coupling.frontCarIndex] as THREE.Group;
-        const firstCar = rendered.cars.children[coupling.frontCarIndex], secondCar = rendered.cars.children[coupling.rearCarIndex];
-        const firstMount = carPoint(firstCar, 'gangway-rear'), secondMount = carPoint(secondCar, 'gangway-front');
-        if (!firstMount || !secondMount) continue;
-        firstPin.set(coupling.frontPin.x, coupling.frontPin.z + RAIL_TOP, coupling.frontPin.y);
-        secondPin.set(coupling.rearPin.x, coupling.rearPin.z + RAIL_TOP, coupling.rearPin.y);
-        firstGangway.copy(firstMount); secondGangway.copy(secondMount);
-        connection.visible = true;
-        updateE235Connection(connection, firstPin, secondPin, firstGangway, secondGangway, firstCar.quaternion, secondCar.quaternion);
+      // Covers continue moving while both trainsets are stopped. Applying the
+      // nose state after the body pose also keeps the swivel aimed at the same
+      // physical joint used by the mixed-formation movement solver.
+      let noseChanged = false;
+      const profile = noseCouplerProfile(rendered.type);
+      if (profile) for (const car of rendered.cars.children) {
+        noseChanged = updateNoseCoupler(car, train.noseCoupling ?? closedNose) || noseChanged;
+        // The physics decorator supplies the very same gimbal axis used by
+        // its dynamic collision shapes. Do not overwrite that runtime pose.
+        if (train.noseCoupling?.axis) continue;
+        const nose = getNoseCouplerDiagnostics(car);
+        if (!nose) continue;
+        inverse.copy(car.quaternion).invert();
+        const outward = car.userData.noseDirection ?? 1;
+        const target = noseTarget
+          ? new THREE.Vector3(noseTarget.x - car.position.x, noseTarget.z + RAIL_TOP - car.position.y, noseTarget.y - car.position.z).applyQuaternion(inverse)
+          : nose.pivot.clone().add(new THREE.Vector3(outward * profile.extensionLength, 0, 0));
+        noseChanged = orientNoseCoupler(car, target) || noseChanged;
       }
+      if (!poseChanged && !noseChanged) return false;
       rendered.diagnostics = consistDiagnostics(rendered);
       return true;
     };
@@ -937,7 +990,7 @@ export default function Scene3D(props: Scene3DProps) {
       const rect = renderer.domElement.getBoundingClientRect();
       pointer.set((event.clientX - rect.left) / rect.width * 2 - 1, -(event.clientY - rect.top) / rect.height * 2 + 1);
       raycaster.setFromCamera(pointer, camera);
-      const hits = raycaster.intersectObjects([anchors, trains, pieces], true);
+      const hits = raycaster.intersectObjects([anchors, trains, noseJoints, pieces], true);
       for (const hit of hits) {
         let visible = true;
         for (let parent: THREE.Object3D | null = hit.object; parent; parent = parent.parent) if (!parent.visible) visible = false;
@@ -1065,6 +1118,12 @@ export default function Scene3D(props: Scene3DProps) {
     };
     const fitCamera = () => {
       if (latest.current.cameraPreset === 'ride') return;
+      if (latest.current.cameraPreset === 'coupling') {
+        // The next rendered frame resolves the actual mechanism transforms.
+        // Fitting the whole railway here would hide the connecting noses.
+        resetCouplingCamera = true;
+        return;
+      }
       const bounds = new THREE.Box3().setFromObject(pieces);
       if (bounds.isEmpty()) bounds.set(new THREE.Vector3(-2.5, 0, -2), new THREE.Vector3(2.5, .6, 2));
       const center = bounds.getCenter(new THREE.Vector3());
@@ -1296,6 +1355,47 @@ export default function Scene3D(props: Scene3DProps) {
       const selectedId = selectedTrain?.id ?? null;
       const selectionChanged = selectedRenderedTrainId !== selectedId;
       selectedRenderedTrainId = selectedId;
+      const groups = current.couplings ?? [];
+      const groupIds = new Set(groups.map(group => group.id));
+      for (const [id, joint] of renderedNoseJoints) if (!groupIds.has(id)) {
+        joint.removeFromParent(); renderedNoseJoints.delete(id); diagnosticsChanged = true;
+      }
+      for (const id of formationCache.keys()) if (!groupIds.has(id)) formationCache.delete(id);
+      const composedMembers = new Map<string, { poses: ConsistPoses; head?: { x: number; y: number; z: number } }>();
+      const selectedMembers = new Set(selectedId ? [selectedId] : []);
+      for (const group of groups) {
+        const e6 = fleet.find(train => train.id === group.e6Id), e5 = fleet.find(train => train.id === group.e5Id);
+        if (!e6 || !e5 || e6.type !== 'e6' || e5.type !== 'e5') continue;
+        if (group.e6Id === selectedId || group.e5Id === selectedId) { selectedMembers.add(group.e6Id); selectedMembers.add(group.e5Id); }
+        let cached = formationCache.get(group.id);
+        if (!cached || cached.tracks !== current.tracks || cached.e6Position !== e6.position || cached.e5Position !== e5.position ||
+          cached.e6Forward !== e6.cabForward || cached.e5Forward !== e5.cabForward || cached.e6Count !== e6.carCount || cached.e5Count !== e5.carCount) {
+          cached = {
+            tracks: current.tracks, e6Position: e6.position, e5Position: e5.position,
+            e6Forward: e6.cabForward, e5Forward: e5.cabForward, e6Count: e6.carCount, e5Count: e5.carCount,
+            poses: solveCoupledFormation(current.tracks, e6, e5),
+          };
+          formationCache.set(group.id, cached);
+        }
+        const formation = cached.poses;
+        composedMembers.set(e6.id, { poses: formation.e6, head: formation.joint?.head });
+        composedMembers.set(e5.id, { poses: formation.e5, head: formation.joint?.head });
+        let joint = renderedNoseJoints.get(group.id);
+        if (!joint) {
+          // These cabs share a mechanical connector. They do not have a
+          // passenger gangway or the bellows used between ordinary cars.
+          joint = box(noseJoints, library, 1.1, 2.5, 3.2, 0, 0, 0, '#52606a', .7);
+          joint.name = `locked-nose-joint-${group.id}`; joint.userData.trainId = group.e6Id;
+          renderedNoseJoints.set(group.id, joint); diagnosticsChanged = true;
+        }
+        joint.visible = formation.complete && !!formation.joint;
+        if (formation.joint) {
+          const { head, direction } = formation.joint;
+          joint.position.set(head.x, head.z + RAIL_TOP, head.y);
+          const horizontal = Math.hypot(direction.x, direction.y);
+          setTangent(joint, Math.atan2(direction.y, direction.x), horizontal > 0 ? direction.z / horizontal : 0);
+        }
+      }
       for (const train of fleet) {
         let rendered = renderedFleet.get(train.id);
         if (!rendered || rendered.type !== train.type || rendered.count !== train.carCount) {
@@ -1303,8 +1403,9 @@ export default function Scene3D(props: Scene3DProps) {
           rendered = buildRenderedTrain(train); renderedFleet.set(train.id, rendered);
           diagnosticsChanged = true;
         }
-        diagnosticsChanged = updateRenderedTrain(rendered, train) || diagnosticsChanged;
-        const highlight = current.fleet !== undefined && train.id === selectedId;
+        const composed = composedMembers.get(train.id);
+        diagnosticsChanged = updateRenderedTrain(rendered, train, composed?.poses, composed?.head) || diagnosticsChanged;
+        const highlight = current.fleet !== undefined && selectedMembers.has(train.id);
         if (rendered.cars.userData.selected !== highlight) {
           rendered.cars.userData.selected = highlight;
           for (const car of rendered.cars.children) {
@@ -1313,14 +1414,42 @@ export default function Scene3D(props: Scene3DProps) {
           }
         }
       }
-      const signature = JSON.stringify(fleet.map(train => [train.id, train.name, train.status, train.running, train.actualSpeed, train.requestedSpeed, train.stopReason]));
+      const operation = current.couplingOperation;
+      const signature = JSON.stringify([
+        fleet.map(train => [train.id, train.name, train.status, train.running, train.actualSpeed, train.requestedSpeed, train.stopReason]),
+        groups, operation && [operation.id, operation.phase, operation.elapsed, operation.paused],
+      ]);
       if (diagnosticsChanged || selectionChanged || signature !== publishedFleetSignature) {
         renderer.domElement.dataset.fleetPoses = JSON.stringify(fleet.map(train => ({
           id: train.id, name: train.name, type: train.type, status: train.status,
           running: train.running, actualSpeed: train.actualSpeed, requestedSpeed: train.requestedSpeed,
           stopReason: train.stopReason, position: train.position, cabForward: train.cabForward, carCount: train.carCount,
+          selected: selectedMembers.has(train.id), couplingGroupId: groups.find(group => group.e6Id === train.id || group.e5Id === train.id)?.id,
           ...renderedFleet.get(train.id)!.diagnostics,
         })));
+        renderer.domElement.dataset.couplingGroups = JSON.stringify(groups.map(group => {
+          const formation = formationCache.get(group.id)?.poses;
+          const joint = renderedNoseJoints.get(group.id);
+          const e6Car = renderedFleet.get(group.e6Id)?.cars.children.at(-1);
+          const e5Car = renderedFleet.get(group.e5Id)?.cars.children[0];
+          const nosePoint = (car: THREE.Object3D | undefined, key: 'pivot' | 'matingFace') => {
+            if (!car) return null;
+            const nose = getNoseCouplerDiagnostics(car);
+            return nose ? layoutPoint(nose[key].clone().applyQuaternion(car.quaternion).add(car.position)) : null;
+          };
+          return {
+            ...group, complete: formation?.complete ?? false,
+            joint: joint?.visible ? {
+              head: layoutPoint(joint.position), quaternion: joint.quaternion.toArray(),
+              e6Mount: nosePoint(e6Car, 'pivot'), e5Mount: nosePoint(e5Car, 'pivot'),
+              e6Face: nosePoint(e6Car, 'matingFace'), e5Face: nosePoint(e5Car, 'matingFace'),
+            } : null,
+          };
+        }));
+        renderer.domElement.dataset.couplingOperation = JSON.stringify(operation ? {
+          id: operation.id, e6Id: operation.e6Id, e5Id: operation.e5Id,
+          phase: operation.phase, elapsed: operation.elapsed, paused: operation.paused,
+        } : null);
         renderer.domElement.dataset.fleetCount = String(fleet.length);
         renderer.domElement.dataset.selectedTrainId = selectedId ?? '';
         renderer.domElement.dataset.carCount = String(selectedTrain?.carCount ?? 0);
@@ -1351,10 +1480,54 @@ export default function Scene3D(props: Scene3DProps) {
         delete renderer.domElement.dataset.trainX; delete renderer.domElement.dataset.trainY;
         delete renderer.domElement.dataset.trainHeight;
       }
+      let couplingFocus: THREE.Vector3 | null = null;
+      if (current.cameraPreset === 'coupling' && !current.placingTrain) {
+        const pair = operation ?? groups.find(group => selectedMembers.has(group.e6Id) || selectedMembers.has(group.e5Id));
+        if (pair) {
+          const e6Car = renderedFleet.get(pair.e6Id)?.cars.children.at(-1);
+          const e5Car = renderedFleet.get(pair.e5Id)?.cars.children[0];
+          const e6Nose = e6Car && getNoseCouplerDiagnostics(e6Car);
+          const e5Nose = e5Car && getNoseCouplerDiagnostics(e5Car);
+          if (e6Car?.visible && e5Car?.visible && e6Nose && e5Nose) {
+            const e6Face = e6Nose.matingFace.clone().applyQuaternion(e6Car.quaternion).add(e6Car.position);
+            const e5Face = e5Nose.matingFace.clone().applyQuaternion(e5Car.quaternion).add(e5Car.position);
+            couplingFocus = e6Face.add(e5Face).multiplyScalar(.5 * SCALE);
+            const pairKey = `${pair.e6Id}:${pair.e5Id}`;
+            if (resetCouplingCamera || cameraPresetChanged || previousCouplingPair !== pairKey || !previousCouplingFocus) {
+              // A side view reveals both recessed nose cavities and the
+              // mechanical head. It starts once, then remains freely orbitable.
+              const axis = e5Car.position.clone().sub(e6Car.position); axis.y = 0;
+              if (axis.lengthSq() < 1e-8) axis.set(1, 0, 0); else axis.normalize();
+              camera.position.copy(couplingFocus).add(new THREE.Vector3(
+                (-axis.z * 150 + axis.x * 20) * SCALE,
+                65 * SCALE,
+                (axis.x * 150 + axis.z * 20) * SCALE,
+              ));
+              controls.target.copy(couplingFocus); camera.lookAt(controls.target);
+              resetCouplingCamera = false;
+            } else {
+              // Following only by translation preserves the child's orbit,
+              // pan and zoom while the connected joint follows the railway.
+              const delta = couplingFocus.clone().sub(previousCouplingFocus);
+              camera.position.add(delta); controls.target.add(delta);
+            }
+            previousCouplingFocus = couplingFocus.clone(); previousCouplingPair = pairKey;
+            pickDirty = true;
+          }
+        }
+      } else {
+        previousCouplingFocus = null; previousCouplingPair = null;
+      }
       if (!drag) {
         controls.enabled = current.cameraPreset !== 'ride' || !!current.placingTrain || !leadPoint;
         if (controls.enabled) controls.update();
       }
+      renderer.domElement.dataset.cameraPose = JSON.stringify({
+        preset: current.cameraPreset,
+        eye: layoutPoint(camera.position.clone().divideScalar(SCALE)),
+        target: layoutPoint(controls.target.clone().divideScalar(SCALE)),
+        couplingFocus: couplingFocus ? layoutPoint(couplingFocus.clone().divideScalar(SCALE)) : null,
+      });
       const now = performance.now();
       if (pickDirty && now - lastPickTime > 160) { publishPickPoints(); lastPickTime = now; }
       renderer.render(scene, camera);

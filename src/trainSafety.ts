@@ -1,7 +1,11 @@
 import { KATO_CATALOG } from './catalog'
 import * as THREE from 'three'
 import { solveConsistPoses } from './consistPose'
-import type { CarPose, PoseVector } from './consistPose'
+import type { CarPose, PoseVector, ConsistPoses } from './consistPose'
+import { NOSE_COUPLER_PROFILES } from './couplingTypes'
+import type { NoseCouplingState } from './couplingTypes'
+import { createShinkansenCar } from './shinkansenModel'
+import { updateNoseCoupler } from './noseCoupler'
 import { convexShapesIntersect } from './convexSafety'
 import type { TrainSnapshot } from './fleet'
 import { shinkansenSurface } from './shinkansenModel'
@@ -10,10 +14,11 @@ import { pathsFor, pointAt } from './track'
 import type { Track } from './track'
 import { getTrainCarSpec } from './trains'
 
-/** Clearance between independent sets. Coupling has no exemption in this release. */
+/** Clearance between independent sets; joined mechanical heads use actual contact geometry. */
 export const TRAIN_SAFETY_GAP = 2
 const RAIL_TOP = 7.35
 const EPSILON = 1e-7
+type PhysicalTrain = TrainSnapshot & { noseCoupling?: NoseCouplingState }
 const ITEMS = new Map(KATO_CATALOG.map(item => [item.kind, item]))
 
 export interface SafetyBounds {
@@ -34,9 +39,9 @@ export interface TrainFootprint {
   rearOffset: number
 }
 
-interface PhysicalBodyVolume extends BodyVolume { vertices: PoseVector[] }
-/** Keep lazily realized physical geometry private; exported envelopes remain
- * identical for inter-train checks, sweeps and reversal comparisons. */
+interface PhysicalBodyVolume extends BodyVolume { vertices: PoseVector[]; matingHead: boolean; mechanical: boolean }
+/** Physical hulls are lazy. Independent-train reserves retain their original
+ * headroom and expand to contain opening covers and articulated hardware. */
 const SELF_COLLISION_PARTS = new WeakMap<TrainFootprint, {
   bounds: () => BodyVolume[]
   parts: (carIndex: number) => PhysicalBodyVolume[]
@@ -79,9 +84,15 @@ export function bodyVolumesIntersect(a: BodyVolume, b: BodyVolume, margin = 0): 
 
 type LocalVolume = { along: number; halfLength: number; halfWidth: number; bottom: number; top: number }
 const LOCAL_VOLUMES = new Map<string, LocalVolume[]>()
-interface LocalPhysicalVolume extends LocalVolume { across: number; vertices: PoseVector[] }
+interface LocalPhysicalVolume extends LocalVolume { across: number; vertices: PoseVector[]; matingHead: boolean; mechanical: boolean }
 const LOCAL_PHYSICAL_VOLUMES = new Map<string, LocalPhysicalVolume[]>()
 const LOCAL_SELF_BOUNDS = new Map<string, LocalVolume & { across: number }>()
+const INTENTIONAL_NOSE_CONTACTS = new WeakMap<TrainFootprint, readonly (readonly [number, number])[]>()
+function noseStateKey(train: PhysicalTrain, index: number): string {
+  const state = (train as TrainSnapshot & { noseCoupling?: NoseCouplingState }).noseCoupling
+  const eligible = train.type === 'e5' && index === 0 || train.type === 'e6' && index === train.carCount - 1
+  return state && eligible ? `:${state.open}:${state.extension}:${state.locked}` : ''
+}
 const NOSE_STATIONS = {
   e5: [0, .14, .27, .40, .59, .77, .91, 1],
   e6: [0, .13, .27, .44, .64, .82, .94, 1],
@@ -89,7 +100,7 @@ const NOSE_STATIONS = {
 }
 
 /** Separate tapered nose volumes follow the existing loft without editing it. */
-function localVolumes(train: TrainSnapshot, index: number): LocalVolume[] {
+function localVolumes(train: PhysicalTrain, index: number): LocalVolume[] {
   const key = `${train.type}:${train.carCount}:${index}`
   const cached = LOCAL_VOLUMES.get(key)
   if (cached) return cached
@@ -139,66 +150,76 @@ function worldVolume(pose: CarPose, local: LocalVolume, carIndex: number): BodyV
  * the actual positions of antennas, collectors and air conditioners.
  * Each instance remains separate: gaps between fittings are not filled in.
  */
-function physicalLocalVolumes(train: TrainSnapshot, index: number): LocalPhysicalVolume[] {
-  const key = `${train.type}:${train.carCount}:${index}`
+interface PhysicalTemplate { car: THREE.Group; stationary: LocalPhysicalVolume[]; moving: THREE.Mesh[] }
+const PHYSICAL_TEMPLATES = new Map<string, PhysicalTemplate>()
+function meshPhysicalVolumes(object: THREE.Mesh): LocalPhysicalVolume[] {
+  const positions = object.geometry.getAttribute('position')
+  if (!positions) return []
+  const point = new THREE.Vector3(), instanceMatrix = new THREE.Matrix4(), transform = new THREE.Matrix4()
+  const instances = object instanceof THREE.InstancedMesh ? object.count : 1, parts: LocalPhysicalVolume[] = []
+  let mechanical = false
+  for (let ancestor: THREE.Object3D | null = object; ancestor; ancestor = ancestor.parent) if (ancestor.name === 'nose-coupler-gimbal') mechanical = true
+  for (let instance = 0; instance < instances; instance++) {
+    transform.copy(object.matrixWorld)
+    if (object instanceof THREE.InstancedMesh) { object.getMatrixAt(instance, instanceMatrix); transform.multiply(instanceMatrix) }
+    const rays = new Map<string, [PoseVector, PoseVector]>()
+    for (let vertex = 0; vertex < positions.count; vertex++) {
+      point.fromBufferAttribute(positions, vertex).applyMatrix4(transform)
+      const value = { x: point.x, y: point.z, z: point.y }, ray = `${value.y}:${value.z}`, range = rays.get(ray)
+      if (!range) rays.set(ray, [value, value])
+      else { if (value.x < range[0].x) range[0] = value; if (value.x > range[1].x) range[1] = value }
+    }
+    const vertices = [...rays.values()].flatMap(([first, last]) => first === last ? [first] : [first, last])
+    if (!vertices.length) continue
+    const bounds = emptyBounds()
+    vertices.forEach(vertex => merge(bounds, { minX: vertex.x, maxX: vertex.x, minY: vertex.y, maxY: vertex.y, minZ: vertex.z, maxZ: vertex.z }))
+    parts.push({ along: (bounds.minX + bounds.maxX) / 2, halfLength: (bounds.maxX - bounds.minX) / 2,
+      across: (bounds.minY + bounds.maxY) / 2, halfWidth: (bounds.maxY - bounds.minY) / 2,
+      bottom: bounds.minZ, top: bounds.maxZ, vertices, matingHead: object.userData.mechanicalCouplerContact === true, mechanical })
+  }
+  return parts
+}
+function physicalLocalVolumes(train: PhysicalTrain, index: number): LocalPhysicalVolume[] {
+  const baseKey = `${train.type}:${train.carCount}:${index}`, key = baseKey + noseStateKey(train, index)
   const cached = LOCAL_PHYSICAL_VOLUMES.get(key)
   if (cached) return cached
-  const car = createTrainCar(index, train.carCount, train.type)
-  car.updateMatrixWorld(true)
-  const parts: LocalPhysicalVolume[] = []
-  const point = new THREE.Vector3(), instanceMatrix = new THREE.Matrix4(), transform = new THREE.Matrix4()
-  car.traverse(object => {
-    if (!(object instanceof THREE.Mesh)) return
-    // Coupling shanks and their mounting hardware belong to the articulated
-    // connection, whose joined contact is intentional. Shell checks still
-    // include every adjacent pair of cars, including their end diaphragms.
-    if (/^(?:covered-)?coupler-mount-(?:front|rear)$/.test(object.name)) return
-    const positions = object.geometry.getAttribute('position')
-    if (!positions) return
-    const instances = object instanceof THREE.InstancedMesh ? object.count : 1
-    for (let instance = 0; instance < instances; instance++) {
-      transform.copy(object.matrixWorld)
-      if (object instanceof THREE.InstancedMesh) {
-        object.getMatrixAt(instance, instanceMatrix)
-        transform.multiply(instanceMatrix)
-      }
-      // Extruded shells and long body ribbons have repeated cross sections.
-      // Keep the two extreme longitudinal points on each cross-section ray;
-      // removed points lie inside those line segments, preserving the hull.
-      const rays = new Map<string, [PoseVector, PoseVector]>()
-      for (let vertex = 0; vertex < positions.count; vertex++) {
-        point.fromBufferAttribute(positions, vertex).applyMatrix4(transform)
-        const value = { x: point.x, y: point.z, z: point.y }
-        const ray = `${value.y}:${value.z}`
-        const range = rays.get(ray)
-        if (!range) rays.set(ray, [value, value])
-        else {
-          if (value.x < range[0].x) range[0] = value
-          if (value.x > range[1].x) range[1] = value
-        }
-      }
-      const vertices = [...rays.values()].flatMap(([first, last]) => first === last ? [first] : [first, last])
-      if (!vertices.length) continue
-      const bounds = emptyBounds()
-      for (const vertex of vertices) {
-        bounds.minX = Math.min(bounds.minX, vertex.x); bounds.maxX = Math.max(bounds.maxX, vertex.x)
-        bounds.minY = Math.min(bounds.minY, vertex.y); bounds.maxY = Math.max(bounds.maxY, vertex.y)
-        bounds.minZ = Math.min(bounds.minZ, vertex.z); bounds.maxZ = Math.max(bounds.maxZ, vertex.z)
-      }
-      parts.push({ along: (bounds.minX + bounds.maxX) / 2, halfLength: (bounds.maxX - bounds.minX) / 2,
-        across: (bounds.minY + bounds.maxY) / 2, halfWidth: (bounds.maxY - bounds.minY) / 2,
-        bottom: bounds.minZ, top: bounds.maxZ, vertices })
-    }
-  })
-  disposeTrainModel(car)
+  const state = (train as TrainSnapshot & { noseCoupling?: NoseCouplingState }).noseCoupling
+  const eligible = state && (train.type === 'e5' && index === 0 || train.type === 'e6' && index === train.carCount - 1)
+  let template = PHYSICAL_TEMPLATES.get(baseKey)
+  if (!template) {
+    const car = eligible && (train.type === 'e5' || train.type === 'e6')
+      ? createShinkansenCar(index, train.carCount, train.type, { open: 0, extension: 0, locked: false })
+      : createTrainCar(index, train.carCount, train.type)
+    car.updateMatrixWorld(true)
+    const stationary: LocalPhysicalVolume[] = [], moving: THREE.Mesh[] = []
+    car.traverse(object => {
+      if (!(object instanceof THREE.Mesh) || /^(?:covered-)?coupler-mount-(?:front|rear)$/.test(object.name)) return
+      for (let ancestor: THREE.Object3D | null = object; ancestor; ancestor = ancestor.parent) if (!ancestor.visible) return
+      let dynamic = false
+      for (let ancestor: THREE.Object3D | null = object; ancestor; ancestor = ancestor.parent)
+        if (ancestor.name === 'nose-coupler-gimbal' || ancestor.name === 'nose-opening-cover-left' || ancestor.name === 'nose-opening-cover-right') dynamic = true
+      if (dynamic) moving.push(object)
+      else stationary.push(...meshPhysicalVolumes(object))
+    })
+    template = { car, stationary, moving }
+    if (PHYSICAL_TEMPLATES.size >= 32) { const oldest = PHYSICAL_TEMPLATES.keys().next().value!; disposeTrainModel(PHYSICAL_TEMPLATES.get(oldest)!.car); PHYSICAL_TEMPLATES.delete(oldest) }
+    if (moving.length) PHYSICAL_TEMPLATES.set(baseKey, template)
+    else disposeTrainModel(car)
+  }
+  // Cut and classify the real body just once. Animated frames transform only
+  // retained cap skins and mechanical parts, rather than rebuilding a train.
+  if (eligible) updateNoseCoupler(template.car, { ...state, axis: undefined })
+  else updateNoseCoupler(template.car, { open: 0, extension: 0, locked: false })
+  const parts = [...template.stationary, ...template.moving.flatMap(meshPhysicalVolumes)]
+  if (LOCAL_PHYSICAL_VOLUMES.size >= 512) LOCAL_PHYSICAL_VOLUMES.delete(LOCAL_PHYSICAL_VOLUMES.keys().next().value!)
   LOCAL_PHYSICAL_VOLUMES.set(key, parts)
   return parts
 }
 
 /** Unlike the independent-train reserve, this broad phase includes every
  * retained mesh protrusion, including nose paint and end gangway frames. */
-function physicalLocalBounds(train: TrainSnapshot, index: number): LocalVolume & { across: number } {
-  const key = `${train.type}:${train.carCount}:${index}`
+function physicalLocalBounds(train: PhysicalTrain, index: number): LocalVolume & { across: number } {
+  const key = `${train.type}:${train.carCount}:${index}${noseStateKey(train, index)}`
   const cached = LOCAL_SELF_BOUNDS.get(key)
   if (cached) return cached
   const parts = physicalLocalVolumes(train, index)
@@ -213,6 +234,7 @@ function physicalLocalBounds(train: TrainSnapshot, index: number): LocalVolume &
     across: (bounds.minY + bounds.maxY) / 2, halfWidth: (bounds.maxY - bounds.minY) / 2,
     bottom: bounds.minZ, top: bounds.maxZ,
   }
+  if (LOCAL_SELF_BOUNDS.size >= 512) LOCAL_SELF_BOUNDS.delete(LOCAL_SELF_BOUNDS.keys().next().value!)
   LOCAL_SELF_BOUNDS.set(key, local)
   return local
 }
@@ -225,7 +247,36 @@ function offsetWorldVolume(pose: CarPose, local: LocalVolume & { across: number 
   return volume
 }
 
-function physicalWorldVolume(pose: CarPose, local: LocalPhysicalVolume, carIndex: number): PhysicalBodyVolume {
+function orientedLocalPhysicalVolume(original: LocalPhysicalVolume, carIndex: number, train: PhysicalTrain): LocalPhysicalVolume {
+  let local = original
+  const state = (train as TrainSnapshot & { noseCoupling?: NoseCouplingState }).noseCoupling
+  if (local.mechanical && state?.axis && (train.type === 'e5' || train.type === 'e6')) {
+    const sign = train.type === 'e6' ? -1 : 1, spec = getTrainCarSpec(train.type, carIndex, train.carCount)
+    const profile = NOSE_COUPLER_PROFILES[train.type]
+    const pivot = new THREE.Vector3(sign * (spec.length / 2 - profile.mountInset), 0, profile.height)
+    const axis = new THREE.Vector3(sign * state.axis.x, sign * state.axis.z, state.axis.y).normalize()
+    const rotation = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(sign, 0, 0), axis)
+    const vertices = local.vertices.map(vertex => { const v = new THREE.Vector3(vertex.x, vertex.y, vertex.z).sub(pivot).applyQuaternion(rotation).add(pivot); return { x: v.x, y: v.y, z: v.z } })
+    const bounds = emptyBounds()
+    vertices.forEach(vertex => merge(bounds, { minX: vertex.x, maxX: vertex.x, minY: vertex.y, maxY: vertex.y, minZ: vertex.z, maxZ: vertex.z }))
+    local = { ...local, vertices, along: (bounds.minX + bounds.maxX) / 2, halfLength: (bounds.maxX - bounds.minX) / 2, across: (bounds.minY + bounds.maxY) / 2, halfWidth: (bounds.maxY - bounds.minY) / 2, bottom: bounds.minZ, top: bounds.maxZ }
+  }
+  return local
+}
+
+function physicalLocalBoundsWithAxis(train: PhysicalTrain, index: number): LocalVolume & { across: number } {
+  const base = physicalLocalBounds(train, index), state = (train as TrainSnapshot & { noseCoupling?: NoseCouplingState }).noseCoupling
+  if (!state?.axis) return base
+  const bounds: SafetyBounds = { minX: base.along - base.halfLength, maxX: base.along + base.halfLength, minY: base.across - base.halfWidth, maxY: base.across + base.halfWidth, minZ: base.bottom, maxZ: base.top }
+  for (const part of physicalLocalVolumes(train, index)) if (part.mechanical) {
+    const moved = orientedLocalPhysicalVolume(part, index, train)
+    merge(bounds, { minX: moved.along - moved.halfLength, maxX: moved.along + moved.halfLength, minY: moved.across - moved.halfWidth, maxY: moved.across + moved.halfWidth, minZ: moved.bottom, maxZ: moved.top })
+  }
+  return { along: (bounds.minX + bounds.maxX) / 2, halfLength: (bounds.maxX - bounds.minX) / 2, across: (bounds.minY + bounds.maxY) / 2, halfWidth: (bounds.maxY - bounds.minY) / 2, bottom: bounds.minZ, top: bounds.maxZ }
+}
+
+function physicalWorldVolume(pose: CarPose, original: LocalPhysicalVolume, carIndex: number, train: PhysicalTrain): PhysicalBodyVolume {
+  const local = orientedLocalPhysicalVolume(original, carIndex, train)
   const volume = offsetWorldVolume(pose, local, carIndex)
   const [forward, right, up] = volume.axes
   const vertices = local.vertices.map(vertex => ({
@@ -233,14 +284,29 @@ function physicalWorldVolume(pose: CarPose, local: LocalPhysicalVolume, carIndex
     y: pose.center.y + forward.y * vertex.x + right.y * vertex.y + up.y * vertex.z,
     z: pose.center.z + RAIL_TOP + forward.z * vertex.x + up.z * vertex.z,
   }))
-  return { ...volume, vertices }
+  return { ...volume, vertices, matingHead: local.matingHead, mechanical: local.mechanical }
 }
 
-export function trainFootprint(tracks: Track[], train: TrainSnapshot): TrainFootprint {
+export function trainFootprint(tracks: Track[], train: PhysicalTrain): TrainFootprint {
   const bounds = emptyBounds()
   if (!train.position) return { volumes: [], bounds, complete: false, visibleCars: 0, rearOffset: 0 }
-  const poses = solveConsistPoses(tracks, train.position, train.cabForward, train.carCount, train.type)
+  return trainFootprintFromPoses(train, solveConsistPoses(tracks, train.position, train.cabForward, train.carCount, train.type))
+}
+
+/** Mixed formations supply rail-constrained member poses from their shared solver. */
+export function trainFootprintFromPoses(train: PhysicalTrain, poses: ConsistPoses): TrainFootprint {
+  const bounds = emptyBounds()
+  const actualBounds = new Map<number, LocalVolume & { across: number }>()
+  const localBounds = (index: number) => { let result = actualBounds.get(index); if (!result) { result = physicalLocalBoundsWithAxis(train, index); actualBounds.set(index, result) } return result }
   const volumes = poses.cars.flatMap((pose, index) => pose ? localVolumes(train, index).map(local => worldVolume(pose, local, index)) : [])
+  // Opening covers and projecting hardware also reserve space against unrelated
+  // trains; the original 45 mm headroom is never reduced.
+  const state = (train as TrainSnapshot & { noseCoupling?: NoseCouplingState }).noseCoupling
+  if (state && (state.open > 0 || state.extension > 0)) poses.cars.forEach((pose, index) => {
+    if (!pose || !(train.type === 'e5' && index === 0 || train.type === 'e6' && index === train.carCount - 1)) return
+    const local = localBounds(index)
+    volumes.push(offsetWorldVolume(pose, { ...local, bottom: Math.min(0, local.bottom), top: Math.max(45, local.top) }, index))
+  })
   volumes.forEach(volume => merge(bounds, volume.bounds))
   const visibleCars = poses.cars.filter(Boolean).length
   const physicalCars = new Map<number, PhysicalBodyVolume[]>()
@@ -248,7 +314,7 @@ export function trainFootprint(tracks: Track[], train: TrainSnapshot): TrainFoot
     const cached = physicalCars.get(carIndex)
     if (cached) return cached
     const pose = poses.cars[carIndex]
-    const parts = pose ? physicalLocalVolumes(train, carIndex).map(local => physicalWorldVolume(pose, local, carIndex)) : []
+    const parts = pose ? physicalLocalVolumes(train, carIndex).map(local => physicalWorldVolume(pose, local, carIndex, train)) : []
     physicalCars.set(carIndex, parts)
     return parts
   }
@@ -256,7 +322,7 @@ export function trainFootprint(tracks: Track[], train: TrainSnapshot): TrainFoot
   let selfBounds: BodyVolume[] | undefined
   SELF_COLLISION_PARTS.set(footprint, {
     bounds: () => selfBounds ??= poses.cars.flatMap((pose, index) =>
-      pose ? [offsetWorldVolume(pose, physicalLocalBounds(train, index), index)] : []),
+      pose ? [offsetWorldVolume(pose, localBounds(index), index)] : []),
     parts: selfCollisionParts,
   })
   return footprint
@@ -279,9 +345,35 @@ export function trainFootprintOverlapsItself(footprint: TrainFootprint): boolean
     if (a.carIndex === b.carIndex || !bodyVolumesIntersect(a, b)) return false
     if (!physicalParts) return true
     const first = physicalParts.parts(a.carIndex), second = physicalParts.parts(b.carIndex)
-    return first.some(physicalA => second.some(physicalB => bodyVolumesIntersect(physicalA, physicalB)
-      && convexShapesIntersect(physicalA.vertices, physicalB.vertices)))
+    const mating = INTENTIONAL_NOSE_CONTACTS.get(footprint)?.some(([firstIndex, secondIndex]) => firstIndex === a.carIndex && secondIndex === b.carIndex || firstIndex === b.carIndex && secondIndex === a.carIndex)
+    return first.some(physicalA => second.some(physicalB => !(mating && physicalA.matingHead && physicalB.matingHead)
+      && bodyVolumesIntersect(physicalA, physicalB) && convexShapesIntersect(physicalA.vertices, physicalB.vertices)))
   }))
+}
+
+/** Keep global car identities while sharing the intentional mating-head contact. */
+export function combineTrainFootprints(first: TrainFootprint, second: TrainFootprint, secondIndexOffset: number, matingPair?: readonly [number, number], rearOffset?: number): TrainFootprint {
+  const bounds = emptyBounds(); merge(bounds, first.bounds); merge(bounds, second.bounds)
+  const result: TrainFootprint = { volumes: [...first.volumes, ...second.volumes.map(volume => ({ ...volume, carIndex: volume.carIndex + secondIndexOffset }))],
+    bounds, complete: first.complete && second.complete, visibleCars: first.visibleCars + second.visibleCars, rearOffset: rearOffset ?? first.rearOffset + second.rearOffset }
+  const a = SELF_COLLISION_PARTS.get(first), b = SELF_COLLISION_PARTS.get(second)
+  if (a && b) SELF_COLLISION_PARTS.set(result, {
+    bounds: () => [...a.bounds(), ...b.bounds().map(volume => ({ ...volume, carIndex: volume.carIndex + secondIndexOffset }))],
+    parts: index => index < secondIndexOffset ? a.parts(index) : b.parts(index - secondIndexOffset).map(volume => ({ ...volume, carIndex: index })),
+  })
+  if (matingPair) INTENTIONAL_NOSE_CONTACTS.set(result, [matingPair])
+  return result
+}
+
+/** Actual shells, moving covers and arms must stay clear during docking. Only
+ * the two designated mechanical mating heads may share their intended contact. */
+export function physicalTrainFootprintsConflict(first: TrainFootprint, second: TrainFootprint, matingPair?: readonly [number, number]): boolean {
+  const a = SELF_COLLISION_PARTS.get(first), b = SELF_COLLISION_PARTS.get(second)
+  if (!a || !b) return trainFootprintsConflict(first, second, 0)
+  return a.bounds().some(one => b.bounds().some(two => bodyVolumesIntersect(one, two) && a.parts(one.carIndex).some(partA => b.parts(two.carIndex).some(partB => {
+    if (matingPair && one.carIndex === matingPair[0] && two.carIndex === matingPair[1] && partA.matingHead && partB.matingHead) return false
+    return bodyVolumesIntersect(partA, partB) && convexShapesIntersect(partA.vertices, partB.vertices)
+  }))))
 }
 
 function sweptVolumes(start: TrainFootprint, end: TrainFootprint, sharedTranslation: PoseVector): TrainFootprint {

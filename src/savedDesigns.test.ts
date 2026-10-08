@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { STORAGE_KEY, PREVIOUS_STORAGE_KEY, createLayout, parseLayout } from './layout';
+import { STORAGE_KEY, PREVIOUS_STORAGE_KEY, V2_STORAGE_KEY, createLayout, parseLayout } from './layout';
 import { restoreFleet, snapshotFleetLayout } from './fleet';
 import {
   DESIGN_RECOVERY_PREFIX,
@@ -140,6 +140,23 @@ describe('library storage and recovery', () => {
     expect(readSavedDesigns(stored).error).toBeNull();
   });
 
+  it('backs up a damaged partnership without silently reopening that design as independent trains', () => {
+    const original = library();
+    const working = createLayout('coupling-demo');
+    const damaged = { id: 'bad-coupling', name: 'Damaged pair', updatedAt: timestamp,
+      layout: { ...working, couplings: [{ id: 'pair', e6Id: working.trains![0].id, e5Id: 'missing-partner' }] } };
+    const raw = JSON.stringify({ version: 1, designs: [original.designs[0], damaged] });
+    const stored = storage({ [SAVED_DESIGNS_KEY]: raw });
+    const recovered = readSavedDesigns(stored);
+    expect(recovered.library.designs).toEqual([original.designs[0]]);
+    expect(recovered.recoveryRaw).toBe(raw);
+    expect(recovered.error).toMatch(/original data is kept/);
+    expect(stored.setItem).not.toHaveBeenCalled();
+    persistSavedDesigns(recovered.library, recovered.recoveryRaw, stored);
+    expect(stored.setItem.mock.calls[0][1]).toBe(raw);
+    expect(stored.setItem.mock.calls[0][0]).toContain(DESIGN_RECOVERY_PREFIX);
+  });
+
   it.each(['{ invalid JSON', JSON.stringify({ version: 2, designs: [] }), 'null'])('retains unreadable library data for recovery: %s', (raw) => {
     const stored = storage({ [SAVED_DESIGNS_KEY]: raw });
     const result = readSavedDesigns(stored);
@@ -217,6 +234,36 @@ describe('working saved-design identity', () => {
     stored.values.set(STORAGE_KEY, '{ damaged new save');
     expect(readWorkingDesignId(original, stored)).toBe('design-a');
     expect(stored.setItem).not.toHaveBeenCalled();
+  });
+
+  it('keeps a v2 saved-design identity available after v3 and v4 storage are introduced', () => {
+    const original = library();
+    const previous = { ...createLayout('compact'), savedDesignId: 'design-a' };
+    const stored = storage({ [V2_STORAGE_KEY]: JSON.stringify(previous), [PREVIOUS_STORAGE_KEY]: '{ damaged v3', [STORAGE_KEY]: '{ damaged v4' });
+    expect(readWorkingDesignId(original, stored)).toBe('design-a');
+    expect(stored.setItem).not.toHaveBeenCalled();
+    expect(stored.values.get(V2_STORAGE_KEY)).toBe(JSON.stringify(previous));
+  });
+
+  it('retains stable partnerships in separate named designs and independent save-as copies', () => {
+    const working = createLayout('coupling-demo');
+    const fleet = restoreFleet(working);
+    const relation = { id: 'nose-pair', e6Id: fleet[0].id, e5Id: fleet[1].id };
+    const coupled = snapshotFleetLayout(working, fleet, fleet[1].id, [relation]);
+    const first = saveDesignSnapshot(empty(), coupled, 'Joined trains', null, false, { id: 'joined', updatedAt: timestamp });
+    const second = saveDesignSnapshot(first.library, working, 'Separate trains', null, false, { id: 'separate', updatedAt: timestamp });
+    const copied = saveDesignSnapshot(second.library, coupled, 'Joined copy', 'joined', true, { id: 'copy', updatedAt: timestamp });
+    const stored = storage();
+    persistSavedDesigns(copied.library, null, stored);
+    const opened = readSavedDesigns(stored);
+    expect(opened.error).toBeNull();
+    expect(opened.library.version).toBe(1);
+    expect(opened.library.designs.map(design => design.layout.couplings)).toEqual([[relation], [], [relation]]);
+    expect(opened.library.designs[0].layout.selectedTrainId).toBe(fleet[1].id);
+    expect(restoreFleet(opened.library.designs[0].layout).every(train => train.actualSpeed === 0 && !train.running)).toBe(true);
+    opened.library.designs[2].layout.couplings![0].id = 'changed';
+    expect(opened.library.designs[0].layout.couplings![0].id).toBe('nose-pair');
+    expect(first.library.designs[0].layout.couplings![0].id).toBe('nose-pair');
   });
 
   it('keeps each named fleet snapshot independent with selection and stopped restoration', () => {

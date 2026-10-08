@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { KATO_CATALOG } from './catalog'
-import { LEGACY_STORAGE_KEY, PREVIOUS_STORAGE_KEY, STORAGE_KEY, createLayout, loadLayout, parseLayout, type LayoutData, type PlacedAccessory } from './layout'
+import { LEGACY_STORAGE_KEY, PREVIOUS_STORAGE_KEY, STORAGE_KEY, V2_STORAGE_KEY, createLayout, loadLayout, parseLayout, type LayoutData, type PlacedAccessory } from './layout'
 import { endpoints, makeStarterLayout, openEndpoints } from './track'
 import { getTrainSpec, TRAIN_TYPES } from './trains'
 import { MAX_TRAINSETS, restoreFleet, snapshotFleetLayout } from './fleet'
@@ -250,7 +250,7 @@ describe('documented viaduct supports', () => {
 })
 
 describe('saved layout recovery', () => {
-  it('reads a previous 3D autosave without modifying it and prefers a valid v3 snapshot', () => {
+  it('reads a previous 3D autosave without modifying it and prefers a valid v4 snapshot', () => {
     const original = { ...createLayout('compact'), trainType: 'e7' as const, carCount: 5 }
     const fleetLayout = snapshotFleetLayout(original, restoreFleet(original), 'train-1')
     const values = new Map([[PREVIOUS_STORAGE_KEY, JSON.stringify(original)]])
@@ -262,6 +262,27 @@ describe('saved layout recovery', () => {
     expect(setItem).not.toHaveBeenCalled()
     values.set(STORAGE_KEY, '{ damaged fleet')
     expect(loadLayout()).toEqual(original)
+  })
+
+  it('tries v4, v3, v2 and v1 in order without replacing any original autosave', () => {
+    const original = createLayout('compact')
+    const oldFleet = { ...snapshotFleetLayout(original, restoreFleet(original), 'train-1'), version: 3 }
+    const latest = { ...snapshotFleetLayout(original, restoreFleet(original), 'train-1'), name: 'Latest draft' }
+    const values = new Map([[LEGACY_STORAGE_KEY, JSON.stringify(legacy())], [V2_STORAGE_KEY, JSON.stringify(original)]])
+    const setItem = vi.fn()
+    vi.stubGlobal('localStorage', { getItem: (key: string) => values.get(key) ?? null, setItem })
+    expect(loadLayout()).toEqual(original)
+    values.set(PREVIOUS_STORAGE_KEY, JSON.stringify(oldFleet))
+    expect(loadLayout()).toEqual(parseLayout(oldFleet))
+    values.set(STORAGE_KEY, JSON.stringify(latest))
+    expect(loadLayout()).toEqual(latest)
+    values.set(STORAGE_KEY, '{ damaged v4')
+    expect(loadLayout()).toEqual(parseLayout(oldFleet))
+    values.set(PREVIOUS_STORAGE_KEY, '{ damaged v3')
+    expect(loadLayout()).toEqual(original)
+    values.set(V2_STORAGE_KEY, '{ damaged v2')
+    expect(loadLayout()).toEqual(parseLayout(legacy()))
+    expect(setItem).not.toHaveBeenCalled()
   })
   it('restores the selected Shinkansen from the working autosave', () => {
     const original = { ...createLayout('compact'), trainType: 'e6' as const, carCount: 7 }
@@ -317,8 +338,9 @@ describe('version 3 independent train validation', () => {
   const fleetLayout = () => {
     const original = createLayout('city')
     const first = restoreFleet(original)[0]
-    return snapshotFleetLayout(original, [first,
+    const { couplings: _couplings, ...snapshot } = snapshotFleetLayout(original, [first,
       { ...first, id: 'train-2', name: 'Komachi 2', type: 'e6', carCount: 7, cabForward: false, requestedSpeed: 45, position: null }], 'train-2')
+    return { ...snapshot, version: 3 as const }
   }
 
   it('round trips a mixed fleet with selection, speed, orientation and unplaced sets as deep copies', () => {
@@ -426,5 +448,72 @@ describe('version 3 independent train validation', () => {
     const trains = Array.from({ length: MAX_TRAINSETS }, (_, index) => ({ ...original.trains![0], id: `train-${index + 1}` }))
     expect(parseLayout({ ...original, trains }).trains).toHaveLength(MAX_TRAINSETS)
     expect(() => parseLayout({ ...original, trains: [...trains, { ...trains[0], id: 'extra' }] })).toThrow(/at most 12/)
+  })
+})
+
+describe('version 4 stable nose-coupled partnerships', () => {
+  const paired = () => {
+    const original = createLayout('coupling-demo')
+    return { ...original, couplings: [{ id: 'pair-1', e6Id: original.trains![0].id, e5Id: original.trains![1].id }] }
+  }
+
+  it('round trips both member trainsets, their exact positions, selection and stable relation', () => {
+    const original = paired()
+    const parsed = parseLayout(JSON.parse(JSON.stringify(original)))
+    expect(parsed).toEqual(original)
+    expect(parsed.version).toBe(4)
+    expect(parsed.couplings![0]).not.toBe(original.couplings[0])
+    expect(parsed.trains![0].position).not.toBe(original.trains![0].position)
+    expect(restoreFleet(parsed)).toHaveLength(2)
+    expect(restoreFleet(parsed).every(train => !train.running && train.actualSpeed === 0)).toBe(true)
+    parsed.couplings![0].id = 'different-id'
+    expect(original.couplings[0].id).toBe('pair-1')
+  })
+
+  it('defaults an absent v4 relation list to empty and does not reinterpret older schemas', () => {
+    const original = paired()
+    expect(parseLayout({ ...original, couplings: undefined }).couplings).toEqual([])
+    expect(parseLayout({ ...original, version: 3 })).not.toHaveProperty('couplings')
+    expect(parseLayout({ ...createLayout('compact'), couplings: original.couplings })).not.toHaveProperty('couplings')
+  })
+
+  it('keeps only stable group fields and excludes partial opening, movement and locking commands', () => {
+    const original = paired()
+    const parsed = parseLayout({ ...original,
+      couplingOperation: { phase: 'approaching' },
+      couplings: [{ ...original.couplings[0], elapsed: 2, paused: false, open: .5 }],
+      trains: original.trains!.map(train => ({ ...train, noseCoupling: { open: .5, extension: .3, locked: false }, running: true })),
+    })
+    expect(parsed).toEqual(original)
+  })
+
+  it.each([
+    { id: '' }, { id: 'x'.repeat(101) }, { id: 1 }, { e6Id: 'absent' }, { e5Id: 'absent' },
+    { e6Id: 'coupling-demo-e5', e5Id: 'coupling-demo-e6' },
+    { e6Id: 'coupling-demo-e6', e5Id: 'coupling-demo-e6' }, { e6Id: null }, { e5Id: 3 },
+  ])('rejects malformed or incompatible coupling identities: %j', patch => {
+    const original = paired()
+    expect(() => parseLayout({ ...original, couplings: [{ ...original.couplings[0], ...patch }] })).toThrow(/coupling/)
+  })
+
+  it.each([null, 'pair-1', {}, Array(7).fill({ id: 'pair', e6Id: 'a', e5Id: 'b' })])('rejects an invalid group list: %j', couplings => {
+    expect(() => parseLayout({ ...paired(), couplings })).toThrow(/coupled-train|coupling/)
+  })
+
+  it('rejects E7 and commuter train substitutions even when the referenced ids exist', () => {
+    const original = paired()
+    for (const type of ['e7', 'e235'] as const) {
+      expect(() => parseLayout({ ...original, trains: original.trains!.map(train => train.type === 'e5' ? { ...train, type } : train) })).toThrow(/coupling/)
+    }
+  })
+
+  it('supports several distinct pairs and rejects reused members or repeated group ids', () => {
+    const original = paired()
+    const trains = [...original.trains!, ...original.trains!.map(train => ({ ...train, id: `${train.id}-2` }))]
+    const second = { id: 'pair-2', e6Id: trains[2].id, e5Id: trains[3].id }
+    expect(parseLayout({ ...original, trains, couplings: [...original.couplings, second] }).couplings).toHaveLength(2)
+    expect(() => parseLayout({ ...original, trains, couplings: [...original.couplings, { ...second, id: 'pair-1' }] })).toThrow(/coupling/)
+    expect(() => parseLayout({ ...original, trains, couplings: [...original.couplings, { ...second, e6Id: trains[0].id }] })).toThrow(/coupling/)
+    expect(() => parseLayout({ ...original, trains, couplings: [...original.couplings, { ...second, e5Id: trains[1].id }] })).toThrow(/coupling/)
   })
 })

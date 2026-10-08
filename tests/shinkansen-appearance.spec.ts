@@ -42,7 +42,9 @@ async function seed(page: Page, type: Shinkansen) {
   const time = new Date('2026-01-01T00:00:00Z');
   await page.clock.install({ time });
   await page.clock.pauseAt(time);
-  await page.addInitScript(value => localStorage.setItem('little-railways-layout-v3', JSON.stringify(value)), fixture(type));
+  await page.addInitScript(value => {
+    if (!localStorage.getItem('little-railways-layout-v4')) localStorage.setItem('little-railways-layout-v4', JSON.stringify(value));
+  }, fixture(type));
   await page.goto('/');
   await expect(scene(page)).toHaveAttribute('data-ready', 'true');
 }

@@ -3,6 +3,7 @@ import * as THREE from 'three'
 import { createShinkansenCar, shinkansenSurface } from './shinkansenModel'
 import { createE235Car, createTrainCar, createTrainConnection, disposeTrainModel, updateE235Connection } from './trainModel'
 import { getTrainCarSpec, getTrainSpec } from './trains'
+import { isNoseCouplingCar } from './noseCoupler'
 
 const types = ['e5', 'e6', 'e7'] as const
 describe('procedural Shinkansen models', () => {
@@ -19,7 +20,14 @@ describe('procedural Shinkansen models', () => {
       const shell = car.getObjectByName('continuous-rounded-body-and-sculpted-nose') as THREE.Mesh
       shell.geometry.computeBoundingBox()
       expect(shell.geometry.boundingBox!.min.x).toBeCloseTo(-spec.length / 2, 4)
-      expect(shell.geometry.boundingBox!.max.x).toBeCloseTo(spec.length / 2, 4)
+      if (isNoseCouplingCar(type, index, 3)) {
+        const closedShell = shell.geometry.boundingBox!.clone()
+        car.traverse(object => {
+          if (!(object instanceof THREE.Mesh) || object.userData.sourceSurface !== shell.name) return
+          object.geometry.computeBoundingBox(); closedShell.union(object.geometry.boundingBox!)
+        })
+        expect(closedShell.max.x).toBeCloseTo(spec.length / 2, 4)
+      } else expect(shell.geometry.boundingBox!.max.x).toBeCloseTo(spec.length / 2, 4)
       expect(shell.geometry.boundingBox!.min.z).toBeCloseTo(-spec.width / 2, 4)
       expect(shell.geometry.boundingBox!.max.z).toBeCloseTo(spec.width / 2, 4)
       if (index !== 1) expect(shell.geometry.getAttribute('position').count).toBeGreaterThan(3000)

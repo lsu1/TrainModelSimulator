@@ -8,7 +8,7 @@ import type { TrainType } from '../src/trains';
 
 // Detailed cars use software WebGL in cloud checks, with a single worker.
 test.setTimeout(90_000);
-const STORAGE_KEY = 'little-railways-layout-v3';
+const STORAGE_KEY = 'little-railways-layout-v4';
 const LIBRARY_KEY = 'little-railways-saved-designs-v1';
 const scene = (page: Page) => page.getByRole('img', { name: '3D railway layout: rotate, zoom, select trains, and move Kato track pieces' });
 const selector = (page: Page) => page.getByRole('combobox', { name: 'Train', exact: true });
@@ -68,7 +68,7 @@ async function open(page: Page) {
 
 async function seed(page: Page, layout: object) {
   await page.addInitScript(value => {
-    if (!localStorage.getItem('little-railways-layout-v3') && !localStorage.getItem('little-railways-layout-v2')) localStorage.setItem('little-railways-layout-v2', JSON.stringify(value));
+    if (!localStorage.getItem('little-railways-layout-v4') && !localStorage.getItem('little-railways-layout-v2')) localStorage.setItem('little-railways-layout-v2', JSON.stringify(value));
   }, layout);
   await open(page);
 }

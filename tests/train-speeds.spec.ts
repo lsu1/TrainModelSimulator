@@ -7,7 +7,7 @@ import type { TrainType } from '../src/trains';
 
 // Detailed retained models share one software-WebGL browser worker.
 test.setTimeout(120_000);
-const STORAGE_KEY = 'little-railways-layout-v3';
+const STORAGE_KEY = 'little-railways-layout-v4';
 const SAVED_DESIGNS_KEY = 'little-railways-saved-designs-v1';
 const MAX_SPEED: Record<TrainType, number> = { e235: 90, e5: 320, e6: 320, e7: 275 };
 const scene = (page: Page) => page.getByRole('img', { name: '3D railway layout: rotate, zoom, select trains, and move Kato track pieces' });

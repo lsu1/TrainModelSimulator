@@ -11,6 +11,7 @@ import {
   FolderOpen,
   Layers3,
   Lightbulb,
+  Link2,
   Maximize2,
   MousePointer2,
   Mountain,
@@ -25,6 +26,7 @@ import {
   TrainFront,
   Trash2,
   Undo2,
+  Unlink2,
   Volume2,
   Waypoints,
   X,
@@ -73,6 +75,15 @@ const TRAIN_STATUS_LABELS: Record<TrainRuntime["status"], string> = {
   moving: "Moving",
   braking: "Braking",
   blocked: "Waiting",
+};
+const COUPLING_PHASE_LABELS: Record<string, string> = {
+  opening: "Opening noses",
+  approaching: "Joining trains",
+  locking: "Connecting couplers",
+  coupled: "Connected",
+  unlocking: "Unlocking couplers",
+  separating: "Separating trains",
+  closing: "Closing noses",
 };
 function savedTrainSummary(layout: LayoutData): string {
   if (!layout.trains) {
@@ -173,10 +184,32 @@ export default function App() {
   const [deleteDesignId, setDeleteDesignId] = useState<string | null>(null);
   const [newTrainType, setNewTrainType] = useState<TrainType>("e5");
   const [newTrainCarCount, setNewTrainCarCount] = useState(3);
+  const [couplingPartnerId, setCouplingPartnerId] = useState("");
   const selectedTrain = h.fleet.find((train) => train.id === h.selectedTrainId);
   const selectedIsPlaced = !!selectedTrain?.position;
   const selectedIsMoving = !!selectedTrain && (selectedTrain.running || selectedTrain.actualSpeed > 0);
   const movingTrainCount = h.fleet.filter((train) => train.running || train.actualSpeed > 0).length;
+  const selectedIsCoupled = !!h.selectedCoupling;
+  const selectedFormation = h.selectedCoupling
+    ? h.fleet.filter((train) => train.id === h.selectedCoupling?.e5Id || train.id === h.selectedCoupling?.e6Id)
+    : [];
+  const selectedFormationCarCount = selectedFormation.reduce((count, train) => count + train.carCount, 0);
+  const formationCarCountFor = (trainId: string) => {
+    const group = h.couplings.find((coupling) => coupling.e5Id === trainId || coupling.e6Id === trainId);
+    return group ? h.fleet.reduce((count, train) => count + (train.id === group.e5Id || train.id === group.e6Id ? train.carCount : 0), 0) : undefined;
+  };
+  const couplingPartner = h.couplingPartners.find((partner) => partner.id === couplingPartnerId)
+    ?? h.couplingPartners.find((partner) => partner.allowed)
+    ?? h.couplingPartners[0];
+  const couplingPhaseLabel = COUPLING_PHASE_LABELS[h.couplingPhase ?? ""] ?? "Preparing trains";
+  const sceneWrap = useRef<HTMLDivElement>(null);
+  const couplingOperationId = h.couplingOperation?.id;
+  const couplingPaused = h.couplingOperation?.paused;
+  useEffect(() => {
+    if (couplingOperationId && !couplingPaused) {
+      sceneWrap.current?.scrollIntoView({ block: "center", behavior: "instant" });
+    }
+  }, [couplingOperationId, couplingPaused]);
   const saveNameInput = useRef<HTMLInputElement>(null);
   useEffect(() => {
     setDeleteDesignId(null);
@@ -252,13 +285,14 @@ export default function App() {
                 <button
                   className="icon-button"
                   aria-label="Undo last change"
-                  disabled={!h.history.length}
+                  disabled={!h.history.length || h.couplingBusy}
                   onClick={h.undo}
                 >
                   <Undo2 size={19} />
                 </button>
                 <button
                   className="button primary"
+                  disabled={h.couplingBusy}
                   onClick={() => {
                     setSaveName(layout.name);
                     h.setModal("save");
@@ -269,6 +303,7 @@ export default function App() {
                 </button>
                 <button
                   className="button secondary"
+                  disabled={h.couplingBusy}
                   onClick={() => h.setModal("layouts")}
                 >
                   <FolderOpen size={17} />
@@ -298,7 +333,7 @@ export default function App() {
                 </a>
               </div>
             )}
-            <div className="scene-wrap">
+            <div className="scene-wrap" ref={sceneWrap}>
               <Scene3D
                 tracks={tracks}
                 accessories={accessories}
@@ -307,6 +342,8 @@ export default function App() {
                 carCount={h.carCount}
                 trainType={h.trainType}
                 fleet={h.fleet}
+                couplings={h.couplings}
+                couplingOperation={h.couplingOperation}
                 selectedTrainId={h.selectedTrainId}
                 onSelectTrain={h.selectTrain}
                 placingTrain={h.placingTrain}
@@ -314,7 +351,7 @@ export default function App() {
                 onPlaceTrain={h.placeTrain}
                 selectedId={h.selectedId}
                 activeAnchor={h.anchor}
-                mode={h.mode}
+                mode={h.couplingBusy ? "orbit" : h.mode}
                 cameraPreset={h.cameraPreset}
                 viewRevision={h.viewRevision}
                 layoutRevision={h.layoutRevision}
@@ -341,7 +378,9 @@ export default function App() {
               )}
               <div className="scene-hud">
                 <span className={`status-dot ${movingTrainCount ? "running" : ""}`} />
-                {movingTrainCount
+                {h.couplingBusy
+                  ? `${couplingPhaseLabel}${h.couplingOperation?.paused ? " · Paused" : "…"}`
+                  : movingTrainCount
                   ? `${movingTrainCount} ${movingTrainCount === 1 ? "train" : "trains"} on an adventure`
                   : selectedTrain && !selectedIsPlaced
                     ? `${selectedTrain.name} · Choose a place on the rails`
@@ -369,6 +408,7 @@ export default function App() {
                 <button
                   className={h.mode === "move" ? "active" : ""}
                   aria-pressed={h.mode === "move"}
+                  disabled={h.couplingBusy}
                   onClick={() => {
                     h.setMode("move");
                   }}
@@ -465,7 +505,7 @@ export default function App() {
                 <button
                   className="button secondary pause-all-button"
                   aria-label="Pause all trains"
-                  disabled={!movingTrainCount}
+                  disabled={!movingTrainCount && (!h.couplingBusy || h.couplingOperation?.paused)}
                   onClick={h.pauseAllTrains}
                 >
                   <Pause size={16} />
@@ -491,6 +531,9 @@ export default function App() {
                       <div>
                         <strong>{train.name}</strong>
                         <span>{getTrainSpec(train.type).name} · {train.carCount} cars</span>
+                        {formationCarCountFor(train.id) !== undefined && (
+                          <span className="fleet-connected-badge"><Link2 size={12} /> E5 + E6 · {formationCarCountFor(train.id)} cars</span>
+                        )}
                         <span className={`fleet-status ${train.status}`}>
                           <span className={`status-dot ${train.running && train.status !== "blocked" ? "running" : ""}`} />
                           {TRAIN_STATUS_LABELS[train.status]}
@@ -510,7 +553,7 @@ export default function App() {
                   <button
                     className="button secondary"
                     aria-label="Place selected train"
-                    disabled={selectedIsMoving || !tracks.length || !!h.placingTrain}
+                    disabled={selectedIsMoving || !tracks.length || !!h.placingTrain || h.couplingBusy || selectedIsCoupled}
                     onClick={() => h.beginTrainPlacement(selectedTrain.id)}
                   >
                     <MousePointer2 size={15} />
@@ -519,7 +562,7 @@ export default function App() {
                   <button
                     className="icon-button remove-train-button"
                     aria-label="Remove selected train"
-                    disabled={!!h.placingTrain}
+                    disabled={!!h.placingTrain || h.couplingBusy || selectedIsCoupled}
                     onClick={() => h.removeTrain(selectedTrain.id)}
                   >
                     <Trash2 size={16} />
@@ -532,6 +575,7 @@ export default function App() {
                   <select
                     aria-label="New train model"
                     value={newTrainType}
+                    disabled={h.couplingBusy}
                     onChange={(event) => setNewTrainType(event.target.value as TrainType)}
                   >
                     {TRAIN_TYPES.map((type) => (
@@ -544,6 +588,7 @@ export default function App() {
                   <select
                     aria-label="New train car count"
                     value={newTrainCarCount}
+                    disabled={h.couplingBusy}
                     onChange={(event) => setNewTrainCarCount(Number(event.target.value))}
                   >
                     {Array.from({ length: 9 }, (_, index) => index + 3).map((count) => (
@@ -554,7 +599,7 @@ export default function App() {
                 <button
                   className="button primary"
                   aria-label="Add train"
-                  disabled={h.fleet.length >= MAX_TRAINSETS || !!h.placingTrain}
+                  disabled={h.fleet.length >= MAX_TRAINSETS || !!h.placingTrain || h.couplingBusy}
                   onClick={() => h.addTrain(newTrainType, newTrainCarCount)}
                 >
                   <Plus size={17} />
@@ -564,6 +609,8 @@ export default function App() {
               <p className="fleet-note">
                 {h.fleet.length >= MAX_TRAINSETS
                   ? `All ${MAX_TRAINSETS} train spaces are filled. Remove one to add another.`
+                  : selectedIsCoupled
+                    ? "Your E5 and E6 share their controls while connected. Select either partner to drive both."
                   : "Each train has its own controls. Select a train here or click it in the scene."}
               </p>
             </section>
@@ -571,7 +618,7 @@ export default function App() {
               <button
                 className={`play-button ${h.running ? "playing" : ""}`}
                 aria-label={h.running ? "Pause train" : "Run train"}
-                disabled={!selectedIsPlaced || !!h.placingTrain}
+                disabled={!selectedIsPlaced || !!h.placingTrain || h.couplingBusy}
                 onClick={h.toggleRunning}
               >
                 {h.running ? (
@@ -597,7 +644,7 @@ export default function App() {
                   max={h.trainSpec.maxServiceSpeed}
                   step="5"
                   value={h.speed}
-                  disabled={!selectedTrain || !!h.placingTrain}
+                  disabled={!selectedTrain || !!h.placingTrain || h.couplingBusy}
                   onChange={(event) => h.setSpeed(Number(event.target.value))}
                 />
                 <div className="speed-labels">
@@ -610,7 +657,7 @@ export default function App() {
               <button
                 className="icon-button direction-button"
                 aria-label="Reverse train direction"
-                disabled={!selectedIsPlaced || !!h.placingTrain}
+                disabled={!selectedIsPlaced || !!h.placingTrain || h.couplingBusy}
                 onClick={h.reverse}
               >
                 <ArrowLeftRight size={21} />
@@ -639,7 +686,7 @@ export default function App() {
                   <select
                     aria-label="Train"
                     value={h.trainType}
-                    disabled={!selectedTrain || selectedIsMoving || !!h.placingTrain}
+                    disabled={!selectedTrain || selectedIsMoving || !!h.placingTrain || h.couplingBusy || selectedIsCoupled}
                     onChange={(event) => h.chooseTrain(event.target.value as TrainType)}
                   >
                     {TRAIN_TYPES.map((type) => {
@@ -662,7 +709,7 @@ export default function App() {
                 <select
                   aria-label="Train car count"
                   value={h.carCount}
-                  disabled={!selectedTrain || selectedIsMoving || !!h.placingTrain}
+                  disabled={!selectedTrain || selectedIsMoving || !!h.placingTrain || h.couplingBusy || selectedIsCoupled}
                   onChange={(event) =>
                     h.changeTrainCarCount(Number(event.target.value))
                   }
@@ -677,6 +724,113 @@ export default function App() {
                 </select>
               </label>
             </div>
+            {(selectedTrain?.type === "e5" || selectedTrain?.type === "e6" || h.couplingBusy || selectedIsCoupled) && (
+              <section className="coupling-panel" aria-label="Nose coupling">
+                <div className="coupling-heading">
+                  <div>
+                    <Link2 size={19} />
+                    <h3>Join your Shinkansen</h3>
+                  </div>
+                  <div className="coupling-heading-actions">
+                    {selectedIsCoupled && (
+                      <span className="coupling-formation-badge">E5 + E6 · {selectedFormationCarCount} cars</span>
+                    )}
+                    {(h.couplingBusy || selectedIsCoupled) && (
+                      <button
+                        className="button secondary coupling-view-button"
+                        aria-label="Nose view"
+                        aria-pressed={h.cameraPreset === "coupling"}
+                        onClick={() => {
+                          h.setCameraPreset("coupling");
+                          h.setViewRevision((value) => value + 1);
+                          sceneWrap.current?.scrollIntoView({ block: "center", behavior: "instant" });
+                        }}
+                      >
+                        <Eye size={16} />
+                        Nose view
+                      </button>
+                    )}
+                  </div>
+                </div>
+                {h.couplingBusy ? (
+                  <div className="coupling-operation">
+                    <div className="coupling-progress" role="status" aria-live="polite">
+                      <span className={`status-dot ${h.couplingOperation?.paused ? "" : "running"}`} />
+                      <div>
+                        <strong>{couplingPhaseLabel}{h.couplingOperation?.paused ? " · Paused" : "…"}</strong>
+                        <p>{h.couplingOperation?.paused
+                          ? "Continue when you are ready. You can still look around."
+                          : "Watch the noses up close. You can pause at any time."}</p>
+                      </div>
+                    </div>
+                    <button
+                      className="button secondary"
+                      aria-label={h.couplingOperation?.paused ? "Continue coupling" : "Pause coupling"}
+                      onClick={h.couplingOperation?.paused ? h.resumeCoupling : h.pauseCoupling}
+                    >
+                      {h.couplingOperation?.paused ? <Play size={16} /> : <Pause size={16} />}
+                      {h.couplingOperation?.paused ? "Continue" : "Pause"}
+                    </button>
+                  </div>
+                ) : selectedIsCoupled ? (
+                  <>
+                    <div className="coupling-connected-note"><Check size={16} /><p>Connected! Drive either train to move both together. Separate them before changing their cars or places.</p></div>
+                    <div className="coupling-actions">
+                      <p id="coupling-guidance">{h.couplingReason ?? "Stop on a clear, straight, level track to separate the trains."}</p>
+                      <button
+                        className="button secondary"
+                        aria-label="Decouple trains"
+                        aria-describedby="coupling-guidance"
+                        disabled={selectedIsMoving || !!h.couplingReason || !!h.placingTrain}
+                        onClick={h.decoupleTrains}
+                      >
+                        <Unlink2 size={16} />
+                        Decouple trains
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <p className="coupling-intro">An E5 and an E6 can join nose to nose. Stop their coupling ends together on a clear, straight, level track.</p>
+                    <div className="coupling-actions">
+                      {h.couplingPartners.length > 1 ? (
+                        <label className="coupling-partner-select">
+                          Join with
+                          <select
+                            aria-label="Coupling partner"
+                            value={couplingPartner?.id ?? ""}
+                            disabled={!!h.placingTrain}
+                            onChange={(event) => setCouplingPartnerId(event.target.value)}
+                          >
+                            {h.couplingPartners.map((partner) => (
+                              <option key={partner.id} value={partner.id}>{partner.name}{partner.allowed ? "" : " · Not ready"}</option>
+                            ))}
+                          </select>
+                        </label>
+                      ) : couplingPartner ? (
+                        <span className="coupling-partner-name">Join with <strong>{couplingPartner.name}</strong></span>
+                      ) : null}
+                      <button
+                        className="button primary"
+                        aria-label="Couple trains"
+                        aria-describedby="coupling-guidance"
+                        disabled={!couplingPartner?.allowed || selectedIsMoving || !!h.placingTrain}
+                        onClick={() => couplingPartner && h.coupleTrains(couplingPartner.id)}
+                      >
+                        <Link2 size={16} />
+                        Couple trains
+                      </button>
+                    </div>
+                    <p className="coupling-guidance" id="coupling-guidance">{couplingPartner?.reason
+                      ?? (couplingPartner?.allowed
+                        ? "Ready to join! The noses open and the trains move together slowly."
+                        : couplingPartner
+                          ? "Stop both trains and bring their coupling ends together on a clear, straight, level track."
+                          : `Add an ${selectedTrain?.type === "e5" ? "E6" : "E5"} Shinkansen to give this train a partner.`)}</p>
+                  </>
+                )}
+              </section>
+            )}
           </section>
           <SwitchPanel h={h} />
           <div className="below-board">
@@ -717,6 +871,8 @@ export default function App() {
           <p className="catalog-summary">
             {KATO_CATALOG.length} catalog pieces to discover.
           </p>
+          {h.couplingBusy && <p className="coupling-build-note">Track building waits until the noses have finished connecting or separating.</p>}
+          <fieldset className="coupling-build-lock" disabled={h.couplingBusy} aria-label="Track building">
           <div className="catalog-search">
             <Search size={17} />
             <input
@@ -761,7 +917,7 @@ export default function App() {
                 <button
                   key={piece.kind}
                   className="piece-button"
-                  draggable
+                  draggable={!h.couplingBusy}
                   aria-label={`Add ${piece.name}`}
                   title={`${piece.name} · Kato ${piece.sku}\nClick to add, or drag into the scene.`}
                   onDragStart={(event) => {
@@ -1000,6 +1156,7 @@ export default function App() {
             </div>
           )}
           <RampBuilder h={h} />
+          </fieldset>
           <CheckSummary h={h} />
           <details className="inventory">
             <summary>
@@ -1032,7 +1189,7 @@ export default function App() {
             <strong>{(h.totalLength / 1000).toFixed(2)} m</strong>
           </div>
           <div className="sidebar-footer">
-            <button className="export-button" onClick={h.exportLayout}>
+            <button className="export-button" disabled={h.couplingBusy} onClick={h.exportLayout}>
               <ArrowDownToLine size={16} />
               Save a layout file
             </button>
@@ -1066,6 +1223,7 @@ export default function App() {
         accept=".json,application/json"
         style={{ display: "none" }}
         aria-label="Open railway file"
+        disabled={h.couplingBusy}
         onChange={(event) => void h.importLayout(event.target.files?.[0])}
       />
       {h.toast && (
@@ -1158,7 +1316,7 @@ export default function App() {
                     <button
                       className="button secondary"
                       type="button"
-                      disabled={!saveName.trim()}
+                      disabled={!saveName.trim() || h.couplingBusy}
                       onClick={() => saveDesign(true)}
                     >
                       <Plus size={16} />
@@ -1168,7 +1326,7 @@ export default function App() {
                   <button
                     className="button primary"
                     type="submit"
-                    disabled={!saveName.trim()}
+                    disabled={!saveName.trim() || h.couplingBusy}
                   >
                     <Save size={16} />
                     {h.activeSavedDesignId ? "Save changes" : "Save layout"}
@@ -1227,6 +1385,7 @@ export default function App() {
                               </button>
                               <button
                                 className="button delete-layout-button"
+                                disabled={h.couplingBusy}
                                 aria-label={`Confirm delete ${design.name}`}
                                 onClick={() => {
                                   if (h.deleteSavedDesign(design.id)) {
@@ -1242,6 +1401,7 @@ export default function App() {
                           <div className="saved-layout-actions">
                             <button
                               className="button secondary"
+                              disabled={h.couplingBusy}
                               aria-label={`Open saved layout ${design.name}`}
                               onClick={() => h.openSavedDesign(design.id)}
                             >
@@ -1250,6 +1410,7 @@ export default function App() {
                             </button>
                             <button
                               className="icon-button"
+                              disabled={h.couplingBusy}
                               aria-label={`Delete saved layout ${design.name}`}
                               onClick={() => setDeleteDesignId(design.id)}
                             >
@@ -1272,6 +1433,12 @@ export default function App() {
                 <div className="layout-options">
                   {(
                     [
+                      {
+                        kind: "coupling-demo",
+                        title: "Coupling station",
+                        text: "E5 + E6 · open the noses, join the trains, and try driving together.",
+                        icon: Link2,
+                      },
                       {
                         kind: "kato-plan02",
                         title: "KATO M1 + V1 + V2",
@@ -1307,6 +1474,7 @@ export default function App() {
                     <button
                       key={preset.kind}
                       className="layout-option"
+                      disabled={h.couplingBusy}
                       onClick={() => h.chooseLayout(preset.kind)}
                     >
                       <preset.icon size={35} strokeWidth={1.5} />
@@ -1321,6 +1489,7 @@ export default function App() {
                 <div className="modal-footer">
                   <button
                     className="button secondary"
+                    disabled={h.couplingBusy}
                     onClick={() => h.fileInput.current?.click()}
                   >
                     <FolderOpen size={16} />
@@ -1400,7 +1569,11 @@ export default function App() {
                     },
                     {
                       title: "Run your favourite trains together",
-                      text: "Add E235 Yamanote Line or E5, E6, and E7 Shinkansen trainsets, with 3 to 11 cars each. You can add the same model more than once. Select a train in Your trains or click it in the scene: the speed, Play, Reverse and horn controls affect only that train, and Train view follows it. The others keep their own journeys. Pause all stops every train. Change a train's model or car count while it is stopped. Shinkansen formations here can be shorter than the real train.",
+                      text: "Add E235 Yamanote Line or E5, E6, and E7 Shinkansen trainsets, with 3 to 11 cars each. You can add the same model more than once. Select a train in Your trains or click it in the scene: the speed, Play, Reverse and horn controls affect that train, and Train view follows it. Connected E5 and E6 partners share their driving controls. The others keep their own journeys. Pause all stops every train. Change a train's model or car count while it is stopped and uncoupled. Shinkansen formations here can be shorter than the real train.",
+                    },
+                    {
+                      title: "Join two Shinkansen nose to nose",
+                      text: "Open Coupling station in Layouts to practise with an E5 and an E6. Select either train, then choose Couple trains. Watch the nose covers open and the couplers connect. Pause or Continue the joining sequence whenever you like. Once connected, selecting either partner controls the whole formation. Stop on a clear, straight, level track and choose Decouple trains to separate them; their noses close after they move apart. Separate the trains before changing their models, car counts, or places.",
                     },
                     {
                       title: "Find a safe place and share the rails",

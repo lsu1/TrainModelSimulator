@@ -48,6 +48,7 @@ export function SwitchPanel({ h }: { h: Railway }) {
                     aria-label={`Switch ${track.switchNumber} straight`}
                     aria-pressed={track.switchState !== "branch"}
                     className={track.switchState !== "branch" ? "active" : ""}
+                    disabled={h.couplingBusy}
                     onClick={() => h.setSwitchState(track.id, "straight")}
                   >
                     Straight
@@ -56,6 +57,7 @@ export function SwitchPanel({ h }: { h: Railway }) {
                     aria-label={`Switch ${track.switchNumber} branch`}
                     aria-pressed={track.switchState === "branch"}
                     className={track.switchState === "branch" ? "active" : ""}
+                    disabled={h.couplingBusy}
                     onClick={() => h.setSwitchState(track.id, "branch")}
                   >
                     Branch

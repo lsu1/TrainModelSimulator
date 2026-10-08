@@ -8,7 +8,7 @@ import type { TrainType } from '../src/trains';
 // The CPU suite checks whole circuits. These real app journeys stage the exact
 // previously blocked grade to keep software-WebGL regression checks affordable.
 test.setTimeout(120_000);
-const STORAGE_KEY = 'little-railways-layout-v3';
+const STORAGE_KEY = 'little-railways-layout-v4';
 const scene = (page: Page) => page.getByRole('img', { name: '3D railway layout: rotate, zoom, select trains, and move Kato track pieces' });
 type Point = { x: number; y: number; z: number };
 type RenderedTrain = TrainSnapshot & {

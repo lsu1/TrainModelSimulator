@@ -2,6 +2,8 @@ import * as THREE from 'three'
 import { getTrainCarSpec } from './trains'
 import type { TrainType, TrainSpec } from './trains'
 import { addShinkansenRoof } from './shinkansenRoof'
+import { attachNoseCoupler, isNoseCouplingCar } from './noseCoupler'
+import type { NoseCouplingState } from './couplingTypes'
 
 type ShinkansenType = Exclude<TrainType, 'e235'>
 type BoxPart = { position: [number, number, number]; size: [number, number, number]; rotation?: THREE.Euler }
@@ -268,7 +270,7 @@ function addBogies(car: THREE.Group, spec: TrainSpec, wheel: THREE.Material, dar
 }
 
 /** Both outside cars retain a cab even in a shortened play formation. */
-export function createShinkansenCar(index: number, total: number, type: ShinkansenType): THREE.Group {
+export function createShinkansenCar(index: number, total: number, type: ShinkansenType, noseState?: NoseCouplingState): THREE.Group {
   const spec = getTrainCarSpec(type, index, total)
   const cab = index === 0 || index === total - 1, noseDirection = cab ? index === 0 ? 1 : -1 : 0
   const car = new THREE.Group(); car.name = `${spec.model}-Shinkansen-car-${index + 1}`
@@ -416,6 +418,9 @@ export function createShinkansenCar(index: number, total: number, type: Shinkans
       boxes(car, dark, [{ position: [end * (halfLength + .08), gangwayHeight, 0], size: [.18, spec.height - FLOOR - .7, spec.width - 1.3] }], `recessed-inter-car-diaphragm-${name}`)
       boxes(car, dark, [{ position: [end * (halfLength - .6), 3.45, 0], size: [1.8, 1.0, 2.0] }], `covered-coupler-mount-${name}`)
     }
+  }
+  if ((type === 'e5' || type === 'e6') && isNoseCouplingCar(type, index, total)) {
+    attachNoseCoupler(car, exterior, spec, type, (x, theta) => shinkansenSurface(spec, type, x, theta), noseState)
   }
   return car
 }

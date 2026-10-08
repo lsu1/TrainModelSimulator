@@ -8,7 +8,7 @@ import type { TrainSnapshot } from '../src/fleet';
 
 // One software-WebGL worker keeps the retained multi-train models affordable.
 test.setTimeout(120_000);
-const STORAGE_KEY = 'little-railways-layout-v3';
+const STORAGE_KEY = 'little-railways-layout-v4';
 const scene = (page: Page) => page.getByRole('img', { name: '3D railway layout: rotate, zoom, select trains, and move Kato track pieces' });
 const driving = (page: Page) => page.getByRole('combobox', { name: 'Train to drive', exact: true });
 
@@ -51,7 +51,7 @@ function layout(tracks: Track[], trains: TrainSnapshot[], selectedTrainId = trai
 
 async function seed(page: Page, value: object, key = STORAGE_KEY) {
   await page.addInitScript(({ value, key }) => {
-    if (!localStorage.getItem('little-railways-layout-v3')) localStorage.setItem(key, JSON.stringify(value));
+    if (!localStorage.getItem('little-railways-layout-v4')) localStorage.setItem(key, JSON.stringify(value));
   }, { value, key });
   await page.goto('/');
   await expect(scene(page)).toHaveAttribute('data-ready', 'true');
@@ -413,7 +413,7 @@ test('fleet identity, positions, directions and speeds survive named saves, file
   await expect(dialog).toHaveCount(0);
   await advance(page, 100);
   const snapshot = await saved(page);
-  expect(snapshot.version).toBe(3);
+  expect(snapshot.version).toBe(4);
   expect(snapshot.trains).toHaveLength(2);
   expect(snapshot.selectedTrainId).toBe('second');
   expect(snapshot.trains.every((value: Record<string, unknown>) => value.actualSpeed === undefined && value.running === undefined)).toBe(true);
@@ -448,7 +448,7 @@ test('version 2 layouts migrate to one independent E235 and a long fleet remains
   await seed(page, { version: 2, name: 'Our old railway', tracks: [tracks[8], ...tracks.filter(value => value !== tracks[8])], accessories: [], carCount: 11 }, 'little-railways-layout-v2');
   await advance(page, 100);
   const migrated = await saved(page);
-  expect(migrated.version).toBe(3);
+  expect(migrated.version).toBe(4);
   expect(migrated.trains).toHaveLength(1);
   expect(migrated.trains[0].type).toBe('e235');
   expect(migrated.trains[0].carCount).toBe(11);
