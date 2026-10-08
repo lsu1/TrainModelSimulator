@@ -5,6 +5,7 @@ import type { LayoutData, PlacedAccessory } from './layout'
 import { SNAP_ANGLE, SNAP_DISTANCE, SNAP_HEIGHT, attachTrack, connectedEndpoint, endpoints, pathsFor, pointAt, trackLength } from './track'
 import type { Endpoint, Track } from './track'
 import { getTrainSpec } from './trains'
+import { fleetTrainTypes } from './fleet'
 
 /** Application planning target; KATO publishes no E235 maximum grade here. */
 export const DEFAULT_RAMP_GRADE_PERCENT = 3
@@ -213,7 +214,9 @@ export function auditConnections(tracks: Track[]): LayoutIssue[] {
 export interface EngineeringAuditOptions { maxGradePercent?: number }
 
 /** Audit supported centerline facts while explicitly retaining unverified limits. */
-export function auditEngineering(layout: Pick<LayoutData, 'tracks' | 'accessories'> & Partial<Pick<LayoutData, 'trainType'>>, options: EngineeringAuditOptions = {}): LayoutIssue[] {
+type EngineeringLayout = Pick<LayoutData, 'tracks' | 'accessories'> & Partial<Pick<LayoutData, 'trainType' | 'trains'>>
+
+function auditSingleEngineering(layout: EngineeringLayout, options: EngineeringAuditOptions = {}): LayoutIssue[] {
   const issues = auditConnections(layout.tracks)
   const train = getTrainSpec(layout.trainType)
   const maxGrade = options.maxGradePercent ?? DEFAULT_RAMP_GRADE_PERCENT
@@ -286,4 +289,20 @@ export function auditEngineering(layout: Pick<LayoutData, 'tracks' | 'accessorie
       'Raising its scene elevation does not turn the product into an adjustable pier. Include the real riser or base in the physical plan.'))
   }
   return issues
+}
+
+/** Retain all sourced fleet limits while deduplicating common track/support issues. */
+export function auditEngineering(layout: EngineeringLayout, options: EngineeringAuditOptions = {}): LayoutIssue[] {
+  const types = fleetTrainTypes(layout)
+  if (types.length === 1) return auditSingleEngineering({ ...layout, trainType: types[0] }, options)
+  const combined = new Map<string, { issue: LayoutIssue; messages: Set<string>; details: string[] }>()
+  for (const type of types) for (const value of auditSingleEngineering({ ...layout, trainType: type }, options)) {
+    const existing = combined.get(value.id) ?? { issue: value, messages: new Set<string>(), details: [] }
+    existing.messages.add(value.message)
+    if (value.detail) existing.details.push(`${getTrainSpec(type).model}: ${value.detail}`)
+    combined.set(value.id, existing)
+  }
+  return [...combined.values()].map(({ issue, messages, details }) => ({
+    ...issue, message: [...messages].join(' · '), ...(details.length ? { detail: details.join('\n') } : {}),
+  }))
 }

@@ -16,6 +16,7 @@ import {
   snapTrack,
   trackLength,
   trackPath,
+  withTrackGraph,
   type Track,
   type TrainPosition,
 } from './track'
@@ -387,5 +388,115 @@ describe('turnouts and multiple rail routes', () => {
       expect(result.position.trackId).toBe(leads[end].id)
       expect(result.position.distance).toBeCloseTo(20)
     }
+  })
+})
+
+describe('cached track graph correctness', () => {
+  it('invalidates physical joins after in-place position, heading or elevation changes', () => {
+    const first = { ...straight }
+    const second = attachTrack('s124', 1, endpoints(first)[1], 'second')
+    const tracks = [first, second]
+    expect(connectedEndpoint(tracks, first.id, 1)?.track).toBe(second)
+    second.x += 1
+    expect(connectedEndpoint(tracks, first.id, 1)).toBeNull()
+    second.x -= 1
+    expect(connectedEndpoint(tracks, first.id, 1)?.track).toBe(second)
+    second.angle = Math.PI / 180
+    expect(advanceTrain(tracks, initial(first), 270).stopped).toBe(true)
+    second.angle = 0
+    second.elevation = .3
+    expect(connectedEndpoint(tracks, first.id, 1)).toBeNull()
+    second.elevation = .2
+    expect(connectedEndpoint(tracks, first.id, 1)?.track).toBe(second)
+    first.endElevation = 60
+    expect(connectedEndpoint(tracks, first.id, 1)).toBeNull()
+    expect(sampleBehind(tracks, { ...initial(first), distance: 124 }, 0)?.z).toBe(30)
+  })
+
+  it('invalidates a geometry cache when kind or bend changes on the same object', () => {
+    const curve: Track = { ...straight, kind: 'c282' }
+    const before = pointAt(curve, trackLength(curve))
+    pathsFor(curve); endpoints(curve)
+    curve.bend = -1
+    const mirrored = pointAt(curve, trackLength(curve))
+    expect(mirrored.y).toBeCloseTo(-before.y)
+    curve.kind = 's124'
+    expect(trackLength(curve)).toBe(124)
+    expect(endpoints(curve)[1].position).toEqual({ x: 124, y: 0, z: 0 })
+  })
+
+  it('detects push, same-length replacement, removal and ID edits on a reused array', () => {
+    const first = { ...straight }
+    const second = attachTrack('s124', 1, endpoints(first)[1], 'second')
+    const tracks = [first]
+    expect(connectedEndpoint(tracks, first.id, 1)).toBeNull()
+    tracks.push(second)
+    expect(advanceTrain(tracks, initial(first), 270).position.trackId).toBe('second')
+    const replacement = { ...second, id: 'new-second' }
+    tracks[1] = replacement
+    expect(connectedEndpoint(tracks, first.id, 1)?.track).toBe(replacement)
+    replacement.id = 'renamed'
+    expect(advanceTrain(tracks, { trackId: 'new-second', distance: 10, direction: 1, laps: 0 }, 10).stopped).toBe(true)
+    expect(connectedEndpoint(tracks, first.id, 1)?.track.id).toBe('renamed')
+    tracks.pop()
+    expect(advanceTrain(tracks, initial(first), 270).stopped).toBe(true)
+  })
+
+  it('retains nearest-port and original array-order tie breaking across grid cells', () => {
+    const first = { ...straight }
+    const lower = { ...straight, id: 'lower', x: 248, y: -.1 }
+    const upper = { ...straight, id: 'upper', x: 248, y: .1 }
+    const tracks = [first, upper, lower]
+    expect(connectedEndpoint(tracks, first.id, 1)?.track.id).toBe('upper')
+    tracks[1] = lower; tracks[2] = upper
+    expect(connectedEndpoint(tracks, first.id, 1)?.track.id).toBe('lower')
+    upper.y = .05
+    expect(connectedEndpoint(tracks, first.id, 1)?.track.id).toBe('upper')
+  })
+
+  it('uses live switch state after warming joins, including inactive trailing entry', () => {
+    const turnout = { ...piece('turnout'), switchState: 'straight' as 'straight' | 'branch' }
+    const leads = leadsFor(turnout), tracks = [turnout, ...leads]
+    const incoming = { ...initial(leads[0], -1), distance: 10 }
+    expect(connectedEndpoint(tracks, leads[0].id, 0)?.route).toBeUndefined()
+    expect(advanceTrain(tracks, incoming, 30).position.route).toBeUndefined()
+    turnout.switchState = 'branch'
+    expect(connectedEndpoint(tracks, leads[0].id, 0)?.route).toBe(1)
+    expect(advanceTrain(tracks, incoming, 30).position.route).toBe(1)
+    expect(advanceTrain(tracks, { ...initial(leads[1], -1), distance: 10 }, 30).stopped).toBe(true)
+    turnout.switchState = 'straight'
+    expect(advanceTrain(tracks, { ...initial(leads[2], -1), distance: 10 }, 30).stopped).toBe(true)
+  })
+
+  it('does not rescan unrelated geometry during repeated samples in one prepared solve', () => {
+    const first = { ...straight }
+    const next = attachTrack('s248', 1, endpoints(first)[1], 'next')
+    const remote = { ...straight, id: 'remote', x: 10000 }
+    let geometryReads = 0
+    Object.defineProperty(remote, 'x', { get: () => { geometryReads += 1; return 10000 }, configurable: true })
+    const tracks = [first, next, remote]
+    connectedEndpoint(tracks, first.id, 1)
+    let before = 0
+    withTrackGraph(tracks, () => {
+      before = geometryReads
+      for (let index = 0; index < 100; index++) {
+        expect(sampleBehind(tracks, { trackId: next.id, distance: 100, direction: 1, laps: 0 }, index * 2)).not.toBeNull()
+        withTrackGraph(tracks, () => advanceTrain(tracks, initial(first), 250))
+      }
+      expect(geometryReads).toBe(before)
+    })
+    connectedEndpoint(tracks, first.id, 1)
+    expect(geometryReads).toBeGreaterThan(before)
+  })
+
+  it('cleans up prepared contexts after exceptions and observes later mutations', () => {
+    const first = { ...straight }
+    const second = attachTrack('s124', 1, endpoints(first)[1], 'second')
+    const tracks = [first, second]
+    expect(() => withTrackGraph(tracks, () => { throw new Error('Interrupted solve') })).toThrow('Interrupted solve')
+    second.y = 20
+    expect(connectedEndpoint(tracks, first.id, 1)).toBeNull()
+    second.y = 0
+    expect(connectedEndpoint(tracks, first.id, 1)?.track.id).toBe('second')
   })
 })

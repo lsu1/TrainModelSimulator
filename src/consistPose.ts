@@ -1,4 +1,4 @@
-import { sampleBehind } from './track'
+import { sampleBehind, withTrackGraph } from './track'
 import type { Track, TrackPoint, TrainPosition } from './track'
 import { CAR_SPACING } from './trainModel'
 import { getCouplingLinkLength, getTrainCarSpec } from './trains'
@@ -130,6 +130,12 @@ export function solveConsistPoses(
   cabForward: boolean,
   carCount: number,
   trainType: TrainType = 'e235',
+): ConsistPoses {
+  return withTrackGraph(tracks, () => solveConsistPosesOnGraph(tracks, position, cabForward, carCount, trainType))
+}
+
+function solveConsistPosesOnGraph(
+  tracks: Track[], position: TrainPosition, cabForward: boolean, carCount: number, trainType: TrainType,
 ): ConsistPoses {
   const count = Number.isFinite(carCount) ? Math.max(0, Math.floor(carCount)) : 0
   const cars: (CarPose | null)[] = Array(count).fill(null)

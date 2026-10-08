@@ -12,6 +12,8 @@ import { getTrainCarSpec } from './trains';
 import type { TrainType } from './trains';
 import { solveConsistPoses } from './consistPose';
 import { TurnoutPoints, staticRailRanges } from './turnoutPoints';
+import type { TrainRuntime, TrainSnapshot } from './fleet';
+import { closestTrainPlacement, validateTrainPlacement } from './trainPlacement';
 
 interface Scene3DProps {
   tracks: Track[];
@@ -20,6 +22,13 @@ interface Scene3DProps {
   cabForward: boolean;
   carCount: number;
   trainType?: TrainType;
+  /** Omit to retain the original one-train rendering contract. */
+  fleet?: readonly TrainRuntime[];
+  selectedTrainId?: string | null;
+  onSelectTrain?: (id: string) => void;
+  placingTrain?: TrainSnapshot | null;
+  placementDirection?: 1 | -1;
+  onPlaceTrain?: (position: TrainPosition) => void;
   selectedId: string | null;
   activeAnchor: Endpoint | null;
   mode: 'orbit' | 'move';
@@ -650,7 +659,7 @@ export default function Scene3D(props: Scene3DProps) {
     renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFShadowMap;
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = .92;
-    renderer.domElement.setAttribute('aria-label', '3D railway layout: rotate, zoom, and move Kato track pieces');
+    renderer.domElement.setAttribute('aria-label', '3D railway layout: rotate, zoom, select trains, and move Kato track pieces');
     renderer.domElement.setAttribute('role', 'img'); renderer.domElement.tabIndex = 0;
     renderer.domElement.style.width = renderer.domElement.style.height = '100%';
     renderer.domElement.style.display = 'block'; renderer.domElement.style.touchAction = 'none';
@@ -714,9 +723,22 @@ export default function Scene3D(props: Scene3DProps) {
     const markerGeometry = new THREE.CylinderGeometry(7.8, 7.8, .8, 32);
     const plusMaterial = new THREE.MeshStandardMaterial({ color: '#f8faf0', roughness: .9 });
     const plusGeometry = new THREE.BoxGeometry(7.6, .6, 1.7);
-    let carCountBuilt = 0;
-    let trainTypeBuilt: TrainType | null = null;
-    let poseCache: { tracks: Track[]; position: TrainPosition; cabForward: boolean; count: number; trainType: TrainType; poses: ReturnType<typeof solveConsistPoses> } | null = null;
+    type PoseCache = { tracks: Track[]; position: TrainPosition; cabForward: boolean; poses: ReturnType<typeof solveConsistPoses> };
+    type RenderedTrain = {
+      id: string; type: TrainType; count: number; cars: THREE.Group; links: THREE.Group;
+      cache: PoseCache | null;
+      diagnostics: { cars: Record<string, unknown>[]; couplers: Record<string, unknown>[] };
+    };
+    const renderedFleet = new Map<string, RenderedTrain>();
+    let ghost: RenderedTrain | null = null;
+    let ghostPosition: TrainPosition | null = null;
+    let ghostTrackId: string | null = null;
+    let ghostPoint: { x: number; y: number; z: number } | null = null;
+    let ghostValidation = { allowed: false, reason: 'Point to a rail to place this train.' } as { allowed: boolean; reason?: string };
+    let ghostValidationKey = '';
+    let ghostValidationTracks: Track[] | null = null;
+    let publishedFleetSignature = '';
+    let selectedRenderedTrainId: string | null = null;
     const inverse = new THREE.Quaternion();
     const localPoint = new THREE.Vector3();
     const firstPin = new THREE.Vector3(), secondPin = new THREE.Vector3();
@@ -728,11 +750,11 @@ export default function Scene3D(props: Scene3DProps) {
     };
     // Diagnostics come from the rendered transforms and bellows vertices, so
     // browser checks detect detached meshes as well as incorrect solver poses.
-    const publishConsist = () => {
-      renderer.domElement.dataset.carPoses = JSON.stringify(trains.children.map((car, index) => {
+    const consistDiagnostics = (rendered: RenderedTrain) => ({
+      cars: rendered.cars.children.map((car, index) => {
         if (!car.visible) return { index, visible: false };
-        const spec = getTrainCarSpec(latest.current.trainType ?? 'e235', index, latest.current.carCount);
-        const cab = index === 0 || index === latest.current.carCount - 1;
+        const spec = getTrainCarSpec(rendered.type, index, rendered.count);
+        const cab = index === 0 || index === rendered.count - 1;
         const gangwayHeight = spec.type === 'e235' ? 14.7 : (spec.height + 4.8) / 2;
         return {
           index, visible: true, center: layoutPoint(car.position),
@@ -749,8 +771,8 @@ export default function Scene3D(props: Scene3DProps) {
           rearGangway: layoutPoint(carPoint(car, 'gangway-rear', new THREE.Vector3(-spec.length / 2, gangwayHeight, 0))!),
           quaternion: car.quaternion.toArray(),
         };
-      }));
-      renderer.domElement.dataset.couplers = JSON.stringify(connections.children.map((connection, index) => {
+      }),
+      couplers: rendered.links.children.map((connection, index) => {
         if (!connection.visible) return { index, visible: false };
         const drawbar = connection.getObjectByName('articulated-drawbar')!;
         drawbar.updateMatrix();
@@ -768,8 +790,93 @@ export default function Scene3D(props: Scene3DProps) {
           rear: layoutPoint(new THREE.Vector3(.5, 0, 0).applyMatrix4(drawbar.matrix)),
           frontGangway: ringCenter(0), rearGangway: ringCenter(vertices.count - 8),
         };
-      }));
+      }),
+    });
+    const disposeRenderedTrain = (rendered: RenderedTrain) => {
+      // A car/connection owns its geometry and materials, including its marker.
+      for (const car of rendered.cars.children) disposeTrainModel(car);
+      for (const link of rendered.links.children) disposeTrainModel(link);
+      rendered.cars.removeFromParent(); rendered.links.removeFromParent();
     };
+    const buildRenderedTrain = (train: TrainSnapshot, preview = false): RenderedTrain => {
+      const cars = new THREE.Group(), links = new THREE.Group();
+      cars.name = `trainset-${train.id}`; links.name = `connections-${train.id}`;
+      cars.userData.trainId = links.userData.trainId = train.id;
+      cars.userData.preview = links.userData.preview = preview;
+      for (let i = 0; i < train.carCount; i++) {
+        const car = createTrainCar(i, train.carCount, train.type);
+        car.traverse(object => { object.userData.trainId = train.id; object.userData.carIndex = i; });
+        if (!preview) {
+          const spec = getTrainCarSpec(train.type, i, train.carCount);
+          const outline = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints([
+            new THREE.Vector3(-spec.length / 2 - 2, 1, -spec.width / 2 - 3),
+            new THREE.Vector3(spec.length / 2 + 2, 1, -spec.width / 2 - 3),
+            new THREE.Vector3(spec.length / 2 + 2, 1, spec.width / 2 + 3),
+            new THREE.Vector3(-spec.length / 2 - 2, 1, spec.width / 2 + 3),
+          ]), new THREE.LineBasicMaterial({ color: '#e3ae4f', transparent: true, opacity: .85 }));
+          outline.name = 'selected-train-outline'; outline.visible = false;
+          outline.userData.trainId = train.id; outline.userData.carIndex = i;
+          car.add(outline);
+        }
+        cars.add(car);
+        if (i > 0) {
+          const connection = createTrainConnection(train.type);
+          connection.traverse(object => { object.userData.trainId = train.id; object.userData.connectionIndex = i - 1; });
+          links.add(connection);
+        }
+      }
+      if (preview) {
+        world.add(cars, links);
+        for (const root of [cars, links]) root.traverse(object => { if (object instanceof THREE.Mesh) { object.castShadow = false; object.receiveShadow = false; } });
+      } else { trains.add(cars); connections.add(links); }
+      return { id: train.id, type: train.type, count: train.carCount, cars, links, cache: null, diagnostics: { cars: [], couplers: [] } };
+    };
+    const updateRenderedTrain = (rendered: RenderedTrain, train: TrainSnapshot): boolean => {
+      if (!train.position) {
+        const changed = rendered.cars.visible || rendered.links.visible || !!rendered.cache;
+        rendered.cars.visible = rendered.links.visible = false; rendered.cache = null;
+        if (changed) rendered.diagnostics = { cars: [], couplers: [] };
+        return changed;
+      }
+      rendered.cars.visible = rendered.links.visible = true;
+      const cache = rendered.cache;
+      if (cache && cache.tracks === latest.current.tracks && cache.position === train.position && cache.cabForward === train.cabForward) return false;
+      const poses = solveConsistPoses(latest.current.tracks, train.position, train.cabForward, rendered.count, rendered.type);
+      rendered.cache = { tracks: latest.current.tracks, position: train.position, cabForward: train.cabForward, poses };
+      for (let i = 0; i < rendered.cars.children.length; i++) {
+        const pose = poses.cars[i], car = rendered.cars.children[i];
+        car.visible = pose !== null;
+        if (!pose) continue;
+        const p = pose.center;
+        car.position.set(p.x, p.z + RAIL_TOP, p.y); setTangent(car, p.angle, p.slope);
+        inverse.copy(car.quaternion).invert();
+        for (const [name, point] of [['bogie-front', pose.frontBogie], ['bogie-rear', pose.rearBogie]] as const) {
+          const bogie = car.getObjectByName(name)!;
+          localPoint.set(point.x - p.x, point.z - p.z, point.y - p.y).applyQuaternion(inverse);
+          bogie.position.copy(localPoint); setTangent(bogie, point.angle, point.slope);
+          bogie.quaternion.premultiply(inverse);
+        }
+      }
+      for (const connection of rendered.links.children) connection.visible = false;
+      for (const coupling of poses.couplings) {
+        const connection = rendered.links.children[coupling.frontCarIndex] as THREE.Group;
+        const firstCar = rendered.cars.children[coupling.frontCarIndex], secondCar = rendered.cars.children[coupling.rearCarIndex];
+        const firstMount = carPoint(firstCar, 'gangway-rear'), secondMount = carPoint(secondCar, 'gangway-front');
+        if (!firstMount || !secondMount) continue;
+        firstPin.set(coupling.frontPin.x, coupling.frontPin.z + RAIL_TOP, coupling.frontPin.y);
+        secondPin.set(coupling.rearPin.x, coupling.rearPin.z + RAIL_TOP, coupling.rearPin.y);
+        firstGangway.copy(firstMount); secondGangway.copy(secondMount);
+        connection.visible = true;
+        updateE235Connection(connection, firstPin, secondPin, firstGangway, secondGangway, firstCar.quaternion, secondCar.quaternion);
+      }
+      rendered.diagnostics = consistDiagnostics(rendered);
+      return true;
+    };
+    const sceneFleet = (): readonly TrainRuntime[] => latest.current.fleet ?? [{
+      id: 'legacy-train', name: 'Train', type: latest.current.trainType ?? 'e235', carCount: latest.current.carCount,
+      position: latest.current.trainPosition, cabForward: latest.current.cabForward, requestedSpeed: 65,
+      actualSpeed: 0, running: false, status: 'stopped', lapProgress: 0,
+    }];
 
     const getPlanePoint = (event: { clientX: number; clientY: number }, height: number) => {
       const rect = renderer.domElement.getBoundingClientRect();
@@ -778,20 +885,93 @@ export default function Scene3D(props: Scene3DProps) {
       const hit = raycaster.ray.intersectPlane(new THREE.Plane(UP, -height * SCALE), new THREE.Vector3());
       return hit?.divideScalar(SCALE) ?? null;
     };
-    const getPicked = (event: PointerEvent): { group: THREE.Object3D; id?: string; anchor?: Anchor } | null => {
+    const getPicked = (event: PointerEvent): { group: THREE.Object3D; id?: string; trainId?: string; anchor?: Anchor } | null => {
       const rect = renderer.domElement.getBoundingClientRect();
       pointer.set((event.clientX - rect.left) / rect.width * 2 - 1, -(event.clientY - rect.top) / rect.height * 2 + 1);
       raycaster.setFromCamera(pointer, camera);
-      const hits = raycaster.intersectObjects([anchors, pieces], true);
+      const hits = raycaster.intersectObjects([anchors, trains, pieces], true);
       for (const hit of hits) {
+        let visible = true;
+        for (let parent: THREE.Object3D | null = hit.object; parent; parent = parent.parent) if (!parent.visible) visible = false;
+        if (!visible) continue;
         let object: THREE.Object3D | null = hit.object;
         while (object && object !== world) {
           if (object.userData.anchor) return { group: object, anchor: object.userData.anchor as Anchor };
+          if (object.userData.trainId) return { group: object, trainId: object.userData.trainId as string };
           if (object.userData.pieceId) return { group: object, id: object.userData.pieceId as string };
           object = object.parent;
         }
       }
       return null;
+    };
+    const pointPlacementAt = (event: { clientX: number; clientY: number }) => {
+      const rect = renderer.domElement.getBoundingClientRect();
+      pointer.set((event.clientX - rect.left) / rect.width * 2 - 1, -(event.clientY - rect.top) / rect.height * 2 + 1);
+      raycaster.setFromCamera(pointer, camera);
+      ghostTrackId = null; ghostPoint = null;
+      for (const hit of raycaster.intersectObject(pieces, true)) {
+        let object: THREE.Object3D | null = hit.object;
+        while (object && object !== world && !object.userData.pieceId) object = object.parent;
+        const id = object?.userData.pieceId as string | undefined;
+        if (!id || !latest.current.tracks.some(track => track.id === id)) continue;
+        ghostTrackId = id;
+        ghostPoint = { x: hit.point.x / SCALE, y: hit.point.z / SCALE, z: hit.point.y / SCALE };
+        break;
+      }
+    };
+    const updatePlacementGhost = () => {
+      const candidate = latest.current.placingTrain;
+      if (!candidate) {
+        if (ghost) { disposeRenderedTrain(ghost); ghost = null; }
+        ghostTrackId = null; ghostPoint = null; ghostPosition = null;
+        ghostValidationKey = ''; ghostValidationTracks = null;
+        if (renderer.domElement.dataset.trainPlacement !== 'null') renderer.domElement.dataset.trainPlacement = 'null';
+        return;
+      }
+      if (!ghost || ghost.id !== candidate.id || ghost.type !== candidate.type || ghost.count !== candidate.carCount) {
+        if (ghost) disposeRenderedTrain(ghost);
+        ghost = buildRenderedTrain(candidate, true);
+      }
+      const nextPosition = ghostTrackId && ghostPoint
+        ? closestTrainPlacement(latest.current.tracks, ghostTrackId, ghostPoint, latest.current.placementDirection ?? 1)
+        : null;
+      if (JSON.stringify(nextPosition) !== JSON.stringify(ghostPosition)) ghostPosition = nextPosition;
+      const preview = { ...candidate, position: ghostPosition, cabForward: true };
+      const otherTrains = sceneFleet().filter(train => train.id !== candidate.id);
+      const validationKey = JSON.stringify([
+        candidate.id, candidate.type, candidate.carCount, ghostPosition,
+        otherTrains.map(train => [train.id, train.type, train.carCount, train.cabForward, train.position]),
+      ]);
+      const validationChanged = validationKey !== ghostValidationKey || ghostValidationTracks !== latest.current.tracks;
+      if (validationChanged) {
+        ghostValidation = ghostPosition
+          ? validateTrainPlacement(latest.current.tracks, preview, otherTrains)
+          : { allowed: false, reason: 'Point to a rail to place this train.' };
+        ghostValidationKey = validationKey; ghostValidationTracks = latest.current.tracks;
+      }
+      const poseChanged = updateRenderedTrain(ghost, preview);
+      if (ghost.cars.userData.allowed !== ghostValidation.allowed) {
+        ghost.cars.userData.allowed = ghostValidation.allowed;
+        const tint = new THREE.Color(ghostValidation.allowed ? '#40a66a' : '#dd4e45');
+        const materials = new Set<THREE.Material>();
+        for (const root of [ghost.cars, ghost.links]) root.traverse(object => {
+          if (object instanceof THREE.Mesh || object instanceof THREE.Line) {
+            for (const material of Array.isArray(object.material) ? object.material : [object.material]) materials.add(material);
+          }
+        });
+        for (const material of materials) {
+          material.transparent = true; material.opacity = .34; material.depthWrite = false;
+          if ('emissive' in material) {
+            (material as THREE.MeshStandardMaterial).emissive.copy(tint);
+            (material as THREE.MeshStandardMaterial).emissiveIntensity = .65;
+          } else if ('color' in material) (material as THREE.LineBasicMaterial).color.copy(tint);
+          material.needsUpdate = true;
+        }
+      }
+      if (validationChanged || poseChanged) renderer.domElement.dataset.trainPlacement = JSON.stringify({
+          trainId: candidate.id, position: ghostPosition, ...ghostValidation,
+          cars: ghost.diagnostics.cars,
+        });
     };
     const publishPickPoints = () => {
       camera.updateMatrixWorld(); world.updateMatrixWorld(true);
@@ -818,6 +998,14 @@ export default function Scene3D(props: Scene3DProps) {
         turnoutPoints[piece.userData.pieceId] = { x: Math.round((projected.x + 1) * width / 2), y: Math.round((1 - projected.y) * height / 2) };
       }
       renderer.domElement.dataset.turnoutPickPoints = JSON.stringify(turnoutPoints);
+      const trainPoints: Record<string, { x: number; y: number }> = {};
+      for (const [id, rendered] of renderedFleet) {
+        const car = rendered.cars.children.find(car => rendered.cars.visible && car.visible);
+        if (!car) continue;
+        const projected = car.position.clone().add(new THREE.Vector3(0, 15, 0)).multiplyScalar(SCALE).project(camera);
+        trainPoints[id] = { x: Math.round((projected.x + 1) * width / 2), y: Math.round((1 - projected.y) * height / 2) };
+      }
+      renderer.domElement.dataset.trainPickPoints = JSON.stringify(trainPoints);
       pickDirty = false;
     };
     const sizeSwitchBadges = () => {
@@ -941,6 +1129,10 @@ export default function Scene3D(props: Scene3DProps) {
     const onDown = (event: PointerEvent) => {
       if (event.button !== 0) return;
       pointerDown = { x: event.clientX, y: event.clientY };
+      if (latest.current.placingTrain) {
+        pointPlacementAt(event); updatePlacementGhost();
+        return;
+      }
       const picked = getPicked(event);
       if (latest.current.mode !== 'move' || !picked?.id) return;
       const track = latest.current.tracks.find(piece => piece.id === picked.id);
@@ -954,6 +1146,11 @@ export default function Scene3D(props: Scene3DProps) {
       event.preventDefault();
     };
     const onMove = (event: PointerEvent) => {
+      if (latest.current.placingTrain) {
+        pointPlacementAt(event); updatePlacementGhost();
+        renderer.domElement.style.cursor = 'crosshair';
+        return;
+      }
       if (drag) {
         const point = getPlanePoint(event, drag.height); if (!point) return;
         if (Math.hypot(event.clientX - drag.initial.x, event.clientY - drag.initial.y) > 4) drag.moved = true;
@@ -963,7 +1160,7 @@ export default function Scene3D(props: Scene3DProps) {
         return;
       }
       const picked = getPicked(event);
-      renderer.domElement.style.cursor = picked?.anchor ? 'pointer' : latest.current.mode === 'move' && picked?.id ? 'grab' : 'default';
+      renderer.domElement.style.cursor = picked?.anchor || picked?.trainId ? 'pointer' : latest.current.mode === 'move' && picked?.id ? 'grab' : 'default';
     };
     const onUp = (event: PointerEvent) => {
       if (event.button !== 0) return;
@@ -982,8 +1179,15 @@ export default function Scene3D(props: Scene3DProps) {
         pickDirty = true; pointerDown = null; return;
       }
       if (pointerDown && Math.hypot(event.clientX - pointerDown.x, event.clientY - pointerDown.y) < 5) {
+        if (latest.current.placingTrain) {
+          pointPlacementAt(event); updatePlacementGhost();
+          if (ghostPosition) latest.current.onPlaceTrain?.(ghostPosition);
+          pointerDown = null;
+          return;
+        }
         const picked = getPicked(event);
-        if (picked?.anchor) latest.current.onAnchor(picked.anchor);
+        if (picked?.trainId) latest.current.onSelectTrain?.(picked.trainId);
+        else if (picked?.anchor) latest.current.onAnchor(picked.anchor);
         else latest.current.onSelect(picked?.id ?? null);
       }
       pointerDown = null;
@@ -1034,65 +1238,75 @@ export default function Scene3D(props: Scene3DProps) {
       }
       const cameraPresetChanged = current.cameraPreset !== previousCameraPreset;
       previousCameraPreset = current.cameraPreset;
-      const trainType = current.trainType ?? 'e235';
-      if (carCountBuilt !== current.carCount || trainTypeBuilt !== trainType) {
-        for (const car of [...trains.children]) disposeTrainModel(car);
-        for (const connection of [...connections.children]) disposeTrainModel(connection);
-        trains.clear(); carCountBuilt = current.carCount; trainTypeBuilt = trainType;
-        connections.clear();
-        for (let i = 0; i < current.carCount; i++) {
-          trains.add(createTrainCar(i, current.carCount, trainType));
-          if (i > 0) connections.add(createTrainConnection(trainType));
-        }
-        renderer.domElement.dataset.carCount = String(current.carCount);
-        renderer.domElement.dataset.trainType = trainType;
+      const fleet = sceneFleet();
+      const ids = new Set(fleet.map(train => train.id));
+      let diagnosticsChanged = false;
+      for (const [id, rendered] of renderedFleet) if (!ids.has(id)) {
+        disposeRenderedTrain(rendered); renderedFleet.delete(id); diagnosticsChanged = true;
       }
-      if (!poseCache || poseCache.tracks !== current.tracks || poseCache.position !== current.trainPosition || poseCache.cabForward !== current.cabForward || poseCache.count !== current.carCount || poseCache.trainType !== trainType) {
-        const poses = solveConsistPoses(current.tracks, current.trainPosition, current.cabForward, current.carCount, trainType);
-        poseCache = { tracks: current.tracks, position: current.trainPosition, cabForward: current.cabForward, count: current.carCount, trainType, poses };
-        for (let i = 0; i < trains.children.length; i++) {
-          const pose = poses.cars[i], car = trains.children[i];
-          car.visible = pose !== null;
-          if (!pose) continue;
-          const p = pose.center;
-          car.position.set(p.x, p.z + RAIL_TOP, p.y); setTangent(car, p.angle, p.slope);
-          inverse.copy(car.quaternion).invert();
-          for (const [name, point] of [['bogie-front', pose.frontBogie], ['bogie-rear', pose.rearBogie]] as const) {
-            const bogie = car.getObjectByName(name)!;
-            localPoint.set(point.x - p.x, point.z - p.z, point.y - p.y).applyQuaternion(inverse);
-            bogie.position.copy(localPoint); setTangent(bogie, point.angle, point.slope);
-            bogie.quaternion.premultiply(inverse);
+      const selectedTrain = fleet.find(train => train.id === current.selectedTrainId) ?? fleet[0];
+      const selectedId = selectedTrain?.id ?? null;
+      const selectionChanged = selectedRenderedTrainId !== selectedId;
+      selectedRenderedTrainId = selectedId;
+      for (const train of fleet) {
+        let rendered = renderedFleet.get(train.id);
+        if (!rendered || rendered.type !== train.type || rendered.count !== train.carCount) {
+          if (rendered) disposeRenderedTrain(rendered);
+          rendered = buildRenderedTrain(train); renderedFleet.set(train.id, rendered);
+          diagnosticsChanged = true;
+        }
+        diagnosticsChanged = updateRenderedTrain(rendered, train) || diagnosticsChanged;
+        const highlight = current.fleet !== undefined && train.id === selectedId;
+        if (rendered.cars.userData.selected !== highlight) {
+          rendered.cars.userData.selected = highlight;
+          for (const car of rendered.cars.children) {
+            const outline = car.getObjectByName('selected-train-outline');
+            if (outline) outline.visible = highlight;
           }
         }
-        for (const connection of connections.children) connection.visible = false;
-        for (const coupling of poses.couplings) {
-          const connection = connections.children[coupling.frontCarIndex] as THREE.Group;
-          const firstCar = trains.children[coupling.frontCarIndex], secondCar = trains.children[coupling.rearCarIndex];
-          const firstMount = carPoint(firstCar, 'gangway-rear'), secondMount = carPoint(secondCar, 'gangway-front');
-          if (!firstMount || !secondMount) continue;
-          firstPin.set(coupling.frontPin.x, coupling.frontPin.z + RAIL_TOP, coupling.frontPin.y);
-          secondPin.set(coupling.rearPin.x, coupling.rearPin.z + RAIL_TOP, coupling.rearPin.y);
-          firstGangway.copy(firstMount); secondGangway.copy(secondMount);
-          connection.visible = true;
-          updateE235Connection(connection, firstPin, secondPin, firstGangway, secondGangway, firstCar.quaternion, secondCar.quaternion);
-        }
-        publishConsist();
       }
-      const leadPoint = poseCache.poses.cars[0]?.center ?? null;
+      const signature = JSON.stringify(fleet.map(train => [train.id, train.name, train.status, train.running, train.actualSpeed, train.requestedSpeed, train.stopReason]));
+      if (diagnosticsChanged || selectionChanged || signature !== publishedFleetSignature) {
+        renderer.domElement.dataset.fleetPoses = JSON.stringify(fleet.map(train => ({
+          id: train.id, name: train.name, type: train.type, status: train.status,
+          running: train.running, actualSpeed: train.actualSpeed, requestedSpeed: train.requestedSpeed,
+          stopReason: train.stopReason, position: train.position, cabForward: train.cabForward, carCount: train.carCount,
+          ...renderedFleet.get(train.id)!.diagnostics,
+        })));
+        renderer.domElement.dataset.fleetCount = String(fleet.length);
+        renderer.domElement.dataset.selectedTrainId = selectedId ?? '';
+        renderer.domElement.dataset.carCount = String(selectedTrain?.carCount ?? 0);
+        renderer.domElement.dataset.trainType = selectedTrain?.type ?? current.trainType ?? 'e235';
+        const selected = selectedId ? renderedFleet.get(selectedId) : null;
+        renderer.domElement.dataset.carPoses = JSON.stringify(selected?.diagnostics.cars ?? []);
+        renderer.domElement.dataset.couplers = JSON.stringify(selected?.diagnostics.couplers ?? []);
+        publishedFleetSignature = signature;
+        pickDirty = true;
+      }
+      updatePlacementGhost();
+      const selectedRendered = selectedId ? renderedFleet.get(selectedId) : null;
+      const leadPoint = selectedRendered?.cache?.poses.cars[0]?.center ?? null;
       if (leadPoint) {
         renderer.domElement.dataset.trainX = leadPoint.x.toFixed(2);
         renderer.domElement.dataset.trainY = leadPoint.y.toFixed(2);
         renderer.domElement.dataset.trainHeight = leadPoint.z.toFixed(2);
-        if (current.cameraPreset === 'ride') {
+        if (current.cameraPreset === 'ride' && !current.placingTrain) {
           const point = leadPoint, sine = Math.sin(point.angle), cosine = Math.cos(point.angle);
           const eye = new THREE.Vector3((point.x + cosine * 150 - sine * 165) * SCALE, (point.z + 65) * SCALE, (point.y + sine * 150 + cosine * 165) * SCALE);
           const target = new THREE.Vector3((point.x - cosine * 30) * SCALE, (point.z + 17) * SCALE, (point.y - sine * 30) * SCALE);
-          if (cameraPresetChanged) { camera.position.copy(eye); controls.target.copy(target); }
+          if (cameraPresetChanged || selectionChanged) { camera.position.copy(eye); controls.target.copy(target); }
           else { camera.position.lerp(eye, .16); controls.target.lerp(target, .2); }
           camera.lookAt(controls.target); pickDirty = true;
         }
       }
-      if (!drag && current.cameraPreset !== 'ride') controls.update();
+      else {
+        delete renderer.domElement.dataset.trainX; delete renderer.domElement.dataset.trainY;
+        delete renderer.domElement.dataset.trainHeight;
+      }
+      if (!drag) {
+        controls.enabled = current.cameraPreset !== 'ride' || !!current.placingTrain || !leadPoint;
+        if (controls.enabled) controls.update();
+      }
       const now = performance.now();
       if (pickDirty && now - lastPickTime > 160) { publishPickPoints(); lastPickTime = now; }
       renderer.render(scene, camera);
@@ -1108,8 +1322,8 @@ export default function Scene3D(props: Scene3DProps) {
       element.removeEventListener('dragover', onDragOver); element.removeEventListener('drop', onDrop);
       controls.dispose();
       for (const piece of pieces.children) disposePiece(piece, library);
-      for (const car of trains.children) disposeTrainModel(car);
-      for (const connection of connections.children) disposeTrainModel(connection);
+      for (const rendered of renderedFleet.values()) disposeRenderedTrain(rendered);
+      if (ghost) disposeRenderedTrain(ghost);
       if (runtime.current?.selected) { scene.remove(runtime.current.selected); runtime.current.selected.geometry.dispose(); }
       for (const outline of runtime.current?.issueOutlines ?? []) { outline.removeFromParent(); outline.geometry.dispose(); }
       ground.geometry.dispose(); grid.geometry.dispose(); (grid.material as THREE.Material).dispose();

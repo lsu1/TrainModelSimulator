@@ -5,6 +5,7 @@ import { connectedEndpoint, endpoints, pathsFor } from './track'
 import type { Track, TrackPoint, TrackRoute } from './track'
 import { getTrainSpec } from './trains'
 import type { TrainType } from './trains'
+import { fleetTrainTypes } from './fleet'
 
 export interface LayoutIssue {
   id: string
@@ -32,7 +33,7 @@ export const CLEARANCE_ASSUMPTIONS = {
 } as const
 
 const ITEM_BY_KIND = new Map(KATO_CATALOG.map(item => [item.kind, item]))
-type ClearanceLayout = Pick<LayoutData, 'tracks' | 'accessories'> & Partial<Pick<LayoutData, 'trainType'>>
+type ClearanceLayout = Pick<LayoutData, 'tracks' | 'accessories'> & Partial<Pick<LayoutData, 'trainType' | 'trains'>>
 /** Keep the conservative vertical allowance while following each longer cab. */
 export function getClearanceAssumptions(trainType: TrainType = 'e235') {
   const train = getTrainSpec(trainType)
@@ -401,7 +402,7 @@ function sceneryTrackIssue(scenery: SceneryGeometry, geometry: TrackGeometry, tr
  * A broad-phase bounding-box test precedes sampled route/rotated-solid checks.
  * Routes within a manufactured double track, turnout or crossing are intentional.
  */
-export function auditClearances(layout: ClearanceLayout): LayoutIssue[] {
+function auditSingleClearances(layout: ClearanceLayout): LayoutIssue[] {
   const profile = getClearanceAssumptions(layout.trainType), train = getTrainSpec(layout.trainType)
   const tracks = layout.tracks.map(track => trackGeometry(track, profile)), scenery = layout.accessories.map(accessoryGeometry)
   const turnoutExits = connectedTurnoutExits(layout.tracks)
@@ -419,6 +420,22 @@ export function auditClearances(layout: ClearanceLayout): LayoutIssue[] {
   return issues
 }
 
+/** Check every distinct fleet profile; selection cannot make an obstruction disappear. */
+export function auditClearances(layout: ClearanceLayout): LayoutIssue[] {
+  const types = fleetTrainTypes(layout)
+  if (types.length === 1) return auditSingleClearances({ ...layout, trainType: types[0] })
+  const combined = new Map<string, { issue: LayoutIssue; messages: Set<string>; details: string[] }>()
+  for (const type of types) for (const value of auditSingleClearances({ ...layout, trainType: type })) {
+    const existing = combined.get(value.id) ?? { issue: value, messages: new Set<string>(), details: [] }
+    existing.messages.add(value.message)
+    if (value.detail) existing.details.push(`${getTrainSpec(type).model}: ${value.detail}`)
+    combined.set(value.id, existing)
+  }
+  return [...combined.values()].map(({ issue, messages, details }) => ({
+    ...issue, message: [...messages].join(' · '), ...(details.length ? { detail: details.join('\n') } : {}),
+  }))
+}
+
 /** Checks a new or edited piece against actual saved track and scenery placements.
  * Returns only errors involving this candidate, so an old unrelated problem does
  * not prevent moving another piece. The caller may compare old/new issue IDs to
@@ -432,6 +449,7 @@ export function checkPlacement(
   const accessory = ITEM_BY_KIND.get(candidate.kind)?.category === 'accessory'
   const proposed = {
     ...(layout.trainType === undefined ? {} : { trainType: layout.trainType }),
+    ...(layout.trains === undefined ? {} : { trains: layout.trains }),
     tracks: [...layout.tracks.filter(piece => piece.id !== replacingId), ...(!accessory ? [candidate as Track] : [])],
     accessories: [...layout.accessories.filter(piece => piece.id !== replacingId), ...(accessory ? [candidate as PlacedAccessory] : [])],
   }

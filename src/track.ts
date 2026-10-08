@@ -41,7 +41,88 @@ export const SNAP_DISTANCE = 0.25
 export const SNAP_HEIGHT = 0.25
 export const SNAP_ANGLE = 0.25 * Math.PI / 180
 // Train sampling and endpoint lookup share immutable geometry between frames.
-const GEOMETRY_CACHE = new WeakMap<Track, { key: string; paths: TrackRoute[]; endpoints?: Endpoint[] }>()
+interface GeometryState {
+  kind: TrackKind; x: number; y: number; angle: number; bend: 1 | -1; elevation: number; endElevation: number
+}
+const GEOMETRY_CACHE = new WeakMap<Track, { state: GeometryState; paths: TrackRoute[]; endpoints?: Endpoint[] }>()
+function geometryState(track: Track): GeometryState {
+  return { kind: track.kind, x: track.x, y: track.y, angle: track.angle, bend: track.bend,
+    elevation: track.elevation ?? 0, endElevation: track.endElevation ?? track.elevation ?? 0 }
+}
+function sameGeometry(state: GeometryState, track: Track): boolean {
+  return state.kind === track.kind && state.x === track.x && state.y === track.y && state.angle === track.angle
+    && state.bend === track.bend && state.elevation === (track.elevation ?? 0)
+    && state.endElevation === (track.endElevation ?? track.elevation ?? 0)
+}
+interface PhysicalConnection { track: Track; end: number }
+interface TrackGraph {
+  entries: { track: Track; id: string; state: GeometryState }[]
+  byId: Map<string, Track>
+  links: Map<Track, (PhysicalConnection | null)[]>
+}
+const GRAPH_CACHE = new WeakMap<Track[], TrackGraph>()
+const ACTIVE_GRAPHS = new WeakMap<Track[], { graph: TrackGraph; depth: number }>()
+
+/** A synchronous solve/tick sees one immutable track snapshot. Validate mutable
+ * caller inputs once here, rather than rescanning the layout for every bogie.
+ * Ordinary API calls outside a batch still detect array/object mutations.
+ */
+export function withTrackGraph<T>(tracks: Track[], operation: () => T): T {
+  const active = ACTIVE_GRAPHS.get(tracks)
+  if (active) { active.depth += 1; try { return operation() } finally { active.depth -= 1 } }
+  ACTIVE_GRAPHS.set(tracks, { graph: prepareTrackGraph(tracks), depth: 1 })
+  try { return operation() } finally { ACTIVE_GRAPHS.delete(tracks) }
+}
+
+/** Build physical joins independently of selected turnout routes. Switch state
+ * remains live in routeEntering, including blocked trailing entry.
+ */
+function prepareTrackGraph(tracks: Track[]): TrackGraph {
+  const cached = GRAPH_CACHE.get(tracks)
+  if (cached && cached.entries.length === tracks.length && cached.entries.every((entry, index) =>
+    entry.track === tracks[index] && entry.id === tracks[index].id && sameGeometry(entry.state, tracks[index]))) return cached
+  const byId = new Map<string, Track>()
+  const links = new Map<Track, (PhysicalConnection | null)[]>()
+  type Port = { track: Track; end: number; endpoint: Endpoint; order: number }
+  const ports: Port[] = []
+  const buckets = new Map<string, Port[]>()
+  const cell = (coordinate: number) => Math.floor(coordinate / SNAP_DISTANCE)
+  for (const track of tracks) {
+    if (!byId.has(track.id)) byId.set(track.id, track)
+    links.set(track, [])
+    for (const [end, endpoint] of endpoints(track).entries()) {
+      const port = { track, end, endpoint, order: ports.length }
+      ports.push(port)
+      const key = `${cell(endpoint.position.x)}:${cell(endpoint.position.y)}`
+      const bucket = buckets.get(key) ?? []
+      bucket.push(port); buckets.set(key, bucket)
+    }
+  }
+  for (const source of ports) {
+    const anchor = source.endpoint, x = cell(anchor.position.x), y = cell(anchor.position.y)
+    let closest: Port | undefined
+    let closestDistance = SNAP_DISTANCE + EPSILON
+    for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
+      for (const candidate of buckets.get(`${x + dx}:${y + dy}`) ?? []) {
+        if (candidate.track.id === source.track.id) continue
+        const endpoint = candidate.endpoint
+        const distance = Math.hypot(endpoint.position.x - anchor.position.x, endpoint.position.y - anchor.position.y)
+        if (distance <= SNAP_DISTANCE && (distance < closestDistance || distance === closestDistance && candidate.order < (closest?.order ?? Infinity))
+          && Math.abs((endpoint.position.z ?? 0) - (anchor.position.z ?? 0)) <= SNAP_HEIGHT
+          && Math.abs(angleDifference(endpoint.angle, anchor.angle + Math.PI)) <= SNAP_ANGLE) {
+          closest = candidate; closestDistance = distance
+        }
+      }
+    }
+    links.get(source.track)![source.end] = closest ? { track: closest.track, end: closest.end } : null
+  }
+  const graph = { entries: tracks.map(track => ({ track, id: track.id, state: geometryState(track) })), byId, links }
+  GRAPH_CACHE.set(tracks, graph)
+  return graph
+}
+function graphFor(tracks: Track[]): TrackGraph {
+  return ACTIVE_GRAPHS.get(tracks)?.graph ?? prepareTrackGraph(tracks)
+}
 
 function clamp(value: number, minimum: number, maximum: number): number {
   return Math.min(maximum, Math.max(minimum, value))
@@ -134,9 +215,8 @@ function localRoutes(track: Track): LocalRoute[] {
 
 /** Every physical rail route, including turnout branches and independent lanes. */
 export function pathsFor(track: Track): TrackRoute[] {
-  const key = [track.kind, track.x, track.y, track.angle, track.bend, track.elevation ?? 0, track.endElevation ?? track.elevation ?? 0].join(':')
   const cached = GEOMETRY_CACHE.get(track)
-  if (cached?.key === key) return cached.paths
+  if (cached && sameGeometry(cached.state, track)) return cached.paths
   const originX = track.x
   const originY = track.y
   const heading = track.angle
@@ -162,7 +242,7 @@ export function pathsFor(track: Track): TrackRoute[] {
       slope: rise / Math.max(route.length * projection, EPSILON),
     }
   } } })
-  GEOMETRY_CACHE.set(track, { key, paths })
+  GEOMETRY_CACHE.set(track, { state: geometryState(track), paths })
   return paths
 }
 function routeFor(track: Track, route = track.route ?? 0): TrackRoute {
@@ -221,29 +301,18 @@ function routeEntering(track: Track, port: number): TrackRoute | undefined {
   return routes[0]
 }
 export function connectedEndpoint(tracks: Track[], trackId: string, end: number): { track: Track; end: number; route?: number } | null {
-  const source = tracks.find((track) => track.id === trackId)
-  const anchor = source && endpoints(source)[end]
-  if (!anchor) return null
-  let closest: { track: Track; end: number; route?: number } | null = null
-  let closestDistance = SNAP_DISTANCE + EPSILON
-  for (const track of tracks) {
-    if (track.id === trackId) continue
-    for (const [candidateEnd, candidate] of endpoints(track).entries()) {
-      const distance = Math.hypot(candidate.position.x - anchor.position.x, candidate.position.y - anchor.position.y)
-      const difference = Math.abs(angleDifference(candidate.angle, anchor.angle + Math.PI))
-      if (distance <= SNAP_DISTANCE && distance < closestDistance
-        && Math.abs((candidate.position.z ?? 0) - (anchor.position.z ?? 0)) <= SNAP_HEIGHT && difference <= SNAP_ANGLE) {
-        const route = routeEntering(track, candidateEnd)?.route ?? 0
-        closest = { track, end: candidateEnd, ...(route ? { route } : {}) }
-        closestDistance = distance
-      }
-    }
-  }
-  return closest
+  return graphConnection(graphFor(tracks), trackId, end)
+}
+function graphConnection(graph: TrackGraph, trackId: string, end: number): { track: Track; end: number; route?: number } | null {
+  const source = graph.byId.get(trackId)
+  const connection = source && graph.links.get(source)?.[end]
+  if (!connection) return null
+  const route = routeEntering(connection.track, connection.end)?.route ?? 0
+  return { ...connection, ...(route ? { route } : {}) }
 }
 export function openEndpoints(tracks: Track[]): (Endpoint & { track: Track; end: number })[] {
-  return tracks.flatMap((track) => endpoints(track).flatMap((endpoint, end) =>
-    connectedEndpoint(tracks, track.id, end) ? [] : [{ ...endpoint, track, end }]))
+  return withTrackGraph(tracks, () => tracks.flatMap((track) => endpoints(track).flatMap((endpoint, end) =>
+    connectedEndpoint(tracks, track.id, end) ? [] : [{ ...endpoint, track, end }])))
 }
 /** Align a nearby open port, retaining height so bridges cannot join ground tracks. */
 export function snapTrack(tracks: Track[], candidate: Track): Track {
@@ -325,7 +394,8 @@ function routeState(track: Track, route: TrackRoute, direction: number): string 
 }
 /** Circumference of the selected circuit; different crossing lanes stay separate. */
 export function closedRouteLength(tracks: Track[], position: TrainPosition): number | null {
-  let track = tracks.find((candidate) => candidate.id === position.trackId)
+  const graph = graphFor(tracks)
+  let track = graph.byId.get(position.trackId)
   if (!track) return null
   let route = positionRoute(track, position)
   let direction = position.direction
@@ -337,7 +407,7 @@ export function closedRouteLength(tracks: Track[], position: TrainPosition): num
     if (visited.has(state)) return state === initialState ? length : null
     visited.add(state)
     length += route.length
-    const connection = connectedEndpoint(tracks, track.id, direction === 1 ? route.endPort : route.startPort)
+    const connection = graphConnection(graph, track.id, direction === 1 ? route.endPort : route.startPort)
     if (!connection) return null
     track = connection.track
     const nextRoute = routeEntering(track, connection.end)
@@ -347,8 +417,8 @@ export function closedRouteLength(tracks: Track[], position: TrainPosition): num
   }
   return null
 }
-function moveTrain(tracks: Track[], position: TrainPosition, millimeters: number, includeOpenEndpoint: boolean): TrainAdvance {
-  let track = tracks.find((candidate) => candidate.id === position.trackId)
+function moveTrain(tracks: Track[], position: TrainPosition, millimeters: number, includeOpenEndpoint: boolean, graph = graphFor(tracks)): TrainAdvance {
+  let track = graph.byId.get(position.trackId)
   if (!track) return { position: { ...position }, stopped: true, lapsAdded: 0 }
   let route = positionRoute(track, position)
   const next = { ...position, distance: clamp(position.distance, 0, route.length) }
@@ -390,7 +460,7 @@ function moveTrain(tracks: Track[], position: TrainPosition, millimeters: number
     traveled += available
     const exitEnd = next.direction === 1 ? route.endPort : route.startPort
     next.distance = next.direction === 1 ? length : 0
-    const connection = connectedEndpoint(tracks, track.id, exitEnd)
+    const connection = graphConnection(graph, track.id, exitEnd)
     if (!connection) {
       next.laps = position.laps + lapsAdded
       return { position: next, stopped: !(includeOpenEndpoint && remaining <= EPSILON), lapsAdded }
@@ -418,10 +488,11 @@ export function advanceTrain(tracks: Track[], position: TrainPosition, millimete
 }
 /** Bogie pose behind the front, including joins, branches and gradients. */
 export function sampleBehind(tracks: Track[], position: TrainPosition, millimeters: number): TrackPoint | null {
+  const graph = graphFor(tracks)
   const reversed: TrainPosition = { ...position, direction: position.direction === 1 ? -1 : 1 }
-  const sampled = moveTrain(tracks, reversed, millimeters, true)
+  const sampled = moveTrain(tracks, reversed, millimeters, true, graph)
   if (sampled.stopped) return null
-  const track = tracks.find((candidate) => candidate.id === sampled.position.trackId)
+  const track = graph.byId.get(sampled.position.trackId)
   if (!track) return null
   const point = pointAt(track, sampled.position.distance, sampled.position.route ?? 0)
   return { ...point, angle: point.angle + (sampled.position.direction === 1 ? Math.PI : 0),

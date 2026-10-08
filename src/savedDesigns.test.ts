@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { STORAGE_KEY, createLayout, parseLayout } from './layout';
+import { STORAGE_KEY, PREVIOUS_STORAGE_KEY, createLayout, parseLayout } from './layout';
+import { restoreFleet, snapshotFleetLayout } from './fleet';
 import {
   DESIGN_RECOVERY_PREFIX,
   SAVED_DESIGNS_KEY,
@@ -206,6 +207,40 @@ describe('library storage and recovery', () => {
 });
 
 describe('working saved-design identity', () => {
+  it('migrates the active saved ID with the same newest-valid-layout precedence', () => {
+    const original = library();
+    const previous = { ...createLayout('compact'), savedDesignId: 'design-a' };
+    const stored = storage({ [PREVIOUS_STORAGE_KEY]: JSON.stringify(previous) });
+    expect(readWorkingDesignId(original, stored)).toBe('design-a');
+    stored.values.set(STORAGE_KEY, JSON.stringify(createLayout('city')));
+    expect(readWorkingDesignId(original, stored)).toBeNull();
+    stored.values.set(STORAGE_KEY, '{ damaged new save');
+    expect(readWorkingDesignId(original, stored)).toBe('design-a');
+    expect(stored.setItem).not.toHaveBeenCalled();
+  });
+
+  it('keeps each named fleet snapshot independent with selection and stopped restoration', () => {
+    const working = createLayout('city');
+    const first = restoreFleet(working)[0];
+    const trains = [first, { ...first, id: 'train-2', name: 'Second E5', type: 'e5' as const, requestedSpeed: 100, cabForward: false, position: null }];
+    const snapshot = snapshotFleetLayout(working, trains, 'train-2');
+    const saved = saveDesignSnapshot(empty(), snapshot, 'Two railways', null, false, { id: 'fleet-design', updatedAt: timestamp });
+    const stored = storage();
+    persistSavedDesigns(saved.library, null, stored);
+    trains[0].position!.distance += 100;
+    trains[1].requestedSpeed = 15;
+    const opened = readSavedDesigns(stored).library.designs[0].layout;
+    expect(opened.selectedTrainId).toBe('train-2');
+    expect(opened.trains![0].position!.distance).not.toBe(trains[0].position!.distance);
+    expect(opened.trains![1].requestedSpeed).toBe(100);
+    expect(restoreFleet(opened).every(train => !train.running && train.actualSpeed === 0)).toBe(true);
+    expect(opened.trains![1].cabForward).toBe(false);
+    const copied = saveDesignSnapshot(saved.library, opened, 'Copied fleet', 'fleet-design', true, { id: 'fleet-copy', updatedAt: timestamp });
+    expect(copied.library.designs).toHaveLength(2);
+    expect(copied.library.designs[0].layout).toEqual(opened);
+    copied.design.layout.trains![0].position!.distance += 5;
+    expect(copied.library.designs[0].layout).toEqual(opened);
+  });
   it('restores only an ID that exists in the library and accompanies a valid working layout', () => {
     const original = library();
     const stored = storage({ [STORAGE_KEY]: JSON.stringify({ ...createLayout('compact'), savedDesignId: 'design-a' }) });

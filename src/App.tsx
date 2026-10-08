@@ -36,6 +36,9 @@ import type { CatalogCategory, CatalogItem } from "./catalogTypes";
 import { CATALOG, useRailway } from "./useRailway";
 import { TRAIN_TYPES, getTrainSpec } from "./trains";
 import type { TrainType } from "./trains";
+import { MAX_TRAINSETS } from "./fleet";
+import type { TrainRuntime } from "./fleet";
+import type { LayoutData } from "./layout";
 import {
   CheckSummary,
   RampBuilder,
@@ -63,6 +66,23 @@ const TRAIN_DESCRIPTIONS: Record<TrainType, string> = {
   e6: "Red and silver with a pointed nose",
   e7: "Blue and white with a copper stripe",
 };
+const TRAIN_STATUS_LABELS: Record<TrainRuntime["status"], string> = {
+  unplaced: "Unplaced",
+  stopped: "Stopped",
+  accelerating: "Accelerating",
+  moving: "Moving",
+  braking: "Braking",
+  blocked: "Waiting",
+};
+function savedTrainSummary(layout: LayoutData): string {
+  if (!layout.trains) {
+    return `${getTrainSpec(layout.trainType).name} · ${layout.carCount} cars`;
+  }
+  if (!layout.trains.length) return "No trains yet";
+  return `${layout.trains.length} ${layout.trains.length === 1 ? "train" : "trains"} · ${layout.trains
+    .map((train) => `${getTrainSpec(train.type).name} (${train.carCount} cars)`)
+    .join(" · ")}`;
+}
 function PieceIllustration({ piece }: { piece: CatalogItem }) {
   const curved = piece.shape.toLowerCase().includes("curve");
   const double = piece.shape.startsWith("double") || piece.shape === "scissors";
@@ -151,6 +171,12 @@ export default function App() {
   } = h;
   const [saveName, setSaveName] = useState(layout.name);
   const [deleteDesignId, setDeleteDesignId] = useState<string | null>(null);
+  const [newTrainType, setNewTrainType] = useState<TrainType>("e5");
+  const [newTrainCarCount, setNewTrainCarCount] = useState(3);
+  const selectedTrain = h.fleet.find((train) => train.id === h.selectedTrainId);
+  const selectedIsPlaced = !!selectedTrain?.position;
+  const selectedIsMoving = !!selectedTrain && (selectedTrain.running || selectedTrain.actualSpeed > 0);
+  const movingTrainCount = h.fleet.filter((train) => train.running || train.actualSpeed > 0).length;
   const saveNameInput = useRef<HTMLInputElement>(null);
   useEffect(() => {
     setDeleteDesignId(null);
@@ -198,8 +224,8 @@ export default function App() {
           </div>
           <h1>Your railway. A whole new dimension.</h1>
           <p className="subtitle">
-            Build, turn, and explore in 3D. Then choose your favourite Japanese
-            train for a ride.
+            Build, turn, and explore in 3D. Then run your favourite Japanese
+            trains together.
           </p>
         </div>
         <div className="hero-badge">
@@ -278,8 +304,14 @@ export default function App() {
                 accessories={accessories}
                 trainPosition={h.position}
                 cabForward={h.cabForward}
-                carCount={layout.carCount}
+                carCount={h.carCount}
                 trainType={h.trainType}
+                fleet={h.fleet}
+                selectedTrainId={h.selectedTrainId}
+                onSelectTrain={h.selectTrain}
+                placingTrain={h.placingTrain}
+                placementDirection={h.placementDirection}
+                onPlaceTrain={h.placeTrain}
                 selectedId={h.selectedId}
                 activeAnchor={h.anchor}
                 mode={h.mode}
@@ -290,7 +322,6 @@ export default function App() {
                 onDropItem={(kind, x, y) => h.addPiece(kind, { x, y })}
                 onSelect={(id) => {
                   h.setSelectedId(id);
-                  h.setRunning(false);
                 }}
                 onMove={h.movePiece}
                 onAnchor={(value) => {
@@ -309,9 +340,11 @@ export default function App() {
                 </div>
               )}
               <div className="scene-hud">
-                <span className={`status-dot ${h.running ? "running" : ""}`} />
-                {h.running
-                  ? `${h.trainSpec.name} · On an adventure`
+                <span className={`status-dot ${movingTrainCount ? "running" : ""}`} />
+                {movingTrainCount
+                  ? `${movingTrainCount} ${movingTrainCount === 1 ? "train" : "trains"} on an adventure`
+                  : selectedTrain && !selectedIsPlaced
+                    ? `${selectedTrain.name} · Choose a place on the rails`
                   : h.routeLength
                     ? "Connected loop · ready to ride"
                     : tracks.length
@@ -338,7 +371,6 @@ export default function App() {
                   aria-pressed={h.mode === "move"}
                   onClick={() => {
                     h.setMode("move");
-                    h.setRunning(false);
                   }}
                 >
                   <Move size={16} />
@@ -347,10 +379,35 @@ export default function App() {
               </div>
               <div className="scene-caption">
                 <MousePointer2 size={14} />
-                {h.mode === "orbit"
+                {h.placingTrain
+                  ? "Point at a rail to preview · click to place your train"
+                  : h.mode === "orbit"
                   ? "Drag to orbit · right-drag to pan · scroll to zoom"
                   : "Drag a piece to move · matching connectors snap together"}
               </div>
+              {h.placingTrain && (
+                <div className="train-placement-banner" role="status">
+                  <div>
+                    <strong>Place {h.placingTrain.name}</strong>
+                    <span>Point at a rail. Green means the whole train fits.</span>
+                  </div>
+                  <button
+                    className="button secondary"
+                    aria-label="Reverse placement direction"
+                    onClick={() => h.setPlacementDirection(h.placementDirection === 1 ? -1 : 1)}
+                  >
+                    <ArrowLeftRight size={16} />
+                    Face the other way
+                  </button>
+                  <button
+                    className="icon-button"
+                    aria-label="Cancel train placement"
+                    onClick={h.cancelTrainPlacement}
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+              )}
               <div
                 className="view-controls"
                 role="group"
@@ -367,7 +424,7 @@ export default function App() {
                     key={view.key}
                     className={`camera-button ${h.cameraPreset === view.key ? "active" : ""}`}
                     aria-pressed={h.cameraPreset === view.key}
-                    disabled={view.key === "ride" && !tracks.length}
+                    disabled={view.key === "ride" && !selectedIsPlaced}
                     onClick={() => h.setCameraPreset(view.key)}
                   >
                     <view.icon size={15} />
@@ -386,11 +443,135 @@ export default function App() {
                 </button>
               </div>
             </div>
+            <section className="fleet-panel" aria-label="Your trains">
+              <div className="fleet-heading">
+                <div>
+                  <span className="panel-eyebrow">YOUR TRAINS</span>
+                  <label className="driving-select">
+                    Driving
+                    <select
+                      aria-label="Train to drive"
+                      value={h.selectedTrainId ?? ""}
+                      disabled={!h.fleet.length || !!h.placingTrain}
+                      onChange={(event) => h.selectTrain(event.target.value)}
+                    >
+                      {!h.fleet.length && <option value="">Add your first train</option>}
+                      {h.fleet.map((train) => (
+                        <option key={train.id} value={train.id}>{train.name}</option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                <button
+                  className="button secondary pause-all-button"
+                  aria-label="Pause all trains"
+                  disabled={!movingTrainCount}
+                  onClick={h.pauseAllTrains}
+                >
+                  <Pause size={16} />
+                  Pause all
+                </button>
+              </div>
+              {h.fleet.length ? (
+                <div className="fleet-list" role="group" aria-label="Select a train to drive">
+                  {h.fleet.map((train) => (
+                    <button
+                      key={train.id}
+                      className={`fleet-train ${train.id === h.selectedTrainId ? "selected" : ""}`}
+                      aria-label={`Drive ${train.name}`}
+                      aria-pressed={train.id === h.selectedTrainId}
+                      disabled={!!h.placingTrain && train.id !== h.placementTrainId}
+                      data-train-id={train.id}
+                      data-status={train.status}
+                      data-train-type={train.type}
+                      data-train-speed={train.actualSpeed}
+                      onClick={() => h.selectTrain(train.id)}
+                    >
+                      <span className="fleet-swatch" style={{ background: getTrainSpec(train.type).colors.primary }} />
+                      <div>
+                        <strong>{train.name}</strong>
+                        <span>{getTrainSpec(train.type).name} · {train.carCount} cars</span>
+                        <span className={`fleet-status ${train.status}`}>
+                          <span className={`status-dot ${train.running && train.status !== "blocked" ? "running" : ""}`} />
+                          {TRAIN_STATUS_LABELS[train.status]}
+                          {train.actualSpeed > 0 && ` · ${Math.round(train.actualSpeed)} km/h`}
+                        </span>
+                        {train.stopReason && <small className="fleet-stop-reason">{train.stopReason}</small>}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p className="fleet-empty">Your railway is ready for its first train. Choose one below!</p>
+              )}
+              {selectedTrain && (
+                <div className="fleet-selected-actions">
+                  <span>{selectedTrain.name} · {selectedIsPlaced ? TRAIN_STATUS_LABELS[selectedTrain.status] : "Waiting for a place"}</span>
+                  <button
+                    className="button secondary"
+                    aria-label="Place selected train"
+                    disabled={selectedIsMoving || !tracks.length || !!h.placingTrain}
+                    onClick={() => h.beginTrainPlacement(selectedTrain.id)}
+                  >
+                    <MousePointer2 size={15} />
+                    {selectedIsPlaced ? "Move train" : "Place train"}
+                  </button>
+                  <button
+                    className="icon-button remove-train-button"
+                    aria-label="Remove selected train"
+                    disabled={!!h.placingTrain}
+                    onClick={() => h.removeTrain(selectedTrain.id)}
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              )}
+              <div className="fleet-add-row">
+                <label>
+                  Add a train
+                  <select
+                    aria-label="New train model"
+                    value={newTrainType}
+                    onChange={(event) => setNewTrainType(event.target.value as TrainType)}
+                  >
+                    {TRAIN_TYPES.map((type) => (
+                      <option key={type} value={type}>{getTrainSpec(type).name}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="fleet-add-count">
+                  Cars
+                  <select
+                    aria-label="New train car count"
+                    value={newTrainCarCount}
+                    onChange={(event) => setNewTrainCarCount(Number(event.target.value))}
+                  >
+                    {Array.from({ length: 9 }, (_, index) => index + 3).map((count) => (
+                      <option key={count} value={count}>{count}</option>
+                    ))}
+                  </select>
+                </label>
+                <button
+                  className="button primary"
+                  aria-label="Add train"
+                  disabled={h.fleet.length >= MAX_TRAINSETS || !!h.placingTrain}
+                  onClick={() => h.addTrain(newTrainType, newTrainCarCount)}
+                >
+                  <Plus size={17} />
+                  Add train
+                </button>
+              </div>
+              <p className="fleet-note">
+                {h.fleet.length >= MAX_TRAINSETS
+                  ? `All ${MAX_TRAINSETS} train spaces are filled. Remove one to add another.`
+                  : "Each train has its own controls. Select a train here or click it in the scene."}
+              </p>
+            </section>
             <div className="train-controls">
               <button
                 className={`play-button ${h.running ? "playing" : ""}`}
                 aria-label={h.running ? "Pause train" : "Run train"}
-                disabled={!tracks.length}
+                disabled={!selectedIsPlaced || !!h.placingTrain}
                 onClick={h.toggleRunning}
               >
                 {h.running ? (
@@ -416,6 +597,7 @@ export default function App() {
                   max="120"
                   step="5"
                   value={h.speed}
+                  disabled={!selectedTrain || !!h.placingTrain}
                   onChange={(event) => h.setSpeed(Number(event.target.value))}
                 />
                 <div className="speed-labels">
@@ -427,7 +609,7 @@ export default function App() {
               <button
                 className="icon-button direction-button"
                 aria-label="Reverse train direction"
-                disabled={!tracks.length}
+                disabled={!selectedIsPlaced || !!h.placingTrain}
                 onClick={h.reverse}
               >
                 <ArrowLeftRight size={21} />
@@ -436,6 +618,7 @@ export default function App() {
               <button
                 className="icon-button direction-button"
                 aria-label="Sound train horn"
+                disabled={!selectedTrain}
                 onClick={() => void h.horn()}
               >
                 <Volume2 size={21} />
@@ -455,6 +638,7 @@ export default function App() {
                   <select
                     aria-label="Train"
                     value={h.trainType}
+                    disabled={!selectedTrain || selectedIsMoving || !!h.placingTrain}
                     onChange={(event) => h.chooseTrain(event.target.value as TrainType)}
                   >
                     {TRAIN_TYPES.map((type) => {
@@ -476,12 +660,10 @@ export default function App() {
                 Cars
                 <select
                   aria-label="Train car count"
-                  value={layout.carCount}
+                  value={h.carCount}
+                  disabled={!selectedTrain || selectedIsMoving || !!h.placingTrain}
                   onChange={(event) =>
-                    h.changeLayout({
-                      ...layout,
-                      carCount: Number(event.target.value),
-                    })
+                    h.changeTrainCarCount(Number(event.target.value))
                   }
                 >
                   {Array.from({ length: 9 }, (_, index) => index + 3).map(
@@ -963,7 +1145,7 @@ export default function App() {
                 />
                 <p className="saved-layout-hint">
                   Saved in this browser on this computer. Use Save a layout file
-                  for a separate backup.
+                  for a separate backup. Trains keep their places and reopen stopped.
                 </p>
                 {h.savedDesignsError && (
                   <p className="saved-layout-error" role="alert">
@@ -1000,7 +1182,8 @@ export default function App() {
                 </p>
                 <h3 className="saved-layout-heading">Your saved layouts</h3>
                 <p className="saved-layout-hint">
-                  These designs stay in this browser on this computer.
+                  These designs stay in this browser on this computer. All saved
+                  trains reopen stopped, ready for their next journey.
                 </p>
                 {h.savedDesignsError && (
                   <p className="saved-layout-error" role="alert">
@@ -1014,7 +1197,7 @@ export default function App() {
                         <div className="saved-layout-description">
                           <strong>{design.name}</strong>
                           <small>
-                            {getTrainSpec(design.layout.trainType).name} · {design.layout.carCount} cars
+                            {savedTrainSummary(design.layout)}
                           </small>
                           <small>
                             {design.layout.tracks.length} tracks ·{" "}
@@ -1215,8 +1398,12 @@ export default function App() {
                       text: "Click a green connector, then choose a finish height and maximum grade in Build a gradual ramp. It calculates the track run and places matching catalog supports. The Check before shopping report identifies intermediate supports and transitions still needed. At 60 mm, Add matching piers uses the documented Kato 23-069 assembly.",
                     },
                     {
-                      title: "Choose your train and go",
-                      text: "Use the Train list to choose the E235 Yamanote Line or E5, E6, and E7 Shinkansen. Changing trains pauses the journey and places the new train at the beginning of your railway. Choose 3 to 11 cars for play; Shinkansen formations here can be shorter than the real train. Your train choice is kept in saved layouts. The Switch control desk sets each numbered turnout to straight or branch. Zoom in to watch its point blades move. Occupied switches wait for the train to pass. Your train stops at an open end or points set the other way.",
+                      title: "Run your favourite trains together",
+                      text: "Add E235 Yamanote Line or E5, E6, and E7 Shinkansen trainsets, with 3 to 11 cars each. You can add the same model more than once. Select a train in Your trains or click it in the scene: the speed, Play, Reverse and horn controls affect only that train, and Train view follows it. The others keep their own journeys. Pause all stops every train. Change a train's model or car count while it is stopped. Shinkansen formations here can be shorter than the real train.",
+                    },
+                    {
+                      title: "Find a safe place and share the rails",
+                      text: "New trains find a free place on connected track when possible. Use Place train or Move train to choose a rail and direction yourself. The green preview shows a valid place; red means the whole train does not fit safely. Trains slow or wait when another train is ahead, and stop at open ends. The Switch control desk sets each numbered turnout to straight or branch. Zoom in to watch its point blades move. Switches beneath a parked or moving train wait until it clears. Move a train away before editing occupied track.",
                     },
                     {
                       title: "Check before building for real",
@@ -1224,7 +1411,7 @@ export default function App() {
                     },
                     {
                       title: "Keep your little world",
-                      text: "Choose Save layout, give your design a name, then start a new idea in Layouts. Open Your saved layouts to return to it. Save changes updates an opened design; Save as copy keeps another version. The current design also autosaves in this browser. Download a layout file for a spare copy or another computer.",
+                      text: "Choose Save layout, give your design a name, then start a new idea in Layouts. Open Your saved layouts to return to it with every train in its saved place, stopped. Save changes updates an opened design; Save as copy keeps another version. The current design also autosaves in this browser. Download a layout file for a spare copy or another computer. Earlier single-train layouts still open too.",
                     },
                   ].map((step, index) => (
                     <div className="help-row" key={step.title}>

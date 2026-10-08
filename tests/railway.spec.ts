@@ -8,9 +8,9 @@ import type { Track } from '../src/track';
 // Software WebGL may compile several detailed catalog models per workflow.
 test.setTimeout(60_000);
 
-const STORAGE_KEY = 'little-railways-layout-v2';
+const STORAGE_KEY = 'little-railways-layout-v3';
 const SAVED_DESIGNS_KEY = 'little-railways-saved-designs-v1';
-const canvasName = '3D railway layout: rotate, zoom, and move Kato track pieces';
+const canvasName = '3D railway layout: rotate, zoom, select trains, and move Kato track pieces';
 const straightButton = 'Add 248 mm straight';
 const curveButton = 'Add 282 mm radius · 45° curve';
 const scene = (page: Page) => page.getByRole('img', { name: canvasName });
@@ -183,9 +183,17 @@ test('3D train moves at the selected speed, pauses, and reverses without jumping
   await slider.focus();
   await slider.press('End');
   await expect(slider).toHaveValue('120');
+  // Compare equal steady-speed windows after the new per-train acceleration
+  // ramp, rather than requiring an instantaneous velocity jump.
+  await advanceAnimation(page, 800);
+  const fastStart = await trainPoint(page);
+  await expect.poll(async () => scene(page).evaluate(element => {
+    const fleet = JSON.parse((element as HTMLCanvasElement).dataset.fleetPoses ?? '[]');
+    return fleet.find((train: { id: string }) => train.id === (element as HTMLCanvasElement).dataset.selectedTrainId)?.actualSpeed;
+  })).toBe(120);
   await advanceAnimation(page, 400);
   const fast = await trainPoint(page);
-  expect(fast.x - slow.x).toBeGreaterThan((slow.x - initial.x) * 10);
+  expect(fast.x - fastStart.x).toBeGreaterThan((slow.x - initial.x) * 10);
   await page.getByRole('button', { name: 'Pause train', exact: true }).click();
   await advanceAnimation(page, 100);
   const paused = await trainPoint(page);
@@ -201,7 +209,7 @@ test('3D train moves at the selected speed, pauses, and reverses without jumping
 
 test('train formations rebuild in 3D and the chosen formation survives a reload', async ({ page }) => {
   await openRailway(page);
-  const formation = page.getByRole('combobox', { name: 'Train car count' });
+  const formation = page.getByRole('combobox', { name: 'Train car count', exact: true });
   await expect(formation.locator('option')).toHaveCount(9);
   for (const count of ['3', '4', '5', '6', '7', '8', '9', '10', '11']) {
     await formation.selectOption(count);
@@ -234,7 +242,7 @@ test('catalog categories and product-number search expose referenced Kato pieces
   await expect(search).toHaveValue('');
   await page.getByRole('button', { name: 'Catalog & model references', exact: true }).click();
   const links = page.getByRole('dialog').getByRole('link');
-  await expect(links).toHaveCount(8);
+  await expect(links).toHaveCount(16);
   for (const link of await links.all()) expect(await link.getAttribute('href')).toMatch(/^https:\/\/(katousa\.com|www\.katomodels\.com|unitrack\.katomodels\.com)\//);
 });
 
@@ -242,6 +250,7 @@ test('eight curves build a closed 3D loop, with removal and undo restoring the c
   await openRailway(page);
   await startFresh(page);
   await expect(page.getByRole('button', { name: 'Run train', exact: true })).toBeDisabled();
+  await page.getByRole('button', { name: 'Remove selected train', exact: true }).click();
   await page.getByRole('button', { name: 'Curves', exact: true }).click();
   await page.getByRole('button', { name: 'Bend left', exact: true }).click();
   for (let index = 0; index < 8; index++) await page.getByRole('button', { name: curveButton, exact: true }).click();
@@ -267,6 +276,7 @@ test('eight curves build a closed 3D loop, with removal and undo restoring the c
 test('native catalog drag places a track, and pointer dragging moves it with undo', async ({ page }) => {
   await openRailway(page);
   await startFresh(page);
+  await page.getByRole('button', { name: 'Remove selected train', exact: true }).click();
   await page.getByRole('button', { name: 'Top view', exact: true }).click();
   const canvas = scene(page);
   const bounds = (await canvas.boundingBox())!;
@@ -294,18 +304,22 @@ test('native catalog drag places a track, and pointer dragging moves it with und
 test('selected tracks rotate and change height with a rendered sloping train', async ({ page }) => {
   await openRailway(page);
   await startFresh(page);
+  await page.getByRole('button', { name: 'Remove selected train', exact: true }).click();
   await page.getByRole('button', { name: straightButton, exact: true }).click();
   await page.getByLabel('Selected piece height').fill('80');
   await page.getByLabel('Selected track end height').fill('100');
   await expect(page.getByText('8.1% slope · steep for a physical train', { exact: true })).toBeVisible();
-  await expect.poll(async () => (await trainPoint(page)).z).toBeGreaterThan(80);
-  expect((await trainPoint(page)).z).toBeLessThan(100);
   await page.getByRole('button', { name: 'Rotate selected piece' }).click();
   const track = (await savedLayout(page)).tracks[0];
   expect(track.angle).toBeCloseTo(Math.PI / 4);
   expect(track.elevation).toBe(80);
   expect(track.endElevation).toBe(100);
   await expect(page.getByRole('link', { name: 'See this piece in the Kato catalog' })).toHaveAttribute('href', /katousa\.com/);
+  // Restore the original partial-train placement only after the unoccupied
+  // track has been edited. Parked stock must protect the track beneath it.
+  await importData(page, { version: 2, name: 'A sloping railway', tracks: [track], accessories: [], carCount: 3 });
+  await expect.poll(async () => (await trainPoint(page)).z).toBeGreaterThan(80);
+  expect((await trainPoint(page)).z).toBeLessThan(100);
 });
 
 test('Sky Railway renders an elevated loop above its separate ground-level underpass', async ({ page }) => {
@@ -335,7 +349,7 @@ test('KATO plan02 opens in 3D with its numbered switches and retains its source 
   await expect(page.getByText('51 tracks · 18 scenery pieces', { exact: true })).toBeVisible();
   await expect(page.getByText('Connected loop · ready to ride', { exact: true })).toBeVisible();
   await expect(scene(page)).toHaveAttribute('data-car-count', '3');
-  await expect(page.getByRole('combobox', { name: 'Train car count' })).toHaveValue('3');
+  await expect(page.getByRole('combobox', { name: 'Train car count', exact: true })).toHaveValue('3');
   await expect(page.locator('.layout-plan-info')).toContainText('four additional R315-45 curves');
   await expect(page.locator('.layout-plan-info')).toContainText('Pier heights are modeled');
   await expect(page.getByRole('link', { name: 'View KATO plan' })).toHaveAttribute('href',
@@ -352,6 +366,9 @@ test('KATO plan02 opens in 3D with its numbered switches and retains its source 
   expect(await savedLayout(page)).toEqual(previous);
   await expect(page.locator('.layout-plan-info')).toHaveCount(0);
   await chooseLayout(page, 'KATO M1');
+  // The starter formation spans Switch 1. Clear it before deliberately
+  // changing both routes; parked trains now protect their point blades.
+  await page.getByRole('button', { name: 'Remove selected train', exact: true }).click();
   const desk = page.getByRole('region', { name: 'Turnout switch controls' });
   await expect(desk.getByRole('group')).toHaveCount(2);
   for (const number of [1, 2]) {
@@ -415,23 +432,29 @@ test('a selected turnout switches the running train onto its branch and persists
   // A turnout can also be the first piece. Its chosen route must govern
   // the initial rendered train, rather than only trains entering later.
   await startFresh(page);
+  await page.getByRole('button', { name: 'Remove selected train', exact: true }).click();
   await page.getByRole('searchbox', { name: 'Search Kato catalog' }).fill('20-220');
   await page.getByRole('button', { name: 'Add #4 left turnout', exact: true }).click();
   await page.getByRole('button', { name: 'Branch route', exact: true }).click();
+  const branch = await savedLayout(page);
+  await importData(page, { version: 2, name: 'Branch first', tracks: branch.tracks, accessories: [], carCount: 3 });
   await advanceAnimation(page, 100);
   expect((await trainPoint(page)).y).toBeLessThan(-.5);
 });
 
-test('version 2 saves export tracks, scenery, heights, and train formation and can be reopened', async ({ page }, testInfo) => {
+test('version 3 saves export tracks, scenery, heights, and train formation and can be reopened', async ({ page }, testInfo) => {
   await openRailway(page);
   await startFresh(page);
+  await page.getByRole('button', { name: 'Remove selected train', exact: true }).click();
   await page.getByRole('button', { name: straightButton, exact: true }).click();
   await page.getByLabel('Selected piece height').fill('80');
   await page.getByRole('searchbox', { name: 'Search Kato catalog' }).fill('23-150');
   await page.getByRole('button', { name: 'Add Modern DX island platform A · 248 mm', exact: true }).click();
-  await page.getByRole('combobox', { name: 'Train car count' }).selectOption('6');
+  const built = await savedLayout(page);
+  await importData(page, { version: 2, name: 'My Railway', tracks: built.tracks, accessories: built.accessories, carCount: 3 });
+  await page.getByRole('combobox', { name: 'Train car count', exact: true }).selectOption('6');
   const saved = await savedLayout(page);
-  expect(saved.version).toBe(2);
+  expect(saved.version).toBe(3);
   expect(saved.tracks).toHaveLength(1);
   expect(saved.accessories).toHaveLength(1);
   expect(saved.carCount).toBe(6);
@@ -461,7 +484,9 @@ test('earlier 2D browser saves migrate into 3D without losing their railway geom
   await openRailway(page);
   await expect(page.getByRole('heading', { name: legacy.name, exact: true })).toBeVisible();
   const migrated = await savedLayout(page);
-  expect(migrated).toEqual({ ...legacy, version: 2, tracks: [{ ...legacy.tracks[0], elevation: 0, endElevation: 0 }], accessories: [], carCount: 11 });
+  expect(migrated).toMatchObject({ ...legacy, version: 3, tracks: [{ ...legacy.tracks[0], elevation: 0, endElevation: 0 }], accessories: [], carCount: 11 });
+  expect(migrated.trains).toHaveLength(1);
+  expect(migrated.trains[0]).toMatchObject({ type: 'e235', carCount: 11 });
   await expect(scene(page)).toHaveAttribute('data-car-count', '11');
 });
 
@@ -480,7 +505,7 @@ test('invalid 3D imports preserve the current railway and allow a later valid im
   await importData(page, imported);
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(page.getByRole('heading', { name: imported.name, exact: true })).toBeVisible();
-  expect(await savedLayout(page)).toEqual(imported);
+  expect(await savedLayout(page)).toMatchObject({ ...imported, version: 3 });
   await expect(scene(page)).toHaveAttribute('data-car-count', '3');
 });
 
@@ -590,7 +615,7 @@ test('named saved layouts keep independent designs through fresh starts, reloads
   await expect(scene(page)).toHaveAttribute('data-ready', 'true');
   expect((await savedLayout(page)).savedDesignId).toBe(firstId);
   expect(await currentRailway(page)).toEqual(overpass);
-  await page.getByRole('combobox', { name: 'Train car count' }).selectOption('7');
+  await page.getByRole('combobox', { name: 'Train car count', exact: true }).selectOption('7');
   await saveDesign(page, 'Our overpass on Sunday', 'Save changes');
   const revised = await currentRailway(page);
   expect(revised.carCount).toBe(7);
@@ -642,7 +667,7 @@ test('undo restores the saved design identity so Save changes updates the design
   await page.getByRole('button', { name: 'Undo last change', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Layout A', exact: true })).toBeVisible();
   expect((await savedLayout(page)).savedDesignId).toBe(aId);
-  await page.getByRole('combobox', { name: 'Train car count' }).selectOption('6');
+  await page.getByRole('combobox', { name: 'Train car count', exact: true }).selectOption('6');
   await saveDesign(page, 'Layout A revised', 'Save changes');
   const library = (await savedDesigns(page)).designs;
   expect(library).toHaveLength(2);
@@ -679,7 +704,7 @@ test('a browser storage failure keeps named layouts intact and leaves failed sav
   await seedLayout(page, fixtureLayout('Reliable draft', [fixtureTrack('quota-track', -124)]));
   await saveDesign(page, 'Protected design');
   const libraryBefore = await savedDesigns(page);
-  await page.getByRole('combobox', { name: 'Train car count' }).selectOption('6');
+  await page.getByRole('combobox', { name: 'Train car count', exact: true }).selectOption('6');
   const unsavedChanges = await currentRailway(page);
   await page.evaluate(key => {
     const original = Storage.prototype.setItem;
@@ -1013,6 +1038,11 @@ test('KATO plan02 renders a connected three-car train climbing onto its red brid
   // and bridge without spending a full software-WebGL lap on approach.
   const start = layout.tracks.find((track: Track) => track.id === 'kato-plan02-main-24');
   layout.tracks = [start, ...layout.tracks.filter((track: Track) => track !== start)];
+  // A version-3 file restores exact train positions; use the legacy format
+  // intentionally to stage its one train at the reordered summit approach.
+  layout.version = 2;
+  delete layout.trains;
+  delete layout.selectedTrainId;
   await importData(page, layout);
   await advanceAnimation(page, 100);
   const rails = selectedRailSamples(layout);
@@ -1122,7 +1152,7 @@ for (const [count, turnout] of [[3, true], [11, false]] as const) {
 
 async function seedLayout(page: Page, layout: ReturnType<typeof fixtureLayout>) {
   await page.addInitScript(value => {
-    if (!localStorage.getItem('little-railways-layout-v2')) {
+    if (!localStorage.getItem('little-railways-layout-v3') && !localStorage.getItem('little-railways-layout-v2')) {
       localStorage.setItem('little-railways-layout-v2', JSON.stringify(value));
     }
   }, layout);
@@ -1158,7 +1188,16 @@ test('numbered switches operate live without resetting a clear train and reject 
   expect(afterSwitch.z).toBe(beforeSwitch.z);
   await expect(page.getByRole('button', { name: 'Pause train', exact: true })).toBeVisible();
   await expect(desk.getByRole('button', { name: 'Switch 7 branch', exact: true })).toHaveAttribute('aria-pressed', 'true');
-  await advanceAnimation(page, 650);
+  // Wait for the actual train cursor to enter the points, rather
+  // than making occupancy depend on the acceleration ramp's timing.
+  await expect.poll(async () => {
+    await advanceAnimation(page, 100);
+    return scene(page).evaluate(element => {
+      const fleet = JSON.parse((element as HTMLCanvasElement).dataset.fleetPoses ?? '[]');
+      const selected = fleet.find((train: { id: string }) => train.id === (element as HTMLCanvasElement).dataset.selectedTrainId);
+      return selected?.position?.trackId === 'switch-near' && selected.position.distance >= 35;
+    });
+  }, { timeout: 10_000, intervals: [100] }).toBe(true);
   expect((await trainPoint(page)).x).toBeGreaterThan(beforeSwitch.x);
   const occupiedPoints = (await renderedTurnoutPoints(page)).find(points => points.id === 'switch-near');
   await desk.getByRole('button', { name: 'Switch 1 branch', exact: true }).click();
@@ -1169,11 +1208,12 @@ test('numbered switches operate live without resetting a clear train and reject 
   expect((await renderedTurnoutPoints(page)).find(points => points.id === 'switch-near'), 'A rejected occupied-switch command does not move its point blades').toEqual(occupiedPoints);
   await page.getByRole('button', { name: 'Pause train', exact: true }).click();
   await desk.getByRole('button', { name: 'Switch 1 branch', exact: true }).click();
-  await expect(desk.getByRole('button', { name: 'Switch 1 branch', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('alert')).toContainText('Switch 1 is occupied');
+  await expect(desk.getByRole('button', { name: 'Switch 1 straight', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await advanceAnimation(page, 200);
   const badges = await scene(page).evaluate(element => JSON.parse((element as HTMLCanvasElement).dataset.switchNumbers!));
   expect(badges).toEqual([
-    { id: 'switch-near', number: 1, state: 'branch' },
+    { id: 'switch-near', number: 1, state: 'straight' },
     { id: 'switch-away', number: 7, state: 'branch' },
   ]);
   const saved = await savedLayout(page);
@@ -1223,6 +1263,7 @@ test('guided ramp uses real S248 pieces, a grounded catalog pier, and a reviewab
 
 test('matching piers support a sixty-millimeter track without floating or duplicate pieces', async ({ page }) => {
   await seedLayout(page, fixtureLayout('Supported track', []));
+  await page.getByRole('button', { name: 'Remove selected train', exact: true }).click();
   await page.getByRole('button', { name: straightButton, exact: true }).click();
   await page.getByLabel('Selected piece height').fill('60');
   await page.getByRole('button', { name: 'Add matching piers', exact: true }).click();

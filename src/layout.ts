@@ -1,9 +1,11 @@
 import { KATO_CATALOG } from './catalog';
-import { endpoints, makeCityLayout, makeStarterLayout, makeViaductLayout } from './track';
-import type { Track } from './track';
+import { endpoints, makeCityLayout, makeStarterLayout, makeViaductLayout, pathsFor } from './track';
+import type { Track, TrainPosition } from './track';
 import { makeKatoPlan02 } from './katoPlan';
 import { TRAIN_TYPES } from './trains';
 import type { TrainType } from './trains';
+import { MAX_TRAINSETS } from './fleet';
+import type { TrainSnapshot } from './fleet';
 
 export interface PlacedAccessory {
   id: string;
@@ -15,18 +17,22 @@ export interface PlacedAccessory {
 }
 
 export interface LayoutData {
-  version: 2;
+  version: 2 | 3;
   name: string;
   tracks: Track[];
   accessories: PlacedAccessory[];
   carCount: number;
   /** Older layouts omit this field and continue to use the E235 Yamanote train. */
   trainType?: TrainType;
+  /** Version 3 contains independent trainsets; version 2 keeps legacy semantics. */
+  trains?: TrainSnapshot[];
+  selectedTrainId?: string;
   /** Source drawing retained when a preset is saved, edited, or exported. */
   sourcePlan?: 'kato-plan02-1a';
 }
 
-export const STORAGE_KEY = 'little-railways-layout-v2';
+export const STORAGE_KEY = 'little-railways-layout-v3';
+export const PREVIOUS_STORAGE_KEY = 'little-railways-layout-v2';
 export const LEGACY_STORAGE_KEY = 'little-railways-layout-v1';
 const MAX_PIECES = 300;
 const CATALOG = new Map(KATO_CATALOG.map((item) => [item.kind, item]));
@@ -47,7 +53,7 @@ function validElevation(value: unknown): value is number {
 export function parseLayout(value: unknown): LayoutData {
   if (!isObject(value)) throw new Error('This is not a railway layout.');
   const candidate = value;
-  if ((candidate.version !== 1 && candidate.version !== 2)
+  if ((candidate.version !== 1 && candidate.version !== 2 && candidate.version !== 3)
     || typeof candidate.name !== 'string' || !Array.isArray(candidate.tracks)) {
     throw new Error('Choose a layout saved by Little Railways.');
   }
@@ -151,13 +157,68 @@ export function parseLayout(value: unknown): LayoutData {
     };
   });
 
+  let trains: TrainSnapshot[] | undefined;
+  if (candidate.version === 3) {
+    if (!Array.isArray(candidate.trains) || candidate.trains.length > MAX_TRAINSETS) {
+      throw new Error(`This layout needs a train list with at most ${MAX_TRAINSETS} trainsets.`);
+    }
+    const trainIds = new Set<string>();
+    const trackById = new Map(tracks.map(track => [track.id, track]));
+    trains = candidate.trains.map((value: unknown): TrainSnapshot => {
+      const error = 'This layout contains an invalid trainset.';
+      if (!isObject(value) || typeof value.id !== 'string' || !value.id.trim()
+        || value.id.length > 100 || trainIds.has(value.id)
+        || typeof value.name !== 'string' || !value.name.trim() || value.name.trim().length > 60
+        || typeof value.type !== 'string' || !(TRAIN_TYPES as readonly string[]).includes(value.type)
+        || typeof value.carCount !== 'number' || !Number.isInteger(value.carCount) || value.carCount < 3 || value.carCount > 11
+        || typeof value.cabForward !== 'boolean'
+        || (value.legacyStart !== undefined && typeof value.legacyStart !== 'boolean')
+        || typeof value.requestedSpeed !== 'number' || !Number.isFinite(value.requestedSpeed)
+        || value.requestedSpeed < 0 || value.requestedSpeed > 120) throw new Error(error);
+      trainIds.add(value.id);
+      let position: TrainPosition | null = null;
+      if (value.position !== null) {
+        const cursor = value.position;
+        if (!isObject(cursor) || typeof cursor.trackId !== 'string'
+          || (cursor.direction !== 1 && cursor.direction !== -1)
+          || typeof cursor.laps !== 'number' || !Number.isSafeInteger(cursor.laps) || cursor.laps < 0
+          || typeof cursor.distance !== 'number' || !Number.isFinite(cursor.distance) || cursor.distance < 0
+          || (cursor.route !== undefined && (typeof cursor.route !== 'number' || !Number.isInteger(cursor.route) || cursor.route < 0))) {
+          throw new Error('This trainset has an invalid track position.');
+        }
+        const track = trackById.get(cursor.trackId);
+        const route = track && pathsFor(track).find(path => path.route === (cursor.route ?? 0));
+        if (!route || cursor.distance > route.length + 1e-6) {
+          throw new Error('This trainset position is outside its saved track route.');
+        }
+        position = {
+          trackId: cursor.trackId, distance: Math.min(cursor.distance, route.length),
+          direction: cursor.direction, laps: cursor.laps,
+          ...(cursor.route === undefined ? {} : { route: cursor.route as number }),
+        };
+      }
+      return {
+        id: value.id, name: value.name.trim(), type: value.type as TrainType,
+        carCount: value.carCount, position, cabForward: value.cabForward,
+        requestedSpeed: value.requestedSpeed,
+        ...(value.legacyStart === true ? { legacyStart: true } : {}),
+      };
+    });
+    if (candidate.selectedTrainId !== undefined
+      && (typeof candidate.selectedTrainId !== 'string' || !trainIds.has(candidate.selectedTrainId))) {
+      throw new Error('This layout selects a trainset that is not in its train list.');
+    }
+  }
+
   return {
-    version: 2,
+    version: candidate.version === 3 ? 3 : 2,
     name: candidate.name.trim().slice(0, 60) || 'My Railway',
     tracks,
     accessories,
     carCount,
     ...(candidate.trainType === undefined ? {} : { trainType: candidate.trainType as TrainType }),
+    ...(trains === undefined ? {} : { trains }),
+    ...(candidate.version === 3 && candidate.selectedTrainId !== undefined ? { selectedTrainId: candidate.selectedTrainId as string } : {}),
     ...(candidate.sourcePlan === 'kato-plan02-1a' ? { sourcePlan: candidate.sourcePlan } : {}),
   };
 }
@@ -207,7 +268,7 @@ export function createLayout(kind: LayoutPreset = 'city'): LayoutData {
 
 /** Prefer the current save; recover the earlier 2D layout before using a starter. */
 export function loadLayout(): LayoutData {
-  for (const key of [STORAGE_KEY, LEGACY_STORAGE_KEY]) {
+  for (const key of [STORAGE_KEY, PREVIOUS_STORAGE_KEY, LEGACY_STORAGE_KEY]) {
     try {
       const saved = localStorage.getItem(key);
       if (saved) return parseLayout(JSON.parse(saved));

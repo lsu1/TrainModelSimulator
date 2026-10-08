@@ -1,4 +1,4 @@
-import { STORAGE_KEY, parseLayout } from './layout';
+import { STORAGE_KEY, PREVIOUS_STORAGE_KEY, LEGACY_STORAGE_KEY, parseLayout } from './layout';
 import type { LayoutData } from './layout';
 
 export const SAVED_DESIGNS_KEY = 'little-railways-saved-designs-v1';
@@ -144,16 +144,18 @@ export function persistSavedDesigns(
 
 /** Keep identity with the working layout so new presets cannot overwrite an old save. */
 export function readWorkingDesignId(library: SavedDesignLibrary, storage?: DesignStorage): string | null {
-  try {
-    const raw = (storage ?? localStorage).getItem(STORAGE_KEY);
-    if (!raw) return null;
-    const value: unknown = JSON.parse(raw);
-    if (!isObject(value)) return null;
-    parseLayout(value);
-    return typeof value.savedDesignId === 'string'
-      && library.designs.some((design) => design.id === value.savedDesignId)
-      ? value.savedDesignId : null;
-  } catch {
-    return null;
+  for (const key of [STORAGE_KEY, PREVIOUS_STORAGE_KEY, LEGACY_STORAGE_KEY]) {
+    try {
+      const raw = (storage ?? localStorage).getItem(key);
+      if (!raw) continue;
+      const value: unknown = JSON.parse(raw);
+      if (!isObject(value)) continue;
+      parseLayout(value);
+      // The first valid working layout wins, even when it is a new draft.
+      return typeof value.savedDesignId === 'string'
+        && library.designs.some((design) => design.id === value.savedDesignId)
+        ? value.savedDesignId : null;
+    } catch { /* Mirror loadLayout's fallback without losing an old save identity. */ }
   }
+  return null;
 }

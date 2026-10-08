@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { KATO_CATALOG } from './catalog'
-import { LEGACY_STORAGE_KEY, STORAGE_KEY, createLayout, loadLayout, parseLayout, type LayoutData, type PlacedAccessory } from './layout'
+import { LEGACY_STORAGE_KEY, PREVIOUS_STORAGE_KEY, STORAGE_KEY, createLayout, loadLayout, parseLayout, type LayoutData, type PlacedAccessory } from './layout'
 import { endpoints, makeStarterLayout, openEndpoints } from './track'
 import { TRAIN_TYPES } from './trains'
+import { MAX_TRAINSETS, restoreFleet, snapshotFleetLayout } from './fleet'
 
 const layout = (): LayoutData => createLayout('compact')
 const accessory = (): PlacedAccessory => ({
@@ -249,6 +250,19 @@ describe('documented viaduct supports', () => {
 })
 
 describe('saved layout recovery', () => {
+  it('reads a previous 3D autosave without modifying it and prefers a valid v3 snapshot', () => {
+    const original = { ...createLayout('compact'), trainType: 'e7' as const, carCount: 5 }
+    const fleetLayout = snapshotFleetLayout(original, restoreFleet(original), 'train-1')
+    const values = new Map([[PREVIOUS_STORAGE_KEY, JSON.stringify(original)]])
+    const setItem = vi.fn()
+    vi.stubGlobal('localStorage', { getItem: (key: string) => values.get(key) ?? null, setItem })
+    expect(loadLayout()).toEqual(original)
+    values.set(STORAGE_KEY, JSON.stringify(fleetLayout))
+    expect(loadLayout()).toEqual(fleetLayout)
+    expect(setItem).not.toHaveBeenCalled()
+    values.set(STORAGE_KEY, '{ damaged fleet')
+    expect(loadLayout()).toEqual(original)
+  })
   it('restores the selected Shinkansen from the working autosave', () => {
     const original = { ...createLayout('compact'), trainType: 'e6' as const, carCount: 7 }
     vi.stubGlobal('localStorage', { getItem: (key: string) => key === STORAGE_KEY ? JSON.stringify(original) : null })
@@ -296,5 +310,86 @@ describe('saved layout recovery', () => {
     expect(loadLayout()).toEqual(createLayout('city'))
     vi.stubGlobal('localStorage', undefined)
     expect(loadLayout()).toEqual(createLayout('city'))
+  })
+})
+
+describe('version 3 independent train validation', () => {
+  const fleetLayout = () => {
+    const original = createLayout('city')
+    const first = restoreFleet(original)[0]
+    return snapshotFleetLayout(original, [first,
+      { ...first, id: 'train-2', name: 'Komachi 2', type: 'e6', carCount: 7, cabForward: false, requestedSpeed: 45, position: null }], 'train-2')
+  }
+
+  it('round trips a mixed fleet with selection, speed, orientation and unplaced sets as deep copies', () => {
+    const original = fleetLayout()
+    const parsed = parseLayout(JSON.parse(JSON.stringify(original)))
+    expect(parsed).toEqual(original)
+    expect(parsed.trains).not.toBe(original.trains)
+    expect(parsed.trains![0].position).not.toBe(original.trains![0].position)
+    parsed.trains![0].position!.distance += 1
+    expect(original.trains![0].position!.distance).not.toBe(parsed.trains![0].position!.distance)
+    expect(parsed.trains![1]).toMatchObject({ type: 'e6', carCount: 7, requestedSpeed: 45, cabForward: false, position: null })
+  })
+
+  it('supports zero trains and multiple instances of each supported model', () => {
+    const empty = snapshotFleetLayout(createLayout('empty'), [], null)
+    expect(parseLayout(empty).trains).toEqual([])
+    const original = fleetLayout()
+    const trains = TRAIN_TYPES.flatMap((type, index) => [
+      { ...original.trains![0], id: `a-${index}`, type }, { ...original.trains![1], id: `b-${index}`, type },
+    ])
+    expect(parseLayout({ ...original, trains, selectedTrainId: 'b-3' }).trains).toEqual(trains)
+  })
+
+  it('does not reinterpret legacy fields as a fleet before an explicit runtime migration', () => {
+    const old = createLayout('compact')
+    expect(parseLayout({ ...old, trains: [], selectedTrainId: 'unknown' })).toEqual(old)
+  })
+
+  it.each([
+    { id: '' }, { id: 'train-2' }, { name: ' ' }, { name: 'x'.repeat(61) },
+    { type: 'E5' }, { type: 'e8' }, { carCount: 2 }, { carCount: 12 }, { carCount: 3.5 },
+    { cabForward: 1 }, { requestedSpeed: -1 }, { requestedSpeed: 121 }, { requestedSpeed: NaN },
+    { position: undefined }, { legacyStart: 'true' },
+  ])('rejects a malformed train without silently dropping it: %j', patch => {
+    const original = fleetLayout()
+    expect(() => parseLayout({ ...original, trains: [{ ...original.trains![0], ...patch }, original.trains![1]] })).toThrow(/trainset/)
+  })
+
+  it.each([
+    { trackId: 'deleted-track' }, { distance: -1 }, { distance: 100000 }, { distance: Infinity },
+    { direction: 0 }, { laps: -1 }, { laps: .5 }, { route: -1 }, { route: 99 }, { route: .5 },
+  ])('rejects a train cursor outside its own saved network: %j', patch => {
+    const original = fleetLayout()
+    expect(() => parseLayout({ ...original, trains: [
+      { ...original.trains![0], position: { ...original.trains![0].position!, ...patch } }, original.trains![1],
+    ] })).toThrow(/position/)
+  })
+
+  it('validates lane-specific positions and strips runtime properties from a saved train', () => {
+    const original = fleetLayout()
+    const track = { ...original.tracks[0], kind: 'ds248' }
+    const train = { ...original.trains![0], position: { trackId: track.id, distance: 125, direction: -1, route: 1, laps: 2 }, actualSpeed: 90, running: true, status: 'moving' }
+    const parsed = parseLayout({ ...original, tracks: [track], trains: [train], selectedTrainId: train.id })
+    expect(parsed.trains![0].position).toEqual(train.position)
+    expect(parsed.trains![0]).not.toHaveProperty('actualSpeed')
+    expect(parsed.trains![0]).not.toHaveProperty('running')
+    expect(parsed.trains![0]).not.toHaveProperty('status')
+    expect(() => parseLayout({ ...original, selectedTrainId: 'deleted-train' })).toThrow(/selects a trainset/)
+  })
+
+  it('persists only a true legacy-start compatibility marker', () => {
+    const original = fleetLayout()
+    expect(parseLayout(original).trains![0].legacyStart).toBe(true)
+    const trains = original.trains!.map(train => ({ ...train, legacyStart: false }))
+    expect(parseLayout({ ...original, trains }).trains!.every(train => train.legacyStart === undefined)).toBe(true)
+  })
+
+  it('bounds imported fleet size to twelve trainsets while retaining the last valid schema', () => {
+    const original = fleetLayout()
+    const trains = Array.from({ length: MAX_TRAINSETS }, (_, index) => ({ ...original.trains![0], id: `train-${index + 1}` }))
+    expect(parseLayout({ ...original, trains }).trains).toHaveLength(MAX_TRAINSETS)
+    expect(() => parseLayout({ ...original, trains: [...trains, { ...trains[0], id: 'extra' }] })).toThrow(/at most 12/)
   })
 })

@@ -15,7 +15,11 @@ import { STORAGE_KEY, createLayout, loadLayout, parseLayout } from "./layout";
 import type { LayoutData, LayoutPreset, PlacedAccessory } from "./layout";
 import { getTrainCarSpec, getTrainSpec } from "./trains";
 import type { TrainType } from "./trains";
-import { advanceConsist, occupiedTrackIds } from "./trainMotion";
+import { DEFAULT_TRAIN_SPEED, MAX_TRAINSETS, initialTrainPosition, restoreFleet, snapshotFleetLayout, trainSnapshot } from "./fleet";
+import type { TrainRuntime } from "./fleet";
+import { occupiedFleetTrackIds, stepFleet } from "./fleetMotion";
+import { findTrainPlacement, validateTrainPlacement } from "./trainPlacement";
+import { solveConsistPoses } from "./consistPose";
 import { auditClearances, checkPlacement } from "./clearance";
 import { auditEngineering, planRamp, trackGradePercent } from "./engineering";
 import {
@@ -54,11 +58,44 @@ const initialTrain = (tracks: Track[], trainType?: TrainType, carCount = 11): Tr
   };
 };
 
+function restorePlayableFleet(layout: LayoutData): TrainRuntime[] {
+  const accepted: TrainRuntime[] = [];
+  for (const train of restoreFleet(layout)) {
+    const unfinishedLegacy = train.position && train.legacyStart
+      && !solveConsistPoses(layout.tracks, train.position, train.cabForward, train.carCount, train.type).cars.some(Boolean);
+    const validation = train.position && layout.version === 3 && !unfinishedLegacy
+      ? validateTrainPlacement(layout.tracks, train, accepted, { allowPartial: train.legacyStart === true })
+      : { allowed: true };
+    accepted.push(validation.allowed ? train : {
+      ...train, position: null, status: "unplaced", stopReason: validation.reason ?? "Choose a safe place on the rails.",
+    });
+  }
+  return accepted;
+}
+
 export function useRailway() {
-  const [layout, setLayout] = useState<LayoutData>(loadLayout);
+  const [layout, setLayoutState] = useState<LayoutData>(loadLayout);
+  const layoutRef = useRef(layout);
+  layoutRef.current = layout;
+  const setLayout = (next: LayoutData) => { layoutRef.current = next; setLayoutState(next); };
   const { tracks, accessories } = layout;
-  const trainType = layout.trainType ?? "e235";
+  const [fleet, setFleet] = useState<TrainRuntime[]>(() => restorePlayableFleet(layout));
+  const fleetRef = useRef(fleet);
+  const [selectedTrainId, setSelectedTrainIdState] = useState<string | null>(() =>
+    layout.selectedTrainId ?? fleet[0]?.id ?? null,
+  );
+  const selectedTrainIdRef = useRef(selectedTrainId);
+  const selectedTrain = fleet.find((train) => train.id === selectedTrainId);
+  const trainType = selectedTrain?.type ?? layout.trainType ?? "e235";
+  const carCount = selectedTrain?.carCount ?? layout.carCount;
   const trainSpec = getTrainSpec(trainType);
+  const position = selectedTrain?.position ?? initialTrain([], trainType, carCount);
+  const running = selectedTrain?.running ?? false;
+  const speed = selectedTrain?.requestedSpeed ?? DEFAULT_TRAIN_SPEED;
+  const cabForward = selectedTrain?.cabForward ?? true;
+  const [placementTrainId, setPlacementTrainId] = useState<string | null>(null);
+  const [placementDirection, setPlacementDirection] = useState<1 | -1>(1);
+  const placingTrain = fleet.find((train) => train.id === placementTrainId) ?? null;
   const [designLibrary, setDesignLibrary] = useState(readSavedDesigns);
   const [activeSavedDesignId, setActiveSavedDesignId] = useState<string | null>(() =>
     readWorkingDesignId(designLibrary.library),
@@ -79,14 +116,6 @@ export function useRailway() {
   const [viewRevision, setViewRevision] = useState(0);
   const [layoutRevision, setLayoutRevision] = useState(0);
   const [ready, setReady] = useState(false);
-  const [running, setRunning] = useState(false);
-  const [speed, setSpeed] = useState(65);
-  const [position, setPosition] = useState<TrainPosition>(() =>
-    initialTrain(layout.tracks, layout.trainType, layout.carCount),
-  );
-  const positionRef = useRef(position);
-  const lapProgressRef = useRef(0);
-  const [cabForward, setCabForward] = useState(true);
   const [modal, setModal] = useState<Modal>(null);
   const [toast, setToast] = useState("");
   const [toastError, setToastError] = useState(false);
@@ -101,11 +130,12 @@ export function useRailway() {
   const selection = selectedTrack ?? selectedAccessory;
   const selectedSpec = selection ? CATALOG.get(selection.kind) : undefined;
   const routeLength = useMemo(
-    () => closedRouteLength(tracks, position),
-    [tracks, position.trackId, position.direction, position.route],
+    () => {
+      const reference = selectedTrain?.position ?? initialTrainPosition(tracks, trainType, carCount);
+      return reference ? closedRouteLength(tracks, reference) : null;
+    },
+    [tracks, position.trackId, position.direction, position.route, trainType, carCount],
   );
-  const routeLengthRef = useRef(routeLength);
-  routeLengthRef.current = routeLength;
   const ends = useMemo(() => openEndpoints(tracks), [tracks]);
   const totalLength = tracks.reduce(
     (sum, track) => sum + trackLength(track),
@@ -208,6 +238,109 @@ export function useRailway() {
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(""), error ? 12000 : 4200);
   };
+  const pausedTrain = (train: TrainRuntime): TrainRuntime => ({
+    ...train, running: false, actualSpeed: 0, reverseRequested: false,
+    status: train.position ? "stopped" : "unplaced", stopReason: undefined,
+  });
+  const currentLayoutSnapshot = () => snapshotFleetLayout(
+    layoutRef.current, fleetRef.current, selectedTrainIdRef.current,
+  );
+  const rememberCurrentLayout = () => {
+    // Capture before dispatch: React may evaluate a state updater after the
+    // fleet refs have already changed for this command.
+    const snapshot = currentLayoutSnapshot();
+    const savedDesignId = activeSavedDesignId;
+    setHistory((previous) => [...previous.slice(-49), { layout: snapshot, savedDesignId }]);
+  };
+  const proposedFleetIsSafe = (nextTracks: Track[], proposed: readonly TrainRuntime[]): boolean => {
+    for (const train of proposed) {
+      if (!train.position) continue;
+      // The original unfinished-track workflow can have no complete car yet.
+      // It is preserved only for the explicitly migrated start placement.
+      if (train.legacyStart && !solveConsistPoses(nextTracks, train.position, train.cabForward, train.carCount, train.type).cars.some(Boolean)) continue;
+      const validation = validateTrainPlacement(nextTracks, train, proposed, { allowPartial: train.legacyStart === true });
+      if (!validation.allowed) { notify(`This change would leave ${train.name} in an unsafe place: ${validation.reason}`, true); return false; }
+    }
+    return true;
+  };
+  const commitFleet = (next: TrainRuntime[], persist = false, selected = selectedTrainIdRef.current) => {
+    const validSelection = next.some((train) => train.id === selected) ? selected : next[0]?.id ?? null;
+    fleetRef.current = next;
+    selectedTrainIdRef.current = validSelection;
+    setFleet(next);
+    setSelectedTrainIdState(validSelection);
+    if (persist) setLayout(snapshotFleetLayout(layoutRef.current, next, validSelection));
+  };
+  const pauseAllTrains = () => commitFleet(fleetRef.current.map(pausedTrain), true);
+  const selectTrain = (id: string) => {
+    if (!fleetRef.current.some((train) => train.id === id)) return;
+    commitFleet(fleetRef.current, true, id);
+  };
+  const beginTrainPlacement = (id: string) => {
+    const train = fleetRef.current.find((candidate) => candidate.id === id);
+    if (!train) return;
+    commitFleet(fleetRef.current.map(pausedTrain), true, id);
+    setPlacementDirection(train.position
+      ? train.cabForward ? train.position.direction : train.position.direction === 1 ? -1 : 1
+      : 1);
+    setPlacementTrainId(id);
+    notify(`Trains paused. Click a rail to place ${train.name}. Green means there is room.`);
+  };
+  const cancelTrainPlacement = () => setPlacementTrainId(null);
+  const placeTrain = (nextPosition: TrainPosition) => {
+    const train = fleetRef.current.find((candidate) => candidate.id === placementTrainId);
+    if (!train) return;
+    const candidate = { ...pausedTrain(train), position: nextPosition, cabForward: true, legacyStart: false, lapProgress: 0, status: "stopped" as const };
+    const validation = validateTrainPlacement(tracks, candidate, fleetRef.current);
+    if (!validation.allowed) { notify(validation.reason ?? "There is not enough room for this train here.", true); return; }
+    rememberCurrentLayout();
+    commitFleet(fleetRef.current.map((entry) => entry.id === train.id ? candidate : entry), true);
+    setPlacementTrainId(null);
+    notify(`${train.name} is on the rails. Ready to drive!`);
+  };
+  const addTrain = (type: TrainType, count: number) => {
+    if (fleetRef.current.length >= MAX_TRAINSETS) { notify(`This railway has room for up to ${MAX_TRAINSETS} trainsets. Remove a train to add another.`, true); return; }
+    if (!Number.isInteger(count) || count < 3 || count > 11) return;
+    const number = fleetRef.current.filter((entry) => entry.type === type).length + 1;
+    const existingNames = new Set(fleetRef.current.map((entry) => entry.name));
+    let suffix = number;
+    while (existingNames.has(`${getTrainSpec(type).name} ${suffix}`)) suffix += 1;
+    const candidate: TrainRuntime = {
+      id: crypto.randomUUID(), name: `${getTrainSpec(type).name} ${suffix}`, type, carCount: count,
+      position: null, cabForward: true, requestedSpeed: DEFAULT_TRAIN_SPEED,
+      actualSpeed: 0, running: false, status: "unplaced", lapProgress: 0,
+    };
+    candidate.position = findTrainPlacement(tracks, candidate, fleetRef.current);
+    if (candidate.position) candidate.status = "stopped";
+    rememberCurrentLayout();
+    commitFleet([...fleetRef.current, candidate], true, candidate.id);
+    if (!candidate.position) {
+      setPlacementTrainId(candidate.id);
+      setPlacementDirection(1);
+      commitFleet(fleetRef.current.map(pausedTrain), true, candidate.id);
+      notify(`Added ${candidate.name}. Choose a rail with enough room, or build a longer track.`, true);
+    } else notify(`Added ${candidate.name}. Select a train to drive it.`);
+  };
+  const removeTrain = (id: string) => {
+    const train = fleetRef.current.find((entry) => entry.id === id);
+    if (!train) return;
+    rememberCurrentLayout();
+    commitFleet(fleetRef.current.filter((entry) => entry.id !== id), true);
+    if (placementTrainId === id) setPlacementTrainId(null);
+    notify(`${train.name} removed. Your other trains keep their controls.`);
+  };
+  const updateControlledTrain = (update: (train: TrainRuntime) => TrainRuntime, persist = false) => {
+    const id = selectedTrainIdRef.current;
+    commitFleet(fleetRef.current.map((train) => train.id === id ? update(train) : train), persist);
+  };
+  const setSpeed = (value: number) => updateControlledTrain((train) => ({
+    ...train, requestedSpeed: Math.max(5, Math.min(120, value)),
+  }), true);
+  const setRunning = (value: boolean) => updateControlledTrain((train) =>
+    value && train.position && !placementTrainId
+      ? { ...train, running: true, status: "accelerating", stopReason: undefined }
+      : pausedTrain(train), !value,
+  );
   useEffect(() => {
     if (designLibrary.error) notify(designLibrary.error, true);
     // Reading a damaged library must never overwrite the recoverable original.
@@ -246,20 +379,60 @@ export function useRailway() {
       );
     return result.allowed;
   };
-  const resetTrain = (nextTracks: Track[], nextTrainType?: TrainType, carCount = layout.carCount) => {
-    const next = initialTrain(nextTracks, nextTrainType, carCount);
-    positionRef.current = next;
-    setPosition(next);
-    setRunning(false);
-    lapProgressRef.current = 0;
-    setCabForward(true);
-  };
-  const changeLayout = (next: LayoutData, preserveSelection = false) => {
-    setHistory((previous) => [...previous.slice(-49), { layout, savedDesignId: activeSavedDesignId }]);
-    setLayout(next);
-    resetTrain(next.tracks, next.trainType, next.carCount);
+  const changeLayout = (next: LayoutData, preserveSelection = false, replaceFleet = false): boolean => {
+    const previousSnapshot = currentLayoutSnapshot();
+    let nextFleet = fleetRef.current;
+    if (replaceFleet) {
+      nextFleet = restoreFleet(next);
+      // New files store exact placements. Reject invalid placements rather than
+      // rendering overlapping trains; legacy open-end starts stay compatible.
+      if (next.version === 3 && !proposedFleetIsSafe(next.tracks, nextFleet)) return false;
+    } else if (next.tracks !== tracks) {
+      const occupied = occupiedFleetTrackIds(tracks, fleetRef.current);
+      const altered = tracks.find((track) => {
+        const replacement = next.tracks.find((candidate) => candidate.id === track.id);
+        return (!replacement || ["kind", "x", "y", "angle", "bend", "elevation", "endElevation", "route", "switchState"].some(
+          (key) => track[key as keyof Track] !== replacement[key as keyof Track],
+        )) && occupied.has(track.id);
+      });
+      if (altered) {
+        notify("This track is occupied. Place its train elsewhere or remove the train before changing it.", true);
+        setLayoutRevision((value) => value + 1);
+        return false;
+      }
+      nextFleet = fleetRef.current.map((train) => {
+        const paused = pausedTrain(train);
+        // Keep the original empty-layout workflow: its first train appears as
+        // track is built. Additional trainsets always require valid placement.
+        if (!paused.position && nextFleet.length === 1 && train.id === "train-1" && train.legacyStart) {
+          const initial = initialTrainPosition(next.tracks, train.type, train.carCount);
+          return { ...paused, position: initial, status: initial ? "stopped" as const : "unplaced" as const };
+        }
+        return paused;
+      });
+      for (const train of nextFleet) {
+        if (!train.position) continue;
+        const before = solveConsistPoses(tracks, train.position, train.cabForward, train.carCount, train.type);
+        const after = solveConsistPoses(next.tracks, train.position, train.cabForward, train.carCount, train.type);
+        if (after.cars.filter(Boolean).length < before.cars.filter(Boolean).length) {
+          notify(`This edit would leave ${train.name} without track. Place it elsewhere first.`, true);
+          setLayoutRevision((value) => value + 1);
+          return false;
+        }
+      }
+      if (!proposedFleetIsSafe(next.tracks, nextFleet)) {
+        setLayoutRevision((value) => value + 1);
+        return false;
+      }
+    }
+    setHistory((previous) => [...previous.slice(-49), { layout: previousSnapshot, savedDesignId: activeSavedDesignId }]);
+    const selectionId = replaceFleet ? next.selectedTrainId ?? nextFleet[0]?.id ?? null : selectedTrainIdRef.current;
+    setLayout(snapshotFleetLayout(next, nextFleet, selectionId));
+    commitFleet(nextFleet, false, selectionId);
+    setPlacementTrainId(null);
     if (!preserveSelection) setSelectedId(null);
     setAnchor(null);
+    return true;
   };
   const undo = () => {
     const previous = history.at(-1);
@@ -268,7 +441,8 @@ export function useRailway() {
     setLayout(previous.layout);
     setActiveSavedDesignId(savedDesigns.some((design) => design.id === previous.savedDesignId)
       ? previous.savedDesignId : null);
-    resetTrain(previous.layout.tracks, previous.layout.trainType, previous.layout.carCount);
+    commitFleet(restoreFleet(previous.layout), false, previous.layout.selectedTrainId ?? null);
+    setPlacementTrainId(null);
     setSelectedId(null);
     setAnchor(null);
     setLayoutRevision((value) => value + 1);
@@ -277,7 +451,7 @@ export function useRailway() {
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify({
-        ...layout,
+        ...currentLayoutSnapshot(),
         ...(activeSavedDesignId === null ? {} : { savedDesignId: activeSavedDesignId }),
       }));
       setSaved(true);
@@ -425,18 +599,9 @@ export function useRailway() {
   const setSwitchState = (id: string, state: "straight" | "branch") => {
     const track = tracks.find((piece) => piece.id === id);
     if (!track || (track.switchState ?? "straight") === state) return;
-    if (
-      running &&
-      occupiedTrackIds(
-        tracks,
-        positionRef.current,
-        cabForward,
-        layout.carCount,
-        trainType,
-      ).has(id)
-    ) {
+    if (occupiedFleetTrackIds(tracks, fleetRef.current).has(id)) {
       notify(
-        `Switch ${track.switchNumber} is occupied. Wait until the train clears it.`,
+        `Switch ${track.switchNumber} is occupied. Move the train clear of the points first.`,
         true,
       );
       return;
@@ -444,28 +609,9 @@ export function useRailway() {
     const nextTracks = tracks.map((piece) =>
       piece.id === id ? { ...piece, switchState: state } : piece,
     );
-    setHistory((previous) => [...previous.slice(-49), { layout, savedDesignId: activeSavedDesignId }]);
-    setLayout({ ...layout, tracks: nextTracks });
-    lapProgressRef.current = 0;
-    if (!running && positionRef.current.trackId === id) {
-      const lane = (positionRef.current.route ?? 0) % 2;
-      const route =
-        CATALOG.get(track.kind)?.shape === "scissors"
-          ? lane + (state === "branch" ? 2 : 0)
-          : state === "branch"
-            ? 1
-            : 0;
-      const next = {
-        ...positionRef.current,
-        route,
-        distance: Math.min(
-          positionRef.current.distance,
-          trackLength(nextTracks.find((piece) => piece.id === id)!, route),
-        ),
-      };
-      positionRef.current = next;
-      setPosition(next);
-    }
+    if (!proposedFleetIsSafe(nextTracks, fleetRef.current)) return;
+    rememberCurrentLayout();
+    setLayout(snapshotFleetLayout({ ...layout, tracks: nextTracks }, fleetRef.current, selectedTrainIdRef.current));
     notify(
       `Switch ${track.switchNumber}: ${state === "branch" ? "branch" : "straight"} route.`,
     );
@@ -620,26 +766,30 @@ export function useRailway() {
   };
   const removeSelected = () => {
     if (!selection) return;
-    changeLayout({
+    if (!changeLayout({
       ...layout,
       tracks: tracks.filter((t) => t.id !== selectedId),
       accessories: accessories.filter((p) => p.id !== selectedId),
-    });
+    })) return;
     notify("Piece removed. Undo brings it back.");
   };
   const toggleRunning = () => {
-    if (tracks.length) setRunning((value) => !value);
+    const train = fleetRef.current.find((entry) => entry.id === selectedTrainIdRef.current);
+    if (train?.position && tracks.length && !placementTrainId) setRunning(!train.running);
   };
   const reverse = () => {
-    const next: TrainPosition = {
-      ...positionRef.current,
-      direction: positionRef.current.direction === 1 ? -1 : 1,
-    };
-    positionRef.current = next;
-    setPosition(next);
-    setCabForward((v) => !v);
-    lapProgressRef.current = 0;
-    notify(`Your ${trainSpec.name} is travelling the other way.`);
+    const train = fleetRef.current.find((entry) => entry.id === selectedTrainIdRef.current);
+    if (!train?.position || placementTrainId) return;
+    if (train.running && train.actualSpeed > 0) {
+      updateControlledTrain((entry) => ({ ...entry, reverseRequested: true, status: "braking" }));
+      notify(`${train.name} is stopping before reversing.`);
+    } else {
+      updateControlledTrain((entry) => ({
+        ...pausedTrain(entry), position: entry.position ? { ...entry.position, direction: entry.position.direction === 1 ? -1 : 1 } : null,
+        cabForward: !entry.cabForward, lapProgress: 0,
+      }), true);
+      notify(`${train.name} is facing its next journey the other way.`);
+    }
   };
   const horn = async () => {
     try {
@@ -666,7 +816,6 @@ export function useRailway() {
     }
   };
   useEffect(() => {
-    if (!running || !tracks.length) return;
     let frame = 0;
     let last = performance.now();
     let accumulated = 0;
@@ -674,41 +823,37 @@ export function useRailway() {
       accumulated += Math.min(time - last, 100);
       last = time;
       if (accumulated >= 32) {
-        const distance =
-          ((((accumulated / 1000) * speed) / 3.6) * 1000) / trainSpec.scale;
-        const previous = positionRef.current;
-        const result = advanceConsist(
-          tracks,
-          previous,
-          distance,
-          cabForward,
-          layout.carCount,
-          trainType,
-        );
+        const previous = fleetRef.current;
+        if (previous.some((train) => train.running || train.reverseRequested)) {
+          const next = stepFleet(layoutRef.current.tracks, previous, accumulated / 1000);
+          const stopped = next.some((train) => !train.running && previous.find((entry) => entry.id === train.id)?.running);
+          commitFleet(next, stopped);
+          const blocked = next.find((train) => train.stopReason && previous.find((entry) => entry.id === train.id)?.stopReason !== train.stopReason);
+          if (blocked) notify(`${blocked.name}: ${blocked.stopReason}`);
+        }
         accumulated = 0;
-        let laps = 0;
-        const circumference = routeLengthRef.current;
-        if (circumference) {
-          lapProgressRef.current += distance;
-          laps = Math.floor(lapProgressRef.current / circumference);
-          lapProgressRef.current %= circumference;
-        }
-        result.position.laps = previous.laps + laps;
-        positionRef.current = result.position;
-        setPosition(result.position);
-        if (result.stopped) {
-          setRunning(false);
-          notify(
-            "End of the line! Check connectors and turnout settings, or reverse.",
-          );
-          return;
-        }
       }
       frame = requestAnimationFrame(tick);
     };
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
-  }, [running, speed, tracks, cabForward, layout.carCount, trainType]);
+  }, []);
+  useEffect(() => {
+    const persistProgress = () => {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({
+          ...currentLayoutSnapshot(),
+          ...(activeSavedDesignId === null ? {} : { savedDesignId: activeSavedDesignId }),
+        }));
+        setSaved(true);
+      } catch { setSaved(false); }
+    };
+    const interval = window.setInterval(() => {
+      if (fleetRef.current.some((train) => train.running)) persistProgress();
+    }, 2000);
+    window.addEventListener("pagehide", persistProgress);
+    return () => { window.clearInterval(interval); window.removeEventListener("pagehide", persistProgress); };
+  }, [activeSavedDesignId]);
   const actionsRef = useRef({ toggleRunning, reverse, undo, removeSelected });
   actionsRef.current = { toggleRunning, reverse, undo, removeSelected };
   useEffect(() => {
@@ -741,6 +886,7 @@ export function useRailway() {
         !event.ctrlKey
       )
         actionsRef.current.reverse();
+      else if (event.key === "Escape") setPlacementTrainId(null);
       else if (event.key === "Delete" || event.key === "Backspace") {
         event.preventDefault();
         actionsRef.current.removeSelected();
@@ -758,7 +904,7 @@ export function useRailway() {
   );
   useEffect(() => {
     if (!modal) return;
-    setRunning(false);
+    pauseAllTrains();
     const oldFocus = document.activeElement as HTMLElement | null;
     const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
     const controls = () =>
@@ -790,7 +936,7 @@ export function useRailway() {
     };
   }, [modal]);
   const chooseLayout = (preset: LayoutPreset) => {
-    changeLayout(createLayout(preset));
+    if (!changeLayout(createLayout(preset), false, true)) return;
     setActiveSavedDesignId(null);
     setLayoutRevision((value) => value + 1);
     setBuildHeight(preset === "viaduct" ? 60 : 0);
@@ -803,13 +949,29 @@ export function useRailway() {
         : "Your 3D railway is ready. All aboard!",
     );
   };
-  const chooseTrain = (type: TrainType) => {
-    if (type === trainType) return;
-    // The next formation starts at the same railway's beginning so longer
-    // Shinkansen cars cannot inherit the E235's shorter placement reference.
-    changeLayout({ ...layout, trainType: type }, true);
-    notify(`${getTrainSpec(type).name} is ready. Press Play for a new journey!`);
+  const changeTrainConfiguration = (type: TrainType, count: number) => {
+    const train = fleetRef.current.find((entry) => entry.id === selectedTrainIdRef.current);
+    if (!train || (train.type === type && train.carCount === count) || !Number.isInteger(count) || count < 3 || count > 11) return;
+    let name = train.name;
+    if (train.type !== type) {
+      let suffix = 1;
+      const otherNames = new Set(fleetRef.current.filter((entry) => entry.id !== train.id).map((entry) => entry.name));
+      while (otherNames.has(`${getTrainSpec(type).name} ${suffix}`)) suffix += 1;
+      name = `${getTrainSpec(type).name} ${suffix}`;
+    }
+    const candidate = { ...pausedTrain(train), type, carCount: count, name };
+    if (candidate.position) {
+      const validation = validateTrainPlacement(tracks, candidate, fleetRef.current, {
+        allowPartial: train.legacyStart === true && fleetRef.current.filter((entry) => entry.position).length === 1,
+      });
+      if (!validation.allowed) { notify(`Cannot change this train here: ${validation.reason} Place it on a longer, clear track first.`, true); return; }
+    }
+    rememberCurrentLayout();
+    commitFleet(fleetRef.current.map((entry) => entry.id === train.id ? candidate : entry), true);
+    notify(`${candidate.name} has ${count} cars. Your other trains are unchanged.`);
   };
+  const chooseTrain = (type: TrainType) => changeTrainConfiguration(type, fleetRef.current.find((entry) => entry.id === selectedTrainIdRef.current)?.carCount ?? carCount);
+  const changeTrainCarCount = (count: number) => changeTrainConfiguration(fleetRef.current.find((entry) => entry.id === selectedTrainIdRef.current)?.type ?? trainType, count);
   const saveDesign = (name: string, asCopy = false): boolean => {
     try {
       // Refresh before writing in case another tab has saved or deleted a design.
@@ -817,7 +979,7 @@ export function useRailway() {
       if (current.unavailable) {
         throw new Error("Your design was not saved. Enable browser storage and reload, or download a backup.");
       }
-      const result = saveDesignSnapshot(current.library, layout, name, activeSavedDesignId, asCopy);
+      const result = saveDesignSnapshot(current.library, currentLayoutSnapshot(), name, activeSavedDesignId, asCopy);
       persistSavedDesigns(result.library, current.recoveryRaw);
       setDesignLibrary({ library: result.library, recoveryRaw: null, error: null, unavailable: false });
       setSavedDesignsError(null);
@@ -838,7 +1000,7 @@ export function useRailway() {
       notify("This saved design is no longer available.", true);
       return;
     }
-    changeLayout(parseLayout(design.layout));
+    if (!changeLayout(parseLayout(design.layout), false, true)) return;
     setActiveSavedDesignId(id);
     setLayoutRevision((value) => value + 1);
     setBuildHeight(0);
@@ -873,7 +1035,7 @@ export function useRailway() {
   };
   const exportLayout = () => {
     const url = URL.createObjectURL(
-      new Blob([JSON.stringify(layout, null, 2)], { type: "application/json" }),
+      new Blob([JSON.stringify(currentLayoutSnapshot(), null, 2)], { type: "application/json" }),
     );
     const link = document.createElement("a");
     link.href = url;
@@ -890,7 +1052,7 @@ export function useRailway() {
           "This file is too large. Choose a Little Railways layout.",
         );
       const next = parseLayout(JSON.parse(await file.text()));
-      changeLayout(next);
+      if (!changeLayout(next, false, true)) return;
       setActiveSavedDesignId(null);
       setLayoutRevision((value) => value + 1);
       setCameraPreset("perspective");
@@ -911,6 +1073,21 @@ export function useRailway() {
     layout,
     trainType,
     trainSpec,
+    carCount,
+    fleet,
+    selectedTrainId,
+    selectTrain,
+    addTrain,
+    removeTrain,
+    pauseAllTrains,
+    placementTrainId,
+    placingTrain: placingTrain ? trainSnapshot(placingTrain) : null,
+    placementDirection,
+    setPlacementDirection,
+    beginTrainPlacement,
+    cancelTrainPlacement,
+    placeTrain,
+    changeTrainCarCount,
     tracks,
     accessories,
     history,

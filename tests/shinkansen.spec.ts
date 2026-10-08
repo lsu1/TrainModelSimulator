@@ -8,9 +8,9 @@ import type { TrainType } from '../src/trains';
 
 // Detailed cars use software WebGL in cloud checks, with a single worker.
 test.setTimeout(90_000);
-const STORAGE_KEY = 'little-railways-layout-v2';
+const STORAGE_KEY = 'little-railways-layout-v3';
 const LIBRARY_KEY = 'little-railways-saved-designs-v1';
-const scene = (page: Page) => page.getByRole('img', { name: '3D railway layout: rotate, zoom, and move Kato track pieces' });
+const scene = (page: Page) => page.getByRole('img', { name: '3D railway layout: rotate, zoom, select trains, and move Kato track pieces' });
 const selector = (page: Page) => page.getByRole('combobox', { name: 'Train', exact: true });
 
 type Point = { x: number; y: number; z: number };
@@ -68,7 +68,7 @@ async function open(page: Page) {
 
 async function seed(page: Page, layout: object) {
   await page.addInitScript(value => {
-    if (!localStorage.getItem('little-railways-layout-v2')) localStorage.setItem('little-railways-layout-v2', JSON.stringify(value));
+    if (!localStorage.getItem('little-railways-layout-v3') && !localStorage.getItem('little-railways-layout-v2')) localStorage.setItem('little-railways-layout-v2', JSON.stringify(value));
   }, layout);
   await open(page);
 }
@@ -230,14 +230,18 @@ for (const type of ['e5', 'e6', 'e7'] as const) {
   }
 }
 
-test('train selection pauses a running journey, preserves the railway, and can restore the original Yamanote model', async ({ page }) => {
+test('changing a stopped train model preserves its rail cursor and the railway, and restores Yamanote rendering', async ({ page }) => {
   await freeze(page);
   const layout = curvedGradeFixture('e235', 3);
   await seed(page, layout);
   const original = await saved(page);
   await page.getByRole('button', { name: 'Run train', exact: true }).click();
   await advance(page, 500);
-  const running = await rendered(page);
+  await expect(selector(page)).toBeDisabled();
+  await page.getByRole('button', { name: 'Pause train', exact: true }).click();
+  await advance(page, 100);
+  const stopped = await saved(page);
+  const stoppedRendering = await rendered(page);
   await selector(page).selectOption('e5');
   await advance(page, 100);
   await expect(page.getByRole('button', { name: 'Run train', exact: true })).toBeVisible();
@@ -245,7 +249,11 @@ test('train selection pauses a running journey, preserves the railway, and can r
   expect((await saved(page)).accessories).toEqual(original.accessories);
   expect((await saved(page)).carCount).toBe(3);
   const parked = await rendered(page);
-  expect(gap(parked.cars[0].center, running.cars[0].center), 'A new train is placed at the railway start').toBeGreaterThan(5);
+  expect((await saved(page)).trains[0].position, 'A model change preserves its existing rail cursor').toEqual(stopped.trains[0].position);
+  // The persisted cursor represents the nominal leading shell end. Bogies
+  // sit farther behind that end on the longer E5 cab; keeping the bogie
+  // fixed would instead relocate the saved train reference.
+  expect(gap(parked.cars[0].frontEnd, stoppedRendering.cars[0].frontEnd), 'A longer cab retains its leading end on this straight approach').toBeLessThan(.05);
   await advance(page, 500);
   expect(await rendered(page)).toEqual(parked);
   await selector(page).selectOption('e235');
