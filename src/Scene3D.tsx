@@ -748,6 +748,53 @@ export default function Scene3D(props: Scene3DProps) {
       const point = car.getObjectByName(name)?.position ?? fallback;
       return point ? point.clone().applyQuaternion(car.quaternion).add(car.position) : null;
     };
+    const appearanceCache = new WeakMap<THREE.Object3D, {
+      parts: string[]; metadata: Record<string, unknown>;
+      livery: { primary?: string; secondary?: string; stripe?: string; chin?: string };
+    }>();
+    const attachedPartPoint = (car: THREE.Object3D, name: string) => {
+      const part = car.getObjectByName(name);
+      if (!part) return undefined;
+      // Roof parts live inside a mirrored exterior. Resolve every ancestor,
+      // including the model-mm world scale, rather than using a local offset.
+      part.updateWorldMatrix(true, false);
+      return layoutPoint(new THREE.Vector3().setFromMatrixPosition(part.matrixWorld).divideScalar(SCALE));
+    };
+    const appearanceDiagnostics = (car: THREE.Object3D) => {
+      let cached = appearanceCache.get(car);
+      if (!cached) {
+        const colorOf = (...names: string[]) => {
+          for (const name of names) {
+            const part = car.getObjectByName(name);
+            if (!(part instanceof THREE.Mesh)) continue;
+            const material = Array.isArray(part.material) ? part.material[0] : part.material;
+            if ('color' in material) return `#${(material as THREE.MeshStandardMaterial).color.getHexString()}`;
+          }
+          return undefined;
+        };
+        const roof = car.getObjectByName('series-specific-roof-equipment');
+        const parts = new Set<string>();
+        roof?.traverse(part => { if (part.name && part !== roof) parts.add(part.name); });
+        cached = {
+          parts: [...parts], metadata: { ...roof?.userData },
+          livery: {
+            primary: colorOf('emerald-green-upper-body-and-duckbill', 'carmine-red-roof-and-pointed-nose', 'blue-roof-and-central-nose'),
+            secondary: colorOf('continuous-rounded-body-and-sculpted-nose'),
+            stripe: colorOf('pink-belt-line', 'silver-side-belt-below-windows', 'copper-belt-rising-around-cab-and-blue-nose'),
+            chin: colorOf('rounded-ivory-nose-chin-and-coupler-cover', 'rounded-silver-nose-chin-and-coupler-cover'),
+          },
+        };
+        appearanceCache.set(car, cached);
+      }
+      return {
+        livery: cached.livery,
+        roofEquipment: {
+          ...cached.metadata, parts: cached.parts,
+          antennaCenter: attachedPartPoint(car, 'cab-radio-antenna'),
+          pantographCenter: attachedPartPoint(car, 'pantograph-contact-strip'),
+        },
+      };
+    };
     // Diagnostics come from the rendered transforms and bellows vertices, so
     // browser checks detect detached meshes as well as incorrect solver poses.
     const consistDiagnostics = (rendered: RenderedTrain) => ({
@@ -770,6 +817,7 @@ export default function Scene3D(props: Scene3DProps) {
           frontGangway: layoutPoint(carPoint(car, 'gangway-front', new THREE.Vector3(spec.length / 2, gangwayHeight, 0))!),
           rearGangway: layoutPoint(carPoint(car, 'gangway-rear', new THREE.Vector3(-spec.length / 2, gangwayHeight, 0))!),
           quaternion: car.quaternion.toArray(),
+          ...(rendered.type === 'e235' ? {} : appearanceDiagnostics(car)),
         };
       }),
       couplers: rendered.links.children.map((connection, index) => {

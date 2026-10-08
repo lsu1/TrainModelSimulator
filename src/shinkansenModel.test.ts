@@ -61,8 +61,32 @@ describe('procedural Shinkansen models', () => {
     expect(e6.getObjectByName('silver-side-belt-below-windows')).toBeDefined()
     expect(e6.getObjectByName('swept-triangular-headlight-pocket')).toBeDefined()
     expect(e7.getObjectByName('copper-belt-rising-around-cab-and-blue-nose')).toBeDefined()
+    expect(e7.getObjectByName('copper-upper-roof-shoulder-edging')).toBeDefined()
     expect(e7.getObjectByName('thin-blue-line-below-copper-belt')).toBeDefined()
     for (const car of [e5, e6, e7]) disposeTrainModel(car)
+  })
+
+  it('E7 keeps its ivory chin and both copper belts distinct from the blue painted roof', () => {
+    for (const index of [0, 1, 2]) {
+      const car = createShinkansenCar(index, 3, 'e7')
+      const shell = car.getObjectByName('continuous-rounded-body-and-sculpted-nose') as THREE.Mesh<THREE.BufferGeometry, THREE.MeshPhysicalMaterial>
+      const roof = car.getObjectByName('blue-roof-and-central-nose') as THREE.Mesh<THREE.BufferGeometry, THREE.MeshPhysicalMaterial>
+      const upper = car.getObjectByName('copper-upper-roof-shoulder-edging') as THREE.Mesh<THREE.BufferGeometry, THREE.MeshStandardMaterial>
+      const lower = car.getObjectByName('copper-belt-rising-around-cab-and-blue-nose') as THREE.Mesh<THREE.BufferGeometry, THREE.MeshStandardMaterial>
+      expect(roof.material.color.b).toBeGreaterThan(roof.material.color.g * 2)
+      expect(roof.material.metalness).toBeLessThan(.1)
+      expect(shell.material.metalness).toBeLessThan(.1)
+      expect(upper.material).toBe(lower.material)
+      expect(upper.material.metalness).toBeGreaterThan(.4)
+      upper.geometry.computeBoundingBox()
+      expect(upper.geometry.boundingBox!.min.x).toBeCloseTo(-getTrainCarSpec('e7', index, 3).length / 2, 3)
+      if (index !== 1) {
+        const chin = car.getObjectByName('rounded-ivory-nose-chin-and-coupler-cover') as THREE.Mesh
+        expect(chin.material).toBe(shell.material)
+        expect(car.getObjectByName('rounded-silver-nose-chin-and-coupler-cover')).toBeUndefined()
+      }
+      disposeTrainModel(car)
+    }
   })
 
   it.each(types)('%s glass and headlight pockets have interior vertices above the curved body', type => {
@@ -79,7 +103,7 @@ describe('procedural Shinkansen models', () => {
     }
     const pocket = car.getObjectByName('swept-triangular-headlight-pocket') as THREE.Mesh | undefined
     if (pocket) expect(pocket.geometry.getAttribute('position').count).toBeGreaterThan(60)
-    expect(car.getObjectByName('rounded-silver-nose-chin-and-coupler-cover')).toBeDefined()
+    expect(car.getObjectByName(type === 'e7' ? 'rounded-ivory-nose-chin-and-coupler-cover' : 'rounded-silver-nose-chin-and-coupler-cover')).toBeDefined()
     expect(car.getObjectByName('curved-nose-bogie-upper-fairing')).toBeDefined()
     disposeTrainModel(car)
   })

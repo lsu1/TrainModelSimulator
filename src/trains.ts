@@ -62,7 +62,9 @@ export const TRAIN_SPECS: Readonly<Record<TrainType, TrainSpec>> = {
     bogieOffset: 54.6875, couplerOffset: 54.6875, couplingLinkLength: 51.075,
     noseLength: 56.25, carGap: GAP, fullFormation: 12, minimumRadius: 315,
     referenceUrl: 'https://www.katomodels.com/product/n/e7kei',
-    colors: { primary: '#206ba6', secondary: '#f3f1e9', stripe: '#b37652' },
+    // Official names: sky blue, ivory white and copper. These display colors
+    // are photographic approximations, not published JR paint specifications.
+    colors: { primary: '#2862d1', secondary: '#f0eee6', stripe: '#c89b69' },
   },
 }
 

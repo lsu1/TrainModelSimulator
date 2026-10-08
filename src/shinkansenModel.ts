@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { getTrainCarSpec } from './trains'
 import type { TrainType, TrainSpec } from './trains'
+import { addShinkansenRoof } from './shinkansenRoof'
 
 type ShinkansenType = Exclude<TrainType, 'e235'>
 type BoxPart = { position: [number, number, number]; size: [number, number, number]; rotation?: THREE.Euler }
@@ -266,20 +267,6 @@ function addBogies(car: THREE.Group, spec: TrainSpec, wheel: THREE.Material, dar
   }
 }
 
-function addPantograph(parent: THREE.Object3D, spec: TrainSpec, primary: THREE.Material, silver: THREE.Material, dark: THREE.Material) {
-  const fairing = new THREE.Group(); fairing.name = 'streamlined-pantograph-and-noise-shields'
-  fairing.position.set(-8, spec.height + .1, 0)
-  boxes(fairing, silver, [{ position: [0, .8, 0], size: [18, 1.2, 9] }], 'pantograph-well')
-  boxes(fairing, primary, [-1, 1].map(side => ({ position: [-.8, 2.0, side * 5.25] as [number, number, number], size: [22, 3.4, .7] as [number, number, number], rotation: new THREE.Euler(0, 0, -.04) })), 'aerodynamic-side-shields')
-  boxes(fairing, dark, [
-    { position: [-3, 3.5, 0], size: [.45, 5.8, .65], rotation: new THREE.Euler(0, 0, -.72) },
-    { position: [-.65, 6.9, 0], size: [.42, 4.6, .6], rotation: new THREE.Euler(0, 0, .72) },
-    { position: [1, 8.7, 0], size: [.8, .3, 10] },
-    { position: [1, 8.96, 0], size: [.28, .18, 12.2] },
-  ], 'single-arm-pantograph')
-  parent.add(fairing)
-}
-
 /** Both outside cars retain a cab even in a shortened play formation. */
 export function createShinkansenCar(index: number, total: number, type: ShinkansenType): THREE.Group {
   const spec = getTrainCarSpec(type, index, total)
@@ -287,8 +274,8 @@ export function createShinkansenCar(index: number, total: number, type: Shinkans
   const car = new THREE.Group(); car.name = `${spec.model}-Shinkansen-car-${index + 1}`
   car.userData = { model: spec.model, trainType: type, scale: spec.scale, carNumber: total - index, length: spec.length, bogieOffset: spec.bogieOffset, bogieDistance: spec.bogieOffset, cab, noseDirection, noseLength: spec.noseLength }
   const exterior = new THREE.Group(); exterior.name = 'smooth-aerodynamic-exterior'; exterior.rotation.y = noseDirection === -1 ? Math.PI : 0; car.add(exterior)
-  const pearl = new THREE.MeshPhysicalMaterial({ color: spec.colors.secondary, metalness: .24, roughness: .31, clearcoat: .7, clearcoatRoughness: .24 })
-  const primary = new THREE.MeshPhysicalMaterial({ color: spec.colors.primary, metalness: .32, roughness: .28, clearcoat: .9, clearcoatRoughness: .19 })
+  const pearl = new THREE.MeshPhysicalMaterial({ color: spec.colors.secondary, metalness: type === 'e7' ? .04 : .24, roughness: .31, clearcoat: .7, clearcoatRoughness: .24 })
+  const primary = new THREE.MeshPhysicalMaterial({ color: spec.colors.primary, metalness: type === 'e7' ? .06 : .32, roughness: .28, clearcoat: .9, clearcoatRoughness: .19 })
   const stripe = new THREE.MeshStandardMaterial({ color: spec.colors.stripe, metalness: type === 'e7' ? .55 : .16, roughness: .32 })
   const silver = new THREE.MeshStandardMaterial({ color: '#b3bac0', metalness: .66, roughness: .38 })
   const dark = new THREE.MeshStandardMaterial({ color: '#303a42', metalness: .3, roughness: .66 })
@@ -308,8 +295,8 @@ export function createShinkansenCar(index: number, total: number, type: Shinkans
       const frontCut = type === 'e7' ? .31 : Math.max(.10, -roofCut(type, spec, x))
       return THREE.MathUtils.lerp(1.32, frontCut, THREE.MathUtils.smoothstep(t, .03, .46))
     }
-    mesh(exterior, surfaceGrid(spec, type, noseXs, x => Math.PI + chinCut(x), x => TAU - chinCut(x), 30, .037), silver, 'rounded-silver-nose-chin-and-coupler-cover')
-    addNoseBogieFairing(exterior, spec, type, silver)
+    mesh(exterior, surfaceGrid(spec, type, noseXs, x => Math.PI + chinCut(x), x => TAU - chinCut(x), 30, .037), type === 'e7' ? pearl : silver, type === 'e7' ? 'rounded-ivory-nose-chin-and-coupler-cover' : 'rounded-silver-nose-chin-and-coupler-cover')
+    addNoseBogieFairing(exterior, spec, type, type === 'e7' ? pearl : silver)
   }
 
   if (type === 'e5') {
@@ -328,11 +315,19 @@ export function createShinkansenCar(index: number, total: number, type: Shinkans
     const bandStart = cab ? noseStart - 16 : halfLength
     const bandXs = [...xs.filter(x => x < bandStart), bandStart, ...(cab ? Array.from({ length: 40 }, (_, i) => bandStart + (halfLength - bandStart) * (i + 1) / 40) : [])]
     for (const side of [1, -1]) {
+      // E7 has a second, narrow copper edge along the blue roof shoulder.
+      // Continue that border around the cab, where it meets the wider nose belt.
+      const shoulderXs = xs.filter(x => !cab || x <= noseStart)
+      mesh(exterior, surfaceGrid(spec, type, shoulderXs,
+        x => side === 1 ? roofCut(type, spec, x) - .085 : Math.PI - roofCut(type, spec, x) - .008,
+        x => side === 1 ? roofCut(type, spec, x) + .008 : Math.PI - roofCut(type, spec, x) + .085,
+        2, .066), stripe, 'copper-upper-roof-shoulder-edging')
       const center = (x: number) => {
         const angle = x <= bandStart ? -.21 : x < noseStart ? -.21 + 1.23 * THREE.MathUtils.smoothstep(x, bandStart, noseStart) : roofCut(type, spec, x)
         return side === 1 ? angle : Math.PI - angle
       }
-      mesh(exterior, surfaceGrid(spec, type, bandXs, x => center(x) - .045, x => center(x) + .045, 2, .058), stripe, 'copper-belt-rising-around-cab-and-blue-nose')
+      const halfWidth = (x: number) => .045 + (cab ? .075 * THREE.MathUtils.smoothstep(x, noseStart, noseStart + spec.noseLength * .28) : 0)
+      mesh(exterior, surfaceGrid(spec, type, bandXs, x => center(x) - halfWidth(x), x => center(x) + halfWidth(x), 4, .058), stripe, 'copper-belt-rising-around-cab-and-blue-nose')
       const blueXs = xs.filter(x => x <= bandStart)
       const theta = side === 1 ? -.305 : Math.PI + .305
       mesh(exterior, surfaceGrid(spec, type, blueXs, () => theta - .018, () => theta + .018, 2, .057), primary, 'thin-blue-line-below-copper-belt')
@@ -370,13 +365,7 @@ export function createShinkansenCar(index: number, total: number, type: Shinkans
   addDoorOutlines(exterior, spec, doors, new THREE.LineBasicMaterial({ color: '#657578', transparent: true, opacity: .65 }))
   boxes(exterior, silver, doors.flatMap(x => [-1, 1].map(side => ({ position: [x + 1.2, 12.8, side * (bodySideZ(spec, 12.8) + .14)] as [number, number, number], size: [.35, .85, .15] as [number, number, number] }))), 'flush-door-handles')
 
-  // Low smooth roof housings on ordinary cars, and a slim single-arm collector
-  // with sound barriers on an interior car even in a three-car play formation.
-  if (!cab) {
-    const housing = new THREE.Mesh(new THREE.CapsuleGeometry(2.8, 12, 4, 10), pearl)
-    housing.name = 'low-streamlined-roof-equipment'; housing.rotation.z = Math.PI / 2; housing.scale.set(1, 1, 1.35); housing.position.set(20, spec.height + .05, 0); exterior.add(housing)
-    if (total <= 4 ? index === 1 : type === 'e6' ? [1, total - 2].includes(index) : [2, Math.max(2, total - 4)].includes(index)) addPantograph(exterior, spec, primary, silver, dark)
-  }
+  addShinkansenRoof(exterior, spec, type, index, total, { primary, pearl, silver, dark })
 
   if (cab) {
     const windStart = noseStart + spec.noseLength * (type === 'e7' ? .09 : .13)
@@ -415,8 +404,6 @@ export function createShinkansenCar(index: number, total: number, type: Shinkans
       })
       mesh(exterior, new THREE.TubeGeometry(new THREE.CatmullRomCurve3(points), 8, .065, 4, false), dark, 'windscreen-wiper')
     }
-    const antennaX = noseStart - 5
-    boxes(exterior, pearl, [{ position: [antennaX, spec.height + .50, 0], size: [2.8, .95, 1.3] }], 'low-cab-radio-antenna')
   }
 
   addBogies(car, spec, silver, dark, silver)
