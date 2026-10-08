@@ -63,7 +63,7 @@ async function openSavedDesign(page: Page, name: string) {
 async function freezeAnimationClock(page: Page) {
   const time = new Date('2026-01-01T00:00:00Z');
   await page.clock.install({ time });
-  await page.clock.pauseAt(time);
+  await page.clock.pauseAt(new Date(time.getTime() + 1000));
 }
 
 // Advance in bounded steps: animation caps long frame gaps at 100 ms.
@@ -182,7 +182,7 @@ test('3D train moves at the selected speed, pauses, and reverses without jumping
   expect(slow.x).toBeGreaterThan(initial.x);
   await slider.focus();
   await slider.press('End');
-  await expect(slider).toHaveValue('120');
+  await expect(slider).toHaveValue('90');
   // Compare equal steady-speed windows after the new per-train acceleration
   // ramp, rather than requiring an instantaneous velocity jump.
   await advanceAnimation(page, 800);
@@ -190,7 +190,7 @@ test('3D train moves at the selected speed, pauses, and reverses without jumping
   await expect.poll(async () => scene(page).evaluate(element => {
     const fleet = JSON.parse((element as HTMLCanvasElement).dataset.fleetPoses ?? '[]');
     return fleet.find((train: { id: string }) => train.id === (element as HTMLCanvasElement).dataset.selectedTrainId)?.actualSpeed;
-  })).toBe(120);
+  })).toBe(90);
   await advanceAnimation(page, 400);
   const fast = await trainPoint(page);
   expect(fast.x - fastStart.x).toBeGreaterThan((slow.x - initial.x) * 10);

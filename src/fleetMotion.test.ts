@@ -3,7 +3,8 @@ import { occupiedFleetTrackIds, stepFleet } from './fleetMotion'
 import type { TrainRuntime } from './fleet'
 import { advanceTrain, attachTrack, endpoints, makeCityLayout, pathsFor, pointAt } from './track'
 import type { Track } from './track'
-import { getTrainSpec } from './trains'
+import { getTrainSpec, TRAIN_TYPES } from './trains'
+import type { TrainType } from './trains'
 import { trainFootprint, trainFootprintsConflict, trainFootprintOverlapsItself } from './trainSafety'
 
 function line(count = 14, prefix = 'line', y = 0, elevation = 0): Track[] {
@@ -16,8 +17,9 @@ function line(count = 14, prefix = 'line', y = 0, elevation = 0): Track[] {
   }
   return result
 }
-function train(track: Track, distance = 100, id = 'one', direction: 1 | -1 = 1): TrainRuntime {
-  return { id, name: id, type: 'e235', carCount: 3, cabForward: true, requestedSpeed: 120, actualSpeed: 120, running: true, status: 'moving', lapProgress: 0,
+function train(track: Track, distance = 100, id = 'one', direction: 1 | -1 = 1, type: TrainType = 'e235'): TrainRuntime {
+  const speed = getTrainSpec(type).maxServiceSpeed
+  return { id, name: id, type, carCount: 3, cabForward: true, requestedSpeed: speed, actualSpeed: speed, running: true, status: 'moving', lapProgress: 0,
     position: { trackId: track.id, route: 0, distance, direction, laps: 0 } }
 }
 function referenceX(tracks: Track[], value: TrainRuntime): number {
@@ -26,17 +28,42 @@ function referenceX(tracks: Track[], value: TrainRuntime): number {
 }
 
 describe('independent shared-clock train movement', () => {
+  it.each(TRAIN_TYPES)('ramps %s to its own service maximum and clamps injected speeds', type => {
+    const tracks = line(30)
+    const limit = getTrainSpec(type).maxServiceSpeed
+    const initial = { ...train(tracks[10], 100, 'one', 1, type), requestedSpeed: limit + 500, actualSpeed: 0 }
+    let fleet = [initial]
+    for (let tick = 0; tick < 25; tick++) fleet = stepFleet(tracks, fleet, .1)
+    expect(fleet[0].requestedSpeed).toBe(limit)
+    expect(fleet[0].actualSpeed).toBe(limit)
+    expect(fleet[0].status).toBe('moving')
+    const injected = { ...initial, actualSpeed: limit + 500 }
+    const stoppedFrame = stepFleet(tracks, [injected], 0)[0]
+    expect(stoppedFrame.actualSpeed).toBe(limit)
+    expect(stoppedFrame.requestedSpeed).toBe(limit)
+    expect(stoppedFrame.position).toEqual(injected.position)
+    expect(initial.requestedSpeed).toBe(limit + 500)
+  })
+
+  it.each([NaN, Infinity, -Infinity, -10])('rejects invalid speed %s before safety substep sizing', invalid => {
+    const tracks = line(30)
+    const first = { ...train(tracks[10], 100, 'one', 1, 'e5'), requestedSpeed: invalid, actualSpeed: invalid }
+    const second = { ...train(tracks[13], 100, 'two', 1, 'e6'), requestedSpeed: invalid, actualSpeed: invalid }
+    const result = stepFleet(tracks, [first, second], .1)
+    expect(result.every(value => value.requestedSpeed === 0 && value.actualSpeed === 0 && !value.running)).toBe(true)
+    expect(result.map(value => value.position)).toEqual([first.position, second.position])
+  })
+
   it('preserves fleet identity, each model scale and immutability with mixed stock', () => {
     const low = line(14, 'low'), high = line(14, 'high', 80)
-    const before = [train(low[5]), { ...train(high[5], 100, 'two'), type: 'e5' as const }]
+    const before = [train(low[5]), train(high[5], 100, 'two', 1, 'e5')]
     const original = JSON.stringify(before), after = stepFleet([...low, ...high], before, .05)
     for (let index = 0; index < 2; index++) {
       expect(after[index].id).toBe(before[index].id)
-      expect(referenceX([...low, ...high], after[index]) - referenceX([...low, ...high], before[index])).toBeCloseTo(120 / 3.6 * 1000 / getTrainSpec(before[index].type).scale * .05, 6)
+      expect(referenceX([...low, ...high], after[index]) - referenceX([...low, ...high], before[index])).toBeCloseTo(getTrainSpec(before[index].type).maxServiceSpeed / 3.6 * 1000 / getTrainSpec(before[index].type).scale * .05, 6)
+      expect(after[index].actualSpeed).toBe(getTrainSpec(before[index].type).maxServiceSpeed)
     }
     expect(JSON.stringify(before)).toBe(original)
-    expect(after[0].actualSpeed).toBe(120)
-    expect(after[1].actualSpeed).toBe(120)
   })
 
   it('ramps one train, immediately pauses another, and keeps unplaced sets still', () => {
@@ -127,7 +154,7 @@ describe('independent shared-clock train movement', () => {
     const tracks = makeCityLayout()
     let fleet = [train(tracks[3], 230), { ...train(tracks[10], 100, 'two'), type: 'e6' as const }]
     const before = fleet[0].position!, result = stepFleet(tracks, fleet, 600)
-    const maximumAdvance = 120 / 3.6 * 1000 / 150 * .1
+    const maximumAdvance = getTrainSpec('e235').maxServiceSpeed / 3.6 * 1000 / 150 * .1
     const expected = advanceTrain(tracks, before, maximumAdvance).position
     expect(result[0].position!.trackId).toBe(expected.trackId)
     expect(result[0].position!.distance).toBeCloseTo(expected.distance, 8)
@@ -138,6 +165,67 @@ describe('independent shared-clock train movement', () => {
       expect(trainFootprint(tracks, fleet[1]).complete).toBe(true)
       expect(trainFootprintsConflict(trainFootprint(tracks, fleet[0]), trainFootprint(tracks, fleet[1]), 0)).toBe(false)
     }
+  })
+
+  it.each(TRAIN_TYPES)('bounds a stalled frame to 100 ms of %s service-speed motion', type => {
+    const tracks = line(30)
+    const before = train(tracks[10], 240, 'one', 1, type)
+    const result = stepFleet(tracks, [before], 600)[0]
+    const expectedDistance = getTrainSpec(type).maxServiceSpeed / 3.6 * 1000 / getTrainSpec(type).scale * .1
+    expect(referenceX(tracks, result) - referenceX(tracks, before)).toBeCloseTo(expectedDistance, 8)
+    expect(result.actualSpeed).toBe(getTrainSpec(type).maxServiceSpeed)
+    expect(trainFootprint(tracks, result).complete).toBe(true)
+  })
+
+  it.each(TRAIN_TYPES)('keeps every %s car supported through curve joins at its service maximum', type => {
+    const tracks = makeCityLayout()
+    let fleet = [train(tracks[3], 230, 'one', 1, type)]
+    const distance = getTrainSpec(type).maxServiceSpeed / 3.6 * 1000 / getTrainSpec(type).scale * .1
+    for (let tick = 0; tick < 30; tick++) {
+      const expected = advanceTrain(tracks, fleet[0].position!, distance).position
+      fleet = stepFleet(tracks, fleet, .1)
+      expect(fleet[0].position!.trackId).toBe(expected.trackId)
+      expect(fleet[0].position!.distance).toBeCloseTo(expected.distance, 7)
+      expect(fleet[0].actualSpeed).toBe(getTrainSpec(type).maxServiceSpeed)
+      const footprint = trainFootprint(tracks, fleet[0])
+      expect(footprint.complete).toBe(true)
+      expect(trainFootprintOverlapsItself(footprint)).toBe(false)
+    }
+  })
+
+  it('stops maximum-speed E5 and E6 head-on approaches before any body contact', () => {
+    const tracks = line(30)
+    let fleet = [train(tracks[10], 100, 'e5', 1, 'e5'), train(tracks[14], 100, 'e6', -1, 'e6')]
+    expect(fleet.every(value => trainFootprint(tracks, value).complete)).toBe(true)
+    let previous = fleet.map(value => referenceX(tracks, value))
+    for (let tick = 0; tick < 35; tick++) {
+      fleet = stepFleet(tracks, fleet, .1)
+      expect(trainFootprintsConflict(trainFootprint(tracks, fleet[0]), trainFootprint(tracks, fleet[1]), 0)).toBe(false)
+      const positions = fleet.map(value => referenceX(tracks, value))
+      const maximumAdvance = getTrainSpec('e5').maxServiceSpeed / 3.6 * 1000 / getTrainSpec('e5').scale * .1
+      expect(positions[0] - previous[0]).toBeGreaterThanOrEqual(-1e-6)
+      expect(previous[1] - positions[1]).toBeGreaterThanOrEqual(-1e-6)
+      expect(positions[0] - previous[0]).toBeLessThanOrEqual(maximumAdvance + 1e-6)
+      expect(previous[1] - positions[1]).toBeLessThanOrEqual(maximumAdvance + 1e-6)
+      previous = positions
+    }
+    expect(fleet.every(value => value.status === 'blocked' && value.actualSpeed === 0)).toBe(true)
+  })
+
+  it('brakes a maximum-speed E5 follower while its slower E7 leader and remote E6 keep moving', () => {
+    const tracks = line(30), remote = line(30, 'remote', 100)
+    let fleet = [train(tracks[10], 100, 'follower', 1, 'e5'), { ...train(tracks[14], 100, 'leader', 1, 'e7'), actualSpeed: 65, requestedSpeed: 65 }, train(remote[10], 100, 'remote', 1, 'e6')]
+    const leaderStart = referenceX(tracks, fleet[1]), remoteStart = referenceX(remote, fleet[2])
+    for (let tick = 0; tick < 35; tick++) {
+      fleet = stepFleet([...tracks, ...remote], fleet, .1)
+      expect(trainFootprintsConflict(trainFootprint(tracks, fleet[0]), trainFootprint(tracks, fleet[1]), 0)).toBe(false)
+    }
+    expect(fleet[0].status).toBe('blocked')
+    expect(fleet[1].running).toBe(true)
+    expect(fleet[2].running).toBe(true)
+    expect(fleet[2].actualSpeed).toBe(getTrainSpec('e6').maxServiceSpeed)
+    expect(referenceX(tracks, fleet[1])).toBeGreaterThan(leaderStart)
+    expect(referenceX(remote, fleet[2]) - remoteStart).toBeCloseTo(getTrainSpec('e6').maxServiceSpeed / 3.6 * 1000 / getTrainSpec('e6').scale * 3.5, 6)
   })
 
   it('locks a stopped trailing formation on a turnout and permits unoccupied pieces', () => {
@@ -188,6 +276,31 @@ describe('independent shared-clock train movement', () => {
     }
     expect(fleet.some(value => value.status === 'blocked')).toBe(true)
     expect(fleet.some(value => value.running)).toBe(true)
+  })
+
+  it.each(['x90', 'scissors'])('protects manufactured %s junctions at 320 km/h across stalled frames', kind => {
+    const junction: Track = { id: 'junction', kind, x: 0, y: 0, angle: 0, bend: 1, switchState: 'branch' }
+    const tracks = [junction], starts: Track[] = []
+    endpoints(junction).forEach((endpoint, port) => {
+      let anchor = endpoint
+      for (let piece = 0; piece < 8; piece++) {
+        const lead = attachTrack('s248', 1, anchor, `lead-${port}-${piece}`)
+        // Give a 320 km/h approach enough track to brake before the crossing.
+        tracks.push(lead); if (piece === 2) starts[port] = lead
+        anchor = endpoints(lead)[1]
+      }
+    })
+    const a = train(starts[0], 180, 'a', -1, 'e5'), b = train(starts[2], 180, 'b', -1, 'e6')
+    for (const initial of [[a, b], [b, a]]) {
+      let fleet = initial
+      for (let tick = 0; tick < 25; tick++) {
+        fleet = stepFleet(tracks, fleet, tick === 0 ? 600 : .1)
+        expect(trainFootprintsConflict(trainFootprint(tracks, fleet[0]), trainFootprint(tracks, fleet[1]), 0)).toBe(false)
+        expect(fleet.every(value => trainFootprint(tracks, value).complete)).toBe(true)
+      }
+      expect(fleet.some(value => value.status === 'blocked')).toBe(true)
+      expect(fleet.find(value => value.id === 'a')!.running).toBe(true)
+    }
   })
 
   it('brakes on a selected turnout merge while the train ahead keeps running', () => {

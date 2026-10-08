@@ -36,7 +36,7 @@ describe('independent fleet snapshots', () => {
     const restored = restoreFleet(saved)
     expect(saved.selectedTrainId).toBe('train-2')
     expect(restored.map(train => train.id)).toEqual(['train-1', 'train-2'])
-    expect(restored[1]).toMatchObject({ position: second.position, cabForward: false, requestedSpeed: 95, running: false, actualSpeed: 0, lapProgress: 0, status: 'stopped' })
+    expect(restored[1]).toMatchObject({ position: second.position, cabForward: false, requestedSpeed: 90, running: false, actualSpeed: 0, lapProgress: 0, status: 'stopped' })
     expect(restored[1]).not.toHaveProperty('reverseRequested')
     expect(restored[1]).not.toHaveProperty('stopReason')
     restored[1].position!.distance = 20

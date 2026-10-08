@@ -2,7 +2,7 @@ import { KATO_CATALOG } from './catalog'
 import type { LayoutData } from './layout'
 import { trackLength } from './track'
 import type { Track, TrainPosition } from './track'
-import { getTrainCarSpec, getTrainSpec } from './trains'
+import { clampTrainSpeed, getTrainCarSpec, getTrainSpec } from './trains'
 import type { TrainType } from './trains'
 
 /** A persisted, stopped placement. Runtime animation state is never saved. */
@@ -53,7 +53,7 @@ export function trainSnapshot(train: TrainSnapshot): TrainSnapshot {
   return {
     id: train.id, name: train.name, type: train.type, carCount: train.carCount,
     position: train.position ? { ...train.position } : null,
-    cabForward: train.cabForward, requestedSpeed: train.requestedSpeed,
+    cabForward: train.cabForward, requestedSpeed: clampTrainSpeed(train.type, train.requestedSpeed),
     ...(train.legacyStart === true ? { legacyStart: true } : {}),
   }
 }

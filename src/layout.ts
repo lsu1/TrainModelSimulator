@@ -2,7 +2,7 @@ import { KATO_CATALOG } from './catalog';
 import { endpoints, makeCityLayout, makeStarterLayout, makeViaductLayout, pathsFor } from './track';
 import type { Track, TrainPosition } from './track';
 import { makeKatoPlan02 } from './katoPlan';
-import { TRAIN_TYPES } from './trains';
+import { clampTrainSpeed, getTrainSpec, TRAIN_TYPES } from './trains';
 import type { TrainType } from './trains';
 import { MAX_TRAINSETS } from './fleet';
 import type { TrainSnapshot } from './fleet';
@@ -35,6 +35,7 @@ export const STORAGE_KEY = 'little-railways-layout-v3';
 export const PREVIOUS_STORAGE_KEY = 'little-railways-layout-v2';
 export const LEGACY_STORAGE_KEY = 'little-railways-layout-v1';
 const MAX_PIECES = 300;
+const MAX_SUPPORTED_SPEED = Math.max(...TRAIN_TYPES.map(type => getTrainSpec(type).maxServiceSpeed));
 const CATALOG = new Map(KATO_CATALOG.map((item) => [item.kind, item]));
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -174,7 +175,7 @@ export function parseLayout(value: unknown): LayoutData {
         || typeof value.cabForward !== 'boolean'
         || (value.legacyStart !== undefined && typeof value.legacyStart !== 'boolean')
         || typeof value.requestedSpeed !== 'number' || !Number.isFinite(value.requestedSpeed)
-        || value.requestedSpeed < 0 || value.requestedSpeed > 120) throw new Error(error);
+        || value.requestedSpeed < 0 || value.requestedSpeed > MAX_SUPPORTED_SPEED) throw new Error(error);
       trainIds.add(value.id);
       let position: TrainPosition | null = null;
       if (value.position !== null) {
@@ -200,7 +201,9 @@ export function parseLayout(value: unknown): LayoutData {
       return {
         id: value.id, name: value.name.trim(), type: value.type as TrainType,
         carCount: value.carCount, position, cabForward: value.cabForward,
-        requestedSpeed: value.requestedSpeed,
+        // Preserve older designs whose shared 120 km/h slider exceeded the
+        // Yamanote operating limit, while reducing only their speed setting.
+        requestedSpeed: clampTrainSpeed(value.type as TrainType, value.requestedSpeed),
         ...(value.legacyStart === true ? { legacyStart: true } : {}),
       };
     });

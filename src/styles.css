@@ -125,6 +125,7 @@ h1 { margin: 7px 0 7px; color: #2d4538; font-size: clamp(29px, 3vw, 38px); line-
 .speed-heading small { font-size: 10px; font-weight: 400; color: var(--muted); }
 .speed-control input[type='range'] { width: 100%; display: block; height: 5px; margin: 6px 0; }
 .speed-labels { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; font-size: 10px; color: #66795a; gap: 5px; }
+.speed-service-note { margin: 6px 0 0; font-size: 10px; line-height: 1.4; color: #66795a; }
 .direction-button { width: 59px; height: 59px; flex-shrink: 0; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 6px; padding: 5px 1px; border: 0; background: transparent; color: #566d49; font-size: 11px; }
 .direction-button:hover { background: var(--soft); }
 .direction-button svg { width: 20px; height: 20px; }

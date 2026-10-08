@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { KATO_CATALOG } from './catalog'
 import { LEGACY_STORAGE_KEY, PREVIOUS_STORAGE_KEY, STORAGE_KEY, createLayout, loadLayout, parseLayout, type LayoutData, type PlacedAccessory } from './layout'
 import { endpoints, makeStarterLayout, openEndpoints } from './track'
-import { TRAIN_TYPES } from './trains'
+import { getTrainSpec, TRAIN_TYPES } from './trains'
 import { MAX_TRAINSETS, restoreFleet, snapshotFleetLayout } from './fleet'
 
 const layout = (): LayoutData => createLayout('compact')
@@ -347,10 +347,45 @@ describe('version 3 independent train validation', () => {
     expect(parseLayout({ ...old, trains: [], selectedTrainId: 'unknown' })).toEqual(old)
   })
 
+  it.each(TRAIN_TYPES)('saves and restores the full %s service-speed range', type => {
+    const original = fleetLayout()
+    const max = getTrainSpec(type).maxServiceSpeed
+    const trains = [{ ...original.trains![0], type, requestedSpeed: max }, original.trains![1]]
+    const saved = snapshotFleetLayout(original, trains, trains[0].id)
+    const parsed = parseLayout(JSON.parse(JSON.stringify(saved)))
+    expect(parsed.trains![0].requestedSpeed).toBe(max)
+    expect(restoreFleet(parsed)[0]).toMatchObject({ requestedSpeed: max, actualSpeed: 0, running: false })
+    expect(parsed.tracks).toEqual(original.tracks)
+    expect(parsed.accessories).toEqual(original.accessories)
+    expect(parsed.trains![1]).toEqual(original.trains![1])
+  })
+
+  it('migrates the former 120 km/h Yamanote setting without losing its design or other train settings', () => {
+    const original = fleetLayout()
+    const old = { ...original, trains: [
+      { ...original.trains![0], requestedSpeed: 120 },
+      { ...original.trains![1], requestedSpeed: 320 },
+    ] }
+    const parsed = parseLayout(JSON.parse(JSON.stringify(old)))
+    expect(parsed).toEqual({ ...old, trains: [{ ...old.trains[0], requestedSpeed: 90 }, old.trains[1]] })
+    expect(old.trains[0].requestedSpeed).toBe(120)
+    vi.stubGlobal('localStorage', { getItem: (key: string) => key === STORAGE_KEY ? JSON.stringify(old) : null })
+    expect(loadLayout()).toEqual(parsed)
+  })
+
+  it('retains zero and safely limits imported speeds to each model instead of dropping a valid design', () => {
+    const original = fleetLayout()
+    const trains = TRAIN_TYPES.map((type, index) => ({ ...original.trains![0], id: `speed-${index}`, type, requestedSpeed: 320 }))
+    const parsed = parseLayout({ ...original, trains, selectedTrainId: trains[0].id })
+    expect(parsed.trains!.map(train => train.requestedSpeed)).toEqual([90, 320, 320, 275])
+    expect(parseLayout({ ...parsed, trains: parsed.trains!.map(train => ({ ...train, requestedSpeed: 0 })) })
+      .trains!.every(train => train.requestedSpeed === 0)).toBe(true)
+  })
+
   it.each([
     { id: '' }, { id: 'train-2' }, { name: ' ' }, { name: 'x'.repeat(61) },
     { type: 'E5' }, { type: 'e8' }, { carCount: 2 }, { carCount: 12 }, { carCount: 3.5 },
-    { cabForward: 1 }, { requestedSpeed: -1 }, { requestedSpeed: 121 }, { requestedSpeed: NaN },
+    { cabForward: 1 }, { requestedSpeed: -1 }, { requestedSpeed: 321 }, { requestedSpeed: NaN },
     { position: undefined }, { legacyStart: 'true' },
   ])('rejects a malformed train without silently dropping it: %j', patch => {
     const original = fleetLayout()

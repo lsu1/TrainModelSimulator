@@ -13,7 +13,7 @@ import {
 import type { Endpoint, Track, TrainPosition } from "./track";
 import { STORAGE_KEY, createLayout, loadLayout, parseLayout } from "./layout";
 import type { LayoutData, LayoutPreset, PlacedAccessory } from "./layout";
-import { getTrainCarSpec, getTrainSpec } from "./trains";
+import { clampTrainSpeed, getTrainCarSpec, getTrainSpec } from "./trains";
 import type { TrainType } from "./trains";
 import { DEFAULT_TRAIN_SPEED, MAX_TRAINSETS, initialTrainPosition, restoreFleet, snapshotFleetLayout, trainSnapshot } from "./fleet";
 import type { TrainRuntime } from "./fleet";
@@ -334,7 +334,7 @@ export function useRailway() {
     commitFleet(fleetRef.current.map((train) => train.id === id ? update(train) : train), persist);
   };
   const setSpeed = (value: number) => updateControlledTrain((train) => ({
-    ...train, requestedSpeed: Math.max(5, Math.min(120, value)),
+    ...train, requestedSpeed: clampTrainSpeed(train.type, Math.max(5, value)),
   }), true);
   const setRunning = (value: boolean) => updateControlledTrain((train) =>
     value && train.position && !placementTrainId
@@ -959,7 +959,10 @@ export function useRailway() {
       while (otherNames.has(`${getTrainSpec(type).name} ${suffix}`)) suffix += 1;
       name = `${getTrainSpec(type).name} ${suffix}`;
     }
-    const candidate = { ...pausedTrain(train), type, carCount: count, name };
+    const candidate = {
+      ...pausedTrain(train), type, carCount: count, name,
+      requestedSpeed: clampTrainSpeed(type, train.requestedSpeed),
+    };
     if (candidate.position) {
       const validation = validateTrainPlacement(tracks, candidate, fleetRef.current, {
         allowPartial: train.legacyStart === true && fleetRef.current.filter((entry) => entry.position).length === 1,

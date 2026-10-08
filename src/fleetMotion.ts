@@ -3,7 +3,7 @@ import { KATO_CATALOG } from './catalog'
 import { advanceConsist, occupiedTrackIds } from './trainMotion'
 import { advanceTrain, closedRouteLength, withTrackGraph } from './track'
 import type { Track, TrainPosition } from './track'
-import { getTrainSpec } from './trains'
+import { clampTrainSpeed, getTrainSpec } from './trains'
 import { bodyOccupiedTurnoutIds, safetyBoundsIntersect, sweptTrainFootprintsConflict, trainFootprint, trainFootprintsConflict, trainFootprintOverlapsItself } from './trainSafety'
 import type { TrainFootprint } from './trainSafety'
 
@@ -167,7 +167,7 @@ function speedState(train: TrainRuntime, seconds: number, reason?: string): Trai
   if (!train.running && !train.reverseRequested) return { ...train, actualSpeed: 0, status: train.status === 'blocked' ? 'blocked' : 'stopped' }
   const brakingReason = reason ?? (train.status === 'braking' && train.stopReason ? train.stopReason : undefined)
   const braking = !!train.reverseRequested || !!brakingReason
-  const target = braking ? 0 : Math.max(0, Math.min(120, train.requestedSpeed))
+  const target = braking ? 0 : clampTrainSpeed(train.type, train.requestedSpeed)
   const difference = target - train.actualSpeed
   const rate = difference >= 0 ? TRAIN_ACCELERATION_KMH_PER_SECOND : TRAIN_BRAKING_KMH_PER_SECOND
   const actualSpeed = Math.max(0, train.actualSpeed + Math.sign(difference) * Math.min(Math.abs(difference), rate * seconds))
@@ -193,7 +193,15 @@ function speedState(train: TrainRuntime, seconds: number, reason?: string): Trai
  */
 function stepFleetPrepared(tracks: Track[], fleet: readonly TrainRuntime[], dtSeconds: number): TrainRuntime[] {
   const seconds = Math.min(MAX_FLEET_FRAME_SECONDS, Math.max(0, Number.isFinite(dtSeconds) ? dtSeconds : 0))
-  let current = fleet.map(train => ({ ...train, position: train.position ? { ...train.position } : null }))
+  // The public solver also accepts injected runtimes. Normalize before the
+  // lookahead/substep calculation so malformed or superseded profiles cannot
+  // overrun their own service limit or create unbounded work.
+  let current = fleet.map(train => ({
+    ...train,
+    requestedSpeed: clampTrainSpeed(train.type, train.requestedSpeed),
+    actualSpeed: clampTrainSpeed(train.type, train.actualSpeed),
+    position: train.position ? { ...train.position } : null,
+  }))
   if (!seconds) return current.map(train => speedState(train, 0))
   const cached = frameCache(tracks)
   let footprints = current.map(train => {

@@ -11,6 +11,10 @@ export interface TrainSpec {
   line: string
   model: string
   scale: number
+  /** Fastest passenger service for this model/line, in real-world km/h. */
+  maxServiceSpeed: number
+  speedNote: string
+  speedReferenceUrl: string
   /** Intermediate car length; the two end cars use cabLength. */
   length: number
   cabLength: number
@@ -34,6 +38,9 @@ const GAP = 4.2
 export const TRAIN_SPECS: Readonly<Record<TrainType, TrainSpec>> = {
   e235: {
     type: 'e235', name: 'E235 Yamanote Line', line: 'Tokyo · Yamanote', model: 'E235-0', scale: 150,
+    maxServiceSpeed: 90,
+    speedNote: 'Yamanote service · vehicle specification: 120 km/h',
+    speedReferenceUrl: 'https://www.nippon.com/en/japan-topics/b11302/',
     length: 133.3, cabLength: 133.3, width: 20.3, height: 25.05,
     bogieOffset: 43.7, couplerOffset: 43.7, couplingLinkLength: 50.1,
     noseLength: 0, carGap: GAP, fullFormation: 11,
@@ -42,6 +49,9 @@ export const TRAIN_SPECS: Readonly<Record<TrainType, TrainSpec>> = {
   },
   e5: {
     type: 'e5', name: 'E5 Shinkansen', line: 'Tohoku / Hokkaido', model: 'E5', scale: SHINKANSEN_SCALE,
+    maxServiceSpeed: 320,
+    speedNote: 'Fastest Tohoku service · other sections have lower limits',
+    speedReferenceUrl: 'https://www.jreast.co.jp/train/shinkan/e5.html',
     length: 156.25, cabLength: 165.625, width: 20.9375, height: 22.8125,
     bogieOffset: 54.6875, couplerOffset: 54.6875, couplingLinkLength: 51.075,
     noseLength: 93.75, carGap: GAP, fullFormation: 10, minimumRadius: 315,
@@ -50,6 +60,9 @@ export const TRAIN_SPECS: Readonly<Record<TrainType, TrainSpec>> = {
   },
   e6: {
     type: 'e6', name: 'E6 Shinkansen', line: 'Tohoku / Akita', model: 'E6', scale: SHINKANSEN_SCALE,
+    maxServiceSpeed: 320,
+    speedNote: 'Tohoku: 320 km/h · conventional Akita section: 130 km/h',
+    speedReferenceUrl: 'https://www.jreast.co.jp/train/shinkan/e6.html',
     length: 128.125, cabLength: 142.65625, width: 18.40625, height: 22.0,
     bogieOffset: 46.875, couplerOffset: 46.875, couplingLinkLength: 38.575,
     noseLength: 81.25, carGap: GAP, fullFormation: 7, minimumRadius: 282,
@@ -58,6 +71,9 @@ export const TRAIN_SPECS: Readonly<Record<TrainType, TrainSpec>> = {
   },
   e7: {
     type: 'e7', name: 'E7 Shinkansen', line: 'Hokuriku / Joetsu', model: 'E7', scale: SHINKANSEN_SCALE,
+    maxServiceSpeed: 275,
+    speedNote: 'Joetsu: 275 km/h · Hokuriku: 260 km/h',
+    speedReferenceUrl: 'https://www.jreast.co.jp/train/shinkan/e7.html',
     length: 156.25, cabLength: 162.5, width: 20.9375, height: 22.8125,
     bogieOffset: 54.6875, couplerOffset: 54.6875, couplingLinkLength: 51.075,
     noseLength: 56.25, carGap: GAP, fullFormation: 12, minimumRadius: 315,
@@ -74,6 +90,11 @@ export function isTrainType(value: unknown): value is TrainType {
 
 export function getTrainSpec(type: TrainType = 'e235'): TrainSpec {
   return TRAIN_SPECS[type]
+}
+
+/** Shared guard for controls, imported saves and the animation engine. */
+export function clampTrainSpeed(type: TrainType, value: number): number {
+  return Number.isFinite(value) ? Math.max(0, Math.min(getTrainSpec(type).maxServiceSpeed, value)) : 0
 }
 
 /** A fixed cab at each outside end, including shortened play formations. */

@@ -18,6 +18,8 @@ Keyboard shortcuts: **Space** plays/pauses the selected train, **R** reverses it
 
 The **KATO M1 + V1 + V2** preset reconstructs [KATO's plan 02-1A](https://www.katomodels.com/unitrackplan/plan/plan02-1a.pdf) with 51 track pieces, 16 numbered incline/step supports, and two approach spacers. Set both numbered switches to **Straight** for the main line or both to **Branch** for the passing siding. The source plan requires **one additional 20-120 pack of four R315-45 curves** beyond ordinary M1, V1, and V2. Confirm that the regional/versioned V2 package supplies six No.5 piers and two spacers. Individual incline heights and the assembled joint fit are modeled rather than manufacturer-certified. See [the plan's sources and inventory](docs/kato-plan02-1a.md).
 
+Speed controls use each model’s maximum passenger-service speed: **Yamanote 90 km/h**, **E5 320 km/h**, **E6 320 km/h**, and **E7 275 km/h**. The slider changes with the selected train, and the train moves at the corresponding N-scale speed. Route notes explain lower limits on particular railway sections. Older Yamanote saves above 90 km/h retain their designs with the speed reduced to 90. See [speed sources and behavior](docs/train-speeds.md).
+
 ## Plan before buying parts
 
 Open **Check before shopping** to review connector gaps and angles, height mismatches, both double-track lanes, grades, supports, and scenery conflicts. Connections must meet within **0.25 mm horizontally and vertically, and 0.25°**. These are the app's connection rules, not KATO manufacturing tolerances. Purchased track lengths stay fixed: the app does not stretch a piece to close a loop.

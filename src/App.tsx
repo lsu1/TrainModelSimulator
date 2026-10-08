@@ -594,7 +594,7 @@ export default function App() {
                   aria-label="Train speed"
                   type="range"
                   min="5"
-                  max="120"
+                  max={h.trainSpec.maxServiceSpeed}
                   step="5"
                   value={h.speed}
                   disabled={!selectedTrain || !!h.placingTrain}
@@ -602,8 +602,9 @@ export default function App() {
                 />
                 <div className="speed-labels">
                   <span>Easy does it</span>
-                  <span>Next stop, adventure</span>
+                  <span>Max {h.trainSpec.maxServiceSpeed} km/h</span>
                 </div>
+                <p className="speed-service-note">{h.trainSpec.speedNote}</p>
               </div>
               <div className="control-divider" />
               <button
