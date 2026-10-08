@@ -20,6 +20,8 @@ Every train follows the existing track graph and rigid-car pose solver independe
 
 A blocked train displays a reason such as another train ahead or an open end. Move the obstruction, select another route, or reverse, then press Play to restart it. This is basic collision prevention; the simulator does not implement a real railway signalling or timetable system.
 
+Contact between cars in the same formation uses their rounded procedural bodies and localized roof fittings. Version 0.7.3 fixes the false curve stops caused by treating reserved headroom as solid bodywork on the KATO preset’s incline. Genuine contact still stops the train. See [curve and slope contact checks](train-collision-checks.md) for the correction and verification limits.
+
 Turnouts beneath **parked or moving** trains cannot change until the complete formation clears. A clear switch can still change without relocating unrelated trains. Moving, rotating, raising or deleting occupied track is also rejected. Move or remove its train first. Harmless track edits retain valid train positions; changes to the track network pause the fleet for review. Undo restores the saved fleet at the preceding edit boundary.
 
 New placement requires every car to fit on connected track and rejects overlap or a formation wrapping into itself on a short loop. Original single-train layouts retain their older partial-train behavior on unfinished open track. This compatibility case does not permit unsafe placement of additional trainsets.

@@ -4,7 +4,7 @@ import { CAR_LENGTH, CAR_SPACING } from './trainModel'
 import { BOGIE_OFFSET, COUPLING_LINK_LENGTH, solveConsistPoses } from './consistPose'
 import { advanceTrain, attachTrack, endpoints, makeStarterLayout, pointAt, sampleBehind, trackLength } from './track'
 import type { Track, TrainPosition } from './track'
-import { getCouplingLinkLength, getTrainCarSpec } from './trains'
+import { getCouplingLinkLength, getTrainCarSpec, getTrainSpec } from './trains'
 import type { TrainType } from './trains'
 
 const line: Track = { id: 'line', kind: 's248', x: 0, y: 0, angle: 0, bend: 1 }
@@ -227,7 +227,7 @@ describe.each<TrainType>(['e5', 'e6', 'e7'])('%s Shinkansen reverse bounds and o
     const spec = getTrainCarSpec(trainType, index, count)
     return spec.length / 2 - spec.bogieOffset
   }
-  const completeSpan = () => length(0) + length(1) + length(2) + 2 * 4.2
+  const completeSpan = () => length(0) + length(1) + length(2) + 2 * getTrainSpec(trainType).carGap
 
   it('stops the complete longer trailing cab at an open endpoint', () => {
     const tracks = openLine(4)
@@ -245,7 +245,7 @@ describe.each<TrainType>(['e5', 'e6', 'e7'])('%s Shinkansen reverse bounds and o
 
   it.each([false, true])('uses the shorter last visible middle car when it overhangs: %s', overhanging => {
     const tracks = openLine(3)
-    const visibleSpan = length(0) + length(1) + 4.2
+    const visibleSpan = length(0) + length(1) + getTrainSpec(trainType).carGap
     const initialX = visibleSpan + (overhanging ? -overhang(1) / 2 : 1)
     const initial: TrainPosition = { trackId: tracks[1].id, distance: initialX - 248, direction: -1, route: 0, laps: 0 }
     const before = solveConsistPoses(tracks, initial, false, count, trainType)
@@ -293,7 +293,7 @@ describe.each<TrainType>(['e5', 'e6', 'e7'])('%s Shinkansen reverse bounds and o
     const tracks = openLine(12)
     const cars = 6
     const position: TrainPosition = { trackId: tracks[10].id, distance: 200, direction: 1, laps: 0 }
-    let span = (cars - 1) * 4.2
+    let span = (cars - 1) * getTrainSpec(trainType).carGap
     for (let index = 0; index < cars; index += 1) span += getTrainCarSpec(trainType, index, cars).length
     const firstOccupied = Math.floor((10 * 248 + 200 - span) / 248)
     const occupied = occupiedTrackIds(tracks, position, true, cars, trainType)

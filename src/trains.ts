@@ -35,6 +35,10 @@ export interface TrainSpec {
 
 const SHINKANSEN_SCALE = 160
 const GAP = 4.2
+// Procedural spacing: the additional 0.6 mm prevents rounded Shinkansen
+// shells and end fittings touching at combined curve/grade transitions.
+// These gaps describe our fixed-link model, not measured KATO couplers.
+const SHINKANSEN_GAP = 4.8
 export const TRAIN_SPECS: Readonly<Record<TrainType, TrainSpec>> = {
   e235: {
     type: 'e235', name: 'E235 Yamanote Line', line: 'Tokyo · Yamanote', model: 'E235-0', scale: 150,
@@ -53,8 +57,8 @@ export const TRAIN_SPECS: Readonly<Record<TrainType, TrainSpec>> = {
     speedNote: 'Fastest Tohoku service · other sections have lower limits',
     speedReferenceUrl: 'https://www.jreast.co.jp/train/shinkan/e5.html',
     length: 156.25, cabLength: 165.625, width: 20.9375, height: 22.8125,
-    bogieOffset: 54.6875, couplerOffset: 54.6875, couplingLinkLength: 51.075,
-    noseLength: 93.75, carGap: GAP, fullFormation: 10, minimumRadius: 315,
+    bogieOffset: 54.6875, couplerOffset: 54.6875, couplingLinkLength: 51.675,
+    noseLength: 93.75, carGap: SHINKANSEN_GAP, fullFormation: 10, minimumRadius: 315,
     referenceUrl: 'https://www.katomodels.com/product/n/e5kei_hayabusa_slm',
     colors: { primary: '#008e7d', secondary: '#edf0ed', stripe: '#d55289' },
   },
@@ -64,8 +68,8 @@ export const TRAIN_SPECS: Readonly<Record<TrainType, TrainSpec>> = {
     speedNote: 'Tohoku: 320 km/h · conventional Akita section: 130 km/h',
     speedReferenceUrl: 'https://www.jreast.co.jp/train/shinkan/e6.html',
     length: 128.125, cabLength: 142.65625, width: 18.40625, height: 22.0,
-    bogieOffset: 46.875, couplerOffset: 46.875, couplingLinkLength: 38.575,
-    noseLength: 81.25, carGap: GAP, fullFormation: 7, minimumRadius: 282,
+    bogieOffset: 46.875, couplerOffset: 46.875, couplingLinkLength: 39.175,
+    noseLength: 81.25, carGap: SHINKANSEN_GAP, fullFormation: 7, minimumRadius: 282,
     referenceUrl: 'https://www.katomodels.com/product/n/e6kei_komachi',
     colors: { primary: '#c72f45', secondary: '#e7e8e6', stripe: '#a7acb0' },
   },
@@ -75,8 +79,8 @@ export const TRAIN_SPECS: Readonly<Record<TrainType, TrainSpec>> = {
     speedNote: 'Joetsu: 275 km/h · Hokuriku: 260 km/h',
     speedReferenceUrl: 'https://www.jreast.co.jp/train/shinkan/e7.html',
     length: 156.25, cabLength: 162.5, width: 20.9375, height: 22.8125,
-    bogieOffset: 54.6875, couplerOffset: 54.6875, couplingLinkLength: 51.075,
-    noseLength: 56.25, carGap: GAP, fullFormation: 12, minimumRadius: 315,
+    bogieOffset: 54.6875, couplerOffset: 54.6875, couplingLinkLength: 51.675,
+    noseLength: 56.25, carGap: SHINKANSEN_GAP, fullFormation: 12, minimumRadius: 315,
     referenceUrl: 'https://www.katomodels.com/product/n/e7kei',
     // Official names: sky blue, ivory white and copper. These display colors
     // are photographic approximations, not published JR paint specifications.

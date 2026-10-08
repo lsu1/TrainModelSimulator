@@ -1056,7 +1056,8 @@ test('KATO plan02 renders a connected three-car train climbing onto its red brid
   await page.keyboard.press('End');
   await page.getByRole('button', { name: 'Run train', exact: true }).click();
   let previous = (await renderedConsist(page)).cars;
-  for (let step = 0; step < 12; step += 1) {
+  // Four seconds at the E235's 90 km/h service cap reaches the bridge.
+  for (let step = 0; step < 16; step += 1) {
     await advanceAnimation(page, 250);
     const rendered = await renderedConsist(page);
     expectConnectedConsist(rendered, 3, rails);

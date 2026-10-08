@@ -47,7 +47,7 @@ The meshes use a 1:160 Shinkansen modeling convention, alongside the existing 1:
 | Nominal nose length | 93.75 | 81.25 | 56.25 |
 | Bogie-center separation | 109.375 | 93.75 | 109.375 |
 
-The E6 intermediate shell uses a 20.5 m visual body assumption; it is not inferred as an exact overall coupled length from the 148.65 m seven-car train figure. The model's 4.2 mm car-end gap and articulated connector geometry support smooth appearance on model curves. They do not reproduce the exact KATO diaphragm, tilting mechanism, pantograph motion, or electrical coupler construction. Detailed numbering, service-specific window layouts, interiors, and manufacturer logos are simplified.
+The E6 intermediate shell uses a 20.5 m visual body assumption; it is not inferred as an exact overall coupled length from the 148.65 m seven-car train figure. The Shinkansen models use a 4.8 mm nominal car-end gap and articulated connector geometry. Version 0.7.3 increased that procedural gap by 0.6 mm to prevent tiny shell and end-fitting intersections at combined curve/grade transitions; the E235 retains its 4.2 mm gap. Bodies, bogie chords and each pair's coupling links stay rigid during motion. These are renderer dimensions, not measured KATO coupler specifications. They do not reproduce the exact KATO diaphragm, tilting mechanism, pantograph motion, or electrical coupler construction. Detailed numbering, service-specific window layouts, interiors, and manufacturer logos are simplified.
 
 ## Curve planning and formations
 

@@ -28,7 +28,8 @@ function check(tracks: Track[], candidate: TrainSnapshot, otherFootprints: reado
   if (!Number.isInteger(candidate.carCount) || candidate.carCount < 3 || candidate.carCount > 11)
     return { allowed: false, reason: 'Choose between 3 and 11 cars for this train.' }
   // Reject impossible long loops cheaply, before solving repeated wrapped cars.
-  const nominalLength = Array.from({ length: candidate.carCount }, (_, index) => getTrainCarSpec(candidate.type, index, candidate.carCount).length).reduce((sum, length) => sum + length, 0) + (candidate.carCount - 1) * 4.2
+  const nominalLength = Array.from({ length: candidate.carCount }, (_, index) => getTrainCarSpec(candidate.type, index, candidate.carCount).length).reduce((sum, length) => sum + length, 0)
+    + (candidate.carCount - 1) * getTrainCarSpec(candidate.type, 0, candidate.carCount).carGap
   const physical = { ...position, direction: candidate.cabForward ? position.direction : position.direction === 1 ? -1 as const : 1 as const }
   const circumference = closedRouteLength(tracks, physical)
   if (circumference !== null && nominalLength + 2 > circumference)

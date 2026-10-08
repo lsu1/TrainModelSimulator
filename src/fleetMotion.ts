@@ -228,7 +228,7 @@ function stepFleetPrepared(tracks: Track[], fleet: readonly TrainRuntime[], dtSe
         else lower = fraction
       }
       distances[index] *= lower
-      proposals[index] = { ...moved(tracks, ready[index], distances[index]), actualSpeed: 0, running: false, status: 'blocked', stopReason: 'This curve is too tight for this train. Use a larger curve or fewer cars.' }
+      proposals[index] = { ...moved(tracks, ready[index], distances[index]), actualSpeed: 0, running: false, status: 'blocked', stopReason: 'The cars would touch here. Check the curve, slope, or loop size.' }
       proposedFootprints[index] = trainFootprint(tracks, proposals[index])
     }
     // Resolve all potentially conflicting pairs. Changed proposals are checked

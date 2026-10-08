@@ -1,8 +1,11 @@
 import { KATO_CATALOG } from './catalog'
+import * as THREE from 'three'
 import { solveConsistPoses } from './consistPose'
 import type { CarPose, PoseVector } from './consistPose'
+import { convexShapesIntersect } from './convexSafety'
 import type { TrainSnapshot } from './fleet'
 import { shinkansenSurface } from './shinkansenModel'
+import { createTrainCar, disposeTrainModel } from './trainModel'
 import { pathsFor, pointAt } from './track'
 import type { Track } from './track'
 import { getTrainCarSpec } from './trains'
@@ -30,6 +33,14 @@ export interface TrainFootprint {
   visibleCars: number
   rearOffset: number
 }
+
+interface PhysicalBodyVolume extends BodyVolume { vertices: PoseVector[] }
+/** Keep lazily realized physical geometry private; exported envelopes remain
+ * identical for inter-train checks, sweeps and reversal comparisons. */
+const SELF_COLLISION_PARTS = new WeakMap<TrainFootprint, {
+  bounds: () => BodyVolume[]
+  parts: (carIndex: number) => PhysicalBodyVolume[]
+}>()
 
 const emptyBounds = (): SafetyBounds => ({ minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity, minZ: Infinity, maxZ: -Infinity })
 const dot = (a: PoseVector, b: PoseVector) => a.x * b.x + a.y * b.y + a.z * b.z
@@ -68,6 +79,9 @@ export function bodyVolumesIntersect(a: BodyVolume, b: BodyVolume, margin = 0): 
 
 type LocalVolume = { along: number; halfLength: number; halfWidth: number; bottom: number; top: number }
 const LOCAL_VOLUMES = new Map<string, LocalVolume[]>()
+interface LocalPhysicalVolume extends LocalVolume { across: number; vertices: PoseVector[] }
+const LOCAL_PHYSICAL_VOLUMES = new Map<string, LocalPhysicalVolume[]>()
+const LOCAL_SELF_BOUNDS = new Map<string, LocalVolume & { across: number }>()
 const NOSE_STATIONS = {
   e5: [0, .14, .27, .40, .59, .77, .91, 1],
   e6: [0, .13, .27, .44, .64, .82, .94, 1],
@@ -118,6 +132,110 @@ function worldVolume(pose: CarPose, local: LocalVolume, carIndex: number): BodyV
   return { carIndex, center, axes, half, bounds: boundsOf(center, axes, half) }
 }
 
+/** The conservative 45 mm swept reserve contains empty space above the roof.
+ * It is useful between independent trains, but pitches that empty space into
+ * the next coupled car at a grade change. Physical self-contact instead uses
+ * the same original meshes as the renderer, preserving rounded body ends and
+ * the actual positions of antennas, collectors and air conditioners.
+ * Each instance remains separate: gaps between fittings are not filled in.
+ */
+function physicalLocalVolumes(train: TrainSnapshot, index: number): LocalPhysicalVolume[] {
+  const key = `${train.type}:${train.carCount}:${index}`
+  const cached = LOCAL_PHYSICAL_VOLUMES.get(key)
+  if (cached) return cached
+  const car = createTrainCar(index, train.carCount, train.type)
+  car.updateMatrixWorld(true)
+  const parts: LocalPhysicalVolume[] = []
+  const point = new THREE.Vector3(), instanceMatrix = new THREE.Matrix4(), transform = new THREE.Matrix4()
+  car.traverse(object => {
+    if (!(object instanceof THREE.Mesh)) return
+    // Coupling shanks and their mounting hardware belong to the articulated
+    // connection, whose joined contact is intentional. Shell checks still
+    // include every adjacent pair of cars, including their end diaphragms.
+    if (/^(?:covered-)?coupler-mount-(?:front|rear)$/.test(object.name)) return
+    const positions = object.geometry.getAttribute('position')
+    if (!positions) return
+    const instances = object instanceof THREE.InstancedMesh ? object.count : 1
+    for (let instance = 0; instance < instances; instance++) {
+      transform.copy(object.matrixWorld)
+      if (object instanceof THREE.InstancedMesh) {
+        object.getMatrixAt(instance, instanceMatrix)
+        transform.multiply(instanceMatrix)
+      }
+      // Extruded shells and long body ribbons have repeated cross sections.
+      // Keep the two extreme longitudinal points on each cross-section ray;
+      // removed points lie inside those line segments, preserving the hull.
+      const rays = new Map<string, [PoseVector, PoseVector]>()
+      for (let vertex = 0; vertex < positions.count; vertex++) {
+        point.fromBufferAttribute(positions, vertex).applyMatrix4(transform)
+        const value = { x: point.x, y: point.z, z: point.y }
+        const ray = `${value.y}:${value.z}`
+        const range = rays.get(ray)
+        if (!range) rays.set(ray, [value, value])
+        else {
+          if (value.x < range[0].x) range[0] = value
+          if (value.x > range[1].x) range[1] = value
+        }
+      }
+      const vertices = [...rays.values()].flatMap(([first, last]) => first === last ? [first] : [first, last])
+      if (!vertices.length) continue
+      const bounds = emptyBounds()
+      for (const vertex of vertices) {
+        bounds.minX = Math.min(bounds.minX, vertex.x); bounds.maxX = Math.max(bounds.maxX, vertex.x)
+        bounds.minY = Math.min(bounds.minY, vertex.y); bounds.maxY = Math.max(bounds.maxY, vertex.y)
+        bounds.minZ = Math.min(bounds.minZ, vertex.z); bounds.maxZ = Math.max(bounds.maxZ, vertex.z)
+      }
+      parts.push({ along: (bounds.minX + bounds.maxX) / 2, halfLength: (bounds.maxX - bounds.minX) / 2,
+        across: (bounds.minY + bounds.maxY) / 2, halfWidth: (bounds.maxY - bounds.minY) / 2,
+        bottom: bounds.minZ, top: bounds.maxZ, vertices })
+    }
+  })
+  disposeTrainModel(car)
+  LOCAL_PHYSICAL_VOLUMES.set(key, parts)
+  return parts
+}
+
+/** Unlike the independent-train reserve, this broad phase includes every
+ * retained mesh protrusion, including nose paint and end gangway frames. */
+function physicalLocalBounds(train: TrainSnapshot, index: number): LocalVolume & { across: number } {
+  const key = `${train.type}:${train.carCount}:${index}`
+  const cached = LOCAL_SELF_BOUNDS.get(key)
+  if (cached) return cached
+  const parts = physicalLocalVolumes(train, index)
+  const bounds = emptyBounds()
+  for (const part of parts) merge(bounds, {
+    minX: part.along - part.halfLength, maxX: part.along + part.halfLength,
+    minY: part.across - part.halfWidth, maxY: part.across + part.halfWidth,
+    minZ: part.bottom, maxZ: part.top,
+  })
+  const local = {
+    along: (bounds.minX + bounds.maxX) / 2, halfLength: (bounds.maxX - bounds.minX) / 2,
+    across: (bounds.minY + bounds.maxY) / 2, halfWidth: (bounds.maxY - bounds.minY) / 2,
+    bottom: bounds.minZ, top: bounds.maxZ,
+  }
+  LOCAL_SELF_BOUNDS.set(key, local)
+  return local
+}
+
+function offsetWorldVolume(pose: CarPose, local: LocalVolume & { across: number }, carIndex: number): BodyVolume {
+  const volume = worldVolume(pose, local, carIndex)
+  const right = volume.axes[1]
+  volume.center.x += right.x * local.across; volume.center.y += right.y * local.across
+  volume.bounds = boundsOf(volume.center, volume.axes, volume.half)
+  return volume
+}
+
+function physicalWorldVolume(pose: CarPose, local: LocalPhysicalVolume, carIndex: number): PhysicalBodyVolume {
+  const volume = offsetWorldVolume(pose, local, carIndex)
+  const [forward, right, up] = volume.axes
+  const vertices = local.vertices.map(vertex => ({
+    x: pose.center.x + forward.x * vertex.x + right.x * vertex.y + up.x * vertex.z,
+    y: pose.center.y + forward.y * vertex.x + right.y * vertex.y + up.y * vertex.z,
+    z: pose.center.z + RAIL_TOP + forward.z * vertex.x + up.z * vertex.z,
+  }))
+  return { ...volume, vertices }
+}
+
 export function trainFootprint(tracks: Track[], train: TrainSnapshot): TrainFootprint {
   const bounds = emptyBounds()
   if (!train.position) return { volumes: [], bounds, complete: false, visibleCars: 0, rearOffset: 0 }
@@ -125,7 +243,23 @@ export function trainFootprint(tracks: Track[], train: TrainSnapshot): TrainFoot
   const volumes = poses.cars.flatMap((pose, index) => pose ? localVolumes(train, index).map(local => worldVolume(pose, local, index)) : [])
   volumes.forEach(volume => merge(bounds, volume.bounds))
   const visibleCars = poses.cars.filter(Boolean).length
-  return { volumes, bounds, complete: visibleCars === train.carCount, visibleCars, rearOffset: poses.rearOffset }
+  const physicalCars = new Map<number, PhysicalBodyVolume[]>()
+  const selfCollisionParts = (carIndex: number): PhysicalBodyVolume[] => {
+    const cached = physicalCars.get(carIndex)
+    if (cached) return cached
+    const pose = poses.cars[carIndex]
+    const parts = pose ? physicalLocalVolumes(train, carIndex).map(local => physicalWorldVolume(pose, local, carIndex)) : []
+    physicalCars.set(carIndex, parts)
+    return parts
+  }
+  const footprint = { volumes, bounds, complete: visibleCars === train.carCount, visibleCars, rearOffset: poses.rearOffset }
+  let selfBounds: BodyVolume[] | undefined
+  SELF_COLLISION_PARTS.set(footprint, {
+    bounds: () => selfBounds ??= poses.cars.flatMap((pose, index) =>
+      pose ? [offsetWorldVolume(pose, physicalLocalBounds(train, index), index)] : []),
+    parts: selfCollisionParts,
+  })
+  return footprint
 }
 
 export function trainFootprintsConflict(first: TrainFootprint, second: TrainFootprint, margin = TRAIN_SAFETY_GAP): boolean {
@@ -133,8 +267,21 @@ export function trainFootprintsConflict(first: TrainFootprint, second: TrainFoot
     && first.volumes.some(a => second.volumes.some(b => bodyVolumesIntersect(a, b, margin)))
 }
 
+/** Solid-car broad bounds are also available for geometry verification. */
+export function trainSelfCollisionBounds(footprint: TrainFootprint): readonly BodyVolume[] {
+  return SELF_COLLISION_PARTS.get(footprint)?.bounds() ?? footprint.volumes
+}
+
 export function trainFootprintOverlapsItself(footprint: TrainFootprint): boolean {
-  return footprint.volumes.some((a, index) => footprint.volumes.slice(index + 1).some(b => a.carIndex !== b.carIndex && bodyVolumesIntersect(a, b)))
+  const physicalParts = SELF_COLLISION_PARTS.get(footprint)
+  const volumes = trainSelfCollisionBounds(footprint)
+  return volumes.some((a, index) => volumes.slice(index + 1).some(b => {
+    if (a.carIndex === b.carIndex || !bodyVolumesIntersect(a, b)) return false
+    if (!physicalParts) return true
+    const first = physicalParts.parts(a.carIndex), second = physicalParts.parts(b.carIndex)
+    return first.some(physicalA => second.some(physicalB => bodyVolumesIntersect(physicalA, physicalB)
+      && convexShapesIntersect(physicalA.vertices, physicalB.vertices)))
+  }))
 }
 
 function sweptVolumes(start: TrainFootprint, end: TrainFootprint, sharedTranslation: PoseVector): TrainFootprint {

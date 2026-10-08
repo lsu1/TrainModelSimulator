@@ -229,7 +229,7 @@ describe.each<TrainType>(['e5', 'e6', 'e7'])('%s Shinkansen rigid formation', tr
       let previousRear = leading.x
       for (const [index, car] of cars.entries()) {
         const spec = getTrainCarSpec(trainType, index, count)
-        expect(car.frontEnd.x).toBeCloseTo(previousRear - (index ? 4.2 : 0), 6)
+        expect(car.frontEnd.x).toBeCloseTo(previousRear - (index ? spec.carGap : 0), 6)
         expect(car.rearEnd.x).toBeCloseTo(car.frontEnd.x - spec.length, 6)
         previousRear = car.rearEnd.x
       }
