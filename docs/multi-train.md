@@ -4,9 +4,11 @@ The simulator supports independent E235 Yamanote Line, E5, E6 and E7 trainsets o
 
 ## Add, select and drive
 
-Use **Your trains** below the scene to choose a model and **3–11 cars**, then press **Add train**. The simulator searches connected rails for a free place where the complete formation fits. If no suitable place is available, the new train stays unplaced and offers a placement preview. Trainsets have separate identities and names, including repeated models.
+Version **0.10.0** keeps selection and driving in the main railway screen. The active-train selector, model, and **Cars** controls sit above the canvas with a horizontally scrolling fleet strip. The lower dock contains start/pause, speed, reverse, horn, and Shinkansen coupling controls. **Add a train** stays at the bottom; the large introductory heading and lap display are removed. Everyday controls fit a **1280 × 720** Mac browser viewport, while fleet and switch lists scroll within their panels.
 
-Choose a train from **Driving**, click its card, or click its body in the scene. The existing Play/Pause, speed, reverse and horn controls address that train. **Train view** follows the selected formation. Other trains retain their own position, speed and operating state when selection changes. **Pause all** stops every train immediately.
+Use **Add a train** to choose a model and **3–11 cars**, then press **Add train**. The simulator searches connected rails for a free place where the complete formation fits. If no suitable place is available, the new train stays unplaced and offers a placement preview. Trainsets have separate identities and names, including repeated models.
+
+Choose a train from the top selector, click its fleet chip, or click its body in the scene. The lower dock's start/pause and speed controls address that train. The two-arrow icon reverses it and the speaker sounds its horn; hover labels and accessible names identify **Reverse train direction** and **Sound train horn**. **Train view** follows the selected formation. Other trains retain their own position, speed and operating state when selection changes. The top pause icon **Pause all trains** stops every train immediately.
 
 Speed changes use a short acceleration or braking ramp. Pause stops the selected train immediately. Reversing a moving train brakes it to a stop before changing direction; reversing a stopped train preserves its physical placement. Change a train's model or car count while it is stopped. The change must fit at the existing rail position and must clear other trainsets.
 
@@ -23,6 +25,8 @@ A blocked train displays a reason such as another train ahead or an open end. Mo
 Contact between cars in the same formation uses their rounded procedural bodies and localized roof fittings. Version 0.7.3 fixes the false curve stops caused by treating reserved headroom as solid bodywork on the KATO preset’s incline. Genuine contact still stops the train. See [curve and slope contact checks](train-collision-checks.md) for the correction and verification limits.
 
 Turnouts beneath **parked or moving** trains cannot change until the complete formation clears. A clear switch can still change without relocating unrelated trains. Moving, rotating, raising or deleting occupied track is also rejected. Move or remove its train first. Harmless track edits retain valid train positions; changes to the track network pause the fleet for review. Undo restores the saved fleet at the preceding edit boundary.
+
+Use the **Switches** sidebar beside the canvas to control numbered turnouts. The rail icons choose **Straight** or **Branch**, and the locate icon shows the matching turnout. The camera toolbar's numbered route button collapses or opens the sidebar. Instructional paragraphs are replaced by compact controls; blocked trains and unavailable coupling operations still show their reason.
 
 New placement requires every car to fit on connected track and rejects overlap or a formation wrapping into itself on a short loop. Original single-train layouts retain their older partial-train behavior on unfinished open track. This compatibility case does not permit unsafe placement of additional trainsets.
 
@@ -45,3 +49,5 @@ Version **0.9.0** lets any two E5, E6, or E7 sets join, including two of the sam
 Both original train IDs, names, models, counts and roof roles remain distinct while one shared solver advances the formation. Selecting either member drives both. The shared maximum speed is the lower member limit: **275 km/h when E7 is included**, otherwise **320 km/h**. Pause or reverse affects both partners.
 
 Choose each model and **3–11 cars** in **Layouts → Coupling station**, or use **Try 17 cars: E6 (7) + E5 (10)**. The practice oval grows to fit the chosen sets. A connected formation can therefore have **6–22 cars**; its complete length must fit safely on the railway. Stop both partners to change either car count while keeping them joined. A count change is rejected if the resulting formation would not fit or would touch another train. Separate partners before changing their models, moving an individual set, or removing it. See [joining, splitting and mechanism references](shinkansen-nose-coupling.md).
+
+Coupling controls share the lower driving dock: select a partner, use the linked-chain **Couple trains** icon to join, the eye **Nose view** icon for a close-up, and the broken-chain **Decouple trains** icon to separate. The connected badge shows both models and their total car count; either fleet member can control that formation.

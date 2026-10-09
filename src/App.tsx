@@ -1,22 +1,17 @@
 import {
   ArrowDownToLine,
-  ArrowLeftRight,
   ArrowUpFromLine,
   AlertTriangle,
   Building2,
   Check,
   ChevronRight,
   CircleHelp,
-  Eye,
   FolderOpen,
   Layers3,
   Lightbulb,
   Link2,
-  Maximize2,
-  MousePointer2,
   Mountain,
   Move,
-  Pause,
   Play,
   Plus,
   RotateCcw,
@@ -26,26 +21,22 @@ import {
   TrainFront,
   Trash2,
   Undo2,
-  Unlink2,
-  Volume2,
   Waypoints,
   X,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import Scene3D from "./Scene3D";
+import RailwayCockpit from "./RailwayCockpit";
 import { KATO_CATALOG, CATALOG_SOURCES } from "./catalog";
 import type { CatalogCategory, CatalogItem } from "./catalogTypes";
 import { CATALOG, useRailway } from "./useRailway";
 import { TRAIN_TYPES, getTrainSpec } from "./trains";
 import type { TrainType } from "./trains";
-import { MAX_TRAINSETS } from "./fleet";
-import type { TrainRuntime } from "./fleet";
 import type { LayoutData } from "./layout";
 import {
   CheckSummary,
   RampBuilder,
   ShoppingReview,
-  SwitchPanel,
 } from "./BuildTools";
 
 const CATEGORIES: {
@@ -71,23 +62,6 @@ const TRAIN_DESCRIPTIONS: Record<TrainType, string> = {
 type ShinkansenType = Exclude<TrainType, "e235">;
 const SHINKANSEN_TYPES: readonly ShinkansenType[] = ["e5", "e6", "e7"];
 const PLAY_CAR_COUNTS = Array.from({ length: 9 }, (_, index) => index + 3);
-const TRAIN_STATUS_LABELS: Record<TrainRuntime["status"], string> = {
-  unplaced: "Unplaced",
-  stopped: "Stopped",
-  accelerating: "Accelerating",
-  moving: "Moving",
-  braking: "Braking",
-  blocked: "Waiting",
-};
-const COUPLING_PHASE_LABELS: Record<string, string> = {
-  opening: "Opening noses",
-  approaching: "Joining trains",
-  locking: "Connecting couplers",
-  coupled: "Connected",
-  unlocking: "Unlocking couplers",
-  separating: "Separating trains",
-  closing: "Closing noses",
-};
 function savedTrainSummary(layout: LayoutData): string {
   if (!layout.trains) {
     return `${getTrainSpec(layout.trainType).name} · ${layout.carCount} cars`;
@@ -185,43 +159,10 @@ export default function App() {
   } = h;
   const [saveName, setSaveName] = useState(layout.name);
   const [deleteDesignId, setDeleteDesignId] = useState<string | null>(null);
-  const [newTrainType, setNewTrainType] = useState<TrainType>("e5");
-  const [newTrainCarCount, setNewTrainCarCount] = useState(3);
-  const [couplingPartnerId, setCouplingPartnerId] = useState("");
   const [practiceFirstType, setPracticeFirstType] = useState<ShinkansenType>("e6");
   const [practiceFirstCars, setPracticeFirstCars] = useState(3);
   const [practiceSecondType, setPracticeSecondType] = useState<ShinkansenType>("e5");
   const [practiceSecondCars, setPracticeSecondCars] = useState(3);
-  const selectedTrain = h.fleet.find((train) => train.id === h.selectedTrainId);
-  const selectedIsPlaced = !!selectedTrain?.position;
-  const selectedIsMoving = !!selectedTrain && (selectedTrain.running || selectedTrain.actualSpeed > 0);
-  const movingTrainCount = h.fleet.filter((train) => train.running || train.actualSpeed > 0).length;
-  const selectedIsCoupled = !!h.selectedCoupling;
-  const selectedFormation = h.selectedCoupling
-    ? h.fleet.filter((train) => train.id === h.selectedCoupling?.e5Id || train.id === h.selectedCoupling?.e6Id)
-    : [];
-  const selectedFormationCarCount = selectedFormation.reduce((count, train) => count + train.carCount, 0);
-  const selectedFormationLabel = selectedFormation.map((train) => train.type.toUpperCase()).join(" + ");
-  const formationCarCountFor = (trainId: string) => {
-    const group = h.couplings.find((coupling) => coupling.e5Id === trainId || coupling.e6Id === trainId);
-    return group ? h.fleet.reduce((count, train) => count + (train.id === group.e5Id || train.id === group.e6Id ? train.carCount : 0), 0) : undefined;
-  };
-  const formationLabelFor = (trainId: string) => {
-    const group = h.couplings.find((coupling) => coupling.e5Id === trainId || coupling.e6Id === trainId);
-    return group ? h.fleet.filter((train) => train.id === group.e5Id || train.id === group.e6Id).map((train) => train.type.toUpperCase()).join(" + ") : undefined;
-  };
-  const couplingPartner = h.couplingPartners.find((partner) => partner.id === couplingPartnerId)
-    ?? h.couplingPartners.find((partner) => partner.allowed)
-    ?? h.couplingPartners[0];
-  const couplingPhaseLabel = COUPLING_PHASE_LABELS[h.couplingPhase ?? ""] ?? "Preparing trains";
-  const sceneWrap = useRef<HTMLDivElement>(null);
-  const couplingOperationId = h.couplingOperation?.id;
-  const couplingPaused = h.couplingOperation?.paused;
-  useEffect(() => {
-    if (couplingOperationId && !couplingPaused) {
-      sceneWrap.current?.scrollIntoView({ block: "center", behavior: "instant" });
-    }
-  }, [couplingOperationId, couplingPaused]);
   const saveNameInput = useRef<HTMLInputElement>(null);
   useEffect(() => {
     setDeleteDesignId(null);
@@ -262,26 +203,7 @@ export default function App() {
           </button>
         </div>
       </header>
-      <section className="hero">
-        <div>
-          <div className="eyebrow">
-            <span /> A LITTLE PIECE OF JAPAN
-          </div>
-          <h1>Your railway. A whole new dimension.</h1>
-          <p className="subtitle">
-            Build, turn, and explore in 3D. Then run your favourite Japanese
-            trains together.
-          </p>
-        </div>
-        <div className="hero-badge">
-          <Layers3 size={20} />
-          <span>
-            Real track inspiration.
-            <br />
-            <strong>Endless little adventures.</strong>
-          </span>
-        </div>
-      </section>
+      <h1 className="visually-hidden">Your 3D railway simulator</h1>
       <main className="workspace">
         <div className="workspace-main">
           <section className="railway-card" aria-label="3D railway playground">
@@ -345,7 +267,7 @@ export default function App() {
                 </a>
               </div>
             )}
-            <div className="scene-wrap" ref={sceneWrap}>
+            <RailwayCockpit h={h}>
               <Scene3D
                 tracks={tracks}
                 accessories={accessories}
@@ -382,498 +304,8 @@ export default function App() {
                 onReady={() => h.setReady(true)}
                 issues={h.issues}
               />
-              {!h.ready && (
-                <div className="scene-loading">
-                  <Layers3 size={32} />
-                  <span>Opening your little world…</span>
-                </div>
-              )}
-              <div className="scene-hud">
-                <span className={`status-dot ${movingTrainCount ? "running" : ""}`} />
-                {h.couplingBusy
-                  ? `${couplingPhaseLabel}${h.couplingOperation?.paused ? " · Paused" : "…"}`
-                  : movingTrainCount
-                  ? `${movingTrainCount} ${movingTrainCount === 1 ? "train" : "trains"} on an adventure`
-                  : selectedTrain && !selectedIsPlaced
-                    ? `${selectedTrain.name} · Choose a place on the rails`
-                  : h.routeLength
-                    ? "Connected loop · ready to ride"
-                    : tracks.length
-                      ? h.ends.length
-                        ? `${h.ends.length} open connectors`
-                        : "Check turnout routes"
-                      : "Drag a piece here to begin"}
-              </div>
-              <div
-                className="scene-controls"
-                role="group"
-                aria-label="3D interaction mode"
-              >
-                <button
-                  className={h.mode === "orbit" ? "active" : ""}
-                  aria-pressed={h.mode === "orbit"}
-                  onClick={() => h.setMode("orbit")}
-                >
-                  <Eye size={16} />
-                  Look around
-                </button>
-                <button
-                  className={h.mode === "move" ? "active" : ""}
-                  aria-pressed={h.mode === "move"}
-                  disabled={h.couplingBusy}
-                  onClick={() => {
-                    h.setMode("move");
-                  }}
-                >
-                  <Move size={16} />
-                  Move pieces
-                </button>
-              </div>
-              <div className="scene-caption">
-                <MousePointer2 size={14} />
-                {h.placingTrain
-                  ? "Point at a rail to preview · click to place your train"
-                  : h.mode === "orbit"
-                  ? "Drag to orbit · right-drag to pan · scroll to zoom"
-                  : "Drag a piece to move · matching connectors snap together"}
-              </div>
-              {h.placingTrain && (
-                <div className="train-placement-banner" role="status">
-                  <div>
-                    <strong>Place {h.placingTrain.name}</strong>
-                    <span>Point at a rail. Green means the whole train fits.</span>
-                  </div>
-                  <button
-                    className="button secondary"
-                    aria-label="Reverse placement direction"
-                    onClick={() => h.setPlacementDirection(h.placementDirection === 1 ? -1 : 1)}
-                  >
-                    <ArrowLeftRight size={16} />
-                    Face the other way
-                  </button>
-                  <button
-                    className="icon-button"
-                    aria-label="Cancel train placement"
-                    onClick={h.cancelTrainPlacement}
-                  >
-                    <X size={18} />
-                  </button>
-                </div>
-              )}
-              <div
-                className="view-controls"
-                role="group"
-                aria-label="Camera views"
-              >
-                {(
-                  [
-                    { key: "perspective", label: "3D view", icon: Layers3 },
-                    { key: "top", label: "Top view", icon: ArrowDownToLine },
-                    { key: "ride", label: "Train view", icon: TrainFront },
-                  ] as const
-                ).map((view) => (
-                  <button
-                    key={view.key}
-                    className={`camera-button ${h.cameraPreset === view.key ? "active" : ""}`}
-                    aria-pressed={h.cameraPreset === view.key}
-                    disabled={view.key === "ride" && !selectedIsPlaced}
-                    onClick={() => h.setCameraPreset(view.key)}
-                  >
-                    <view.icon size={15} />
-                    {view.label}
-                  </button>
-                ))}
-                <button
-                  className="camera-button"
-                  aria-label="Fit railway to view"
-                  onClick={() => {
-                    h.setCameraPreset("perspective");
-                    h.setViewRevision((v) => v + 1);
-                  }}
-                >
-                  <Maximize2 size={16} />
-                </button>
-              </div>
-            </div>
-            <section className="fleet-panel" aria-label="Your trains">
-              <div className="fleet-heading">
-                <div>
-                  <span className="panel-eyebrow">YOUR TRAINS</span>
-                  <label className="driving-select">
-                    Driving
-                    <select
-                      aria-label="Train to drive"
-                      value={h.selectedTrainId ?? ""}
-                      disabled={!h.fleet.length || !!h.placingTrain}
-                      onChange={(event) => h.selectTrain(event.target.value)}
-                    >
-                      {!h.fleet.length && <option value="">Add your first train</option>}
-                      {h.fleet.map((train) => (
-                        <option key={train.id} value={train.id}>{train.name}</option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
-                <button
-                  className="button secondary pause-all-button"
-                  aria-label="Pause all trains"
-                  disabled={!movingTrainCount && (!h.couplingBusy || h.couplingOperation?.paused)}
-                  onClick={h.pauseAllTrains}
-                >
-                  <Pause size={16} />
-                  Pause all
-                </button>
-              </div>
-              {h.fleet.length ? (
-                <div className="fleet-list" role="group" aria-label="Select a train to drive">
-                  {h.fleet.map((train) => (
-                    <button
-                      key={train.id}
-                      className={`fleet-train ${train.id === h.selectedTrainId ? "selected" : ""}`}
-                      aria-label={`Drive ${train.name}`}
-                      aria-pressed={train.id === h.selectedTrainId}
-                      disabled={!!h.placingTrain && train.id !== h.placementTrainId}
-                      data-train-id={train.id}
-                      data-status={train.status}
-                      data-train-type={train.type}
-                      data-train-speed={train.actualSpeed}
-                      onClick={() => h.selectTrain(train.id)}
-                    >
-                      <span className="fleet-swatch" style={{ background: getTrainSpec(train.type).colors.primary }} />
-                      <div>
-                        <strong>{train.name}</strong>
-                        <span>{getTrainSpec(train.type).name} · {train.carCount} cars</span>
-                        {formationCarCountFor(train.id) !== undefined && (
-                          <span className="fleet-connected-badge"><Link2 size={12} /> {formationLabelFor(train.id)} · {formationCarCountFor(train.id)} cars</span>
-                        )}
-                        <span className={`fleet-status ${train.status}`}>
-                          <span className={`status-dot ${train.running && train.status !== "blocked" ? "running" : ""}`} />
-                          {TRAIN_STATUS_LABELS[train.status]}
-                          {train.actualSpeed > 0 && ` · ${Math.round(train.actualSpeed)} km/h`}
-                        </span>
-                        {train.stopReason && <small className="fleet-stop-reason">{train.stopReason}</small>}
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <p className="fleet-empty">Your railway is ready for its first train. Choose one below!</p>
-              )}
-              {selectedTrain && (
-                <div className="fleet-selected-actions">
-                  <span>{selectedTrain.name} · {selectedIsPlaced ? TRAIN_STATUS_LABELS[selectedTrain.status] : "Waiting for a place"}</span>
-                  <button
-                    className="button secondary"
-                    aria-label="Place selected train"
-                    disabled={selectedIsMoving || !tracks.length || !!h.placingTrain || h.couplingBusy || selectedIsCoupled}
-                    onClick={() => h.beginTrainPlacement(selectedTrain.id)}
-                  >
-                    <MousePointer2 size={15} />
-                    {selectedIsPlaced ? "Move train" : "Place train"}
-                  </button>
-                  <button
-                    className="icon-button remove-train-button"
-                    aria-label="Remove selected train"
-                    disabled={!!h.placingTrain || h.couplingBusy || selectedIsCoupled}
-                    onClick={() => h.removeTrain(selectedTrain.id)}
-                  >
-                    <Trash2 size={16} />
-                  </button>
-                </div>
-              )}
-              <div className="fleet-add-row">
-                <label>
-                  Add a train
-                  <select
-                    aria-label="New train model"
-                    value={newTrainType}
-                    disabled={h.couplingBusy}
-                    onChange={(event) => setNewTrainType(event.target.value as TrainType)}
-                  >
-                    {TRAIN_TYPES.map((type) => (
-                      <option key={type} value={type}>{getTrainSpec(type).name}</option>
-                    ))}
-                  </select>
-                </label>
-                <label className="fleet-add-count">
-                  Cars
-                  <select
-                    aria-label="New train car count"
-                    value={newTrainCarCount}
-                    disabled={h.couplingBusy}
-                    onChange={(event) => setNewTrainCarCount(Number(event.target.value))}
-                  >
-                    {Array.from({ length: 9 }, (_, index) => index + 3).map((count) => (
-                      <option key={count} value={count}>{count}</option>
-                    ))}
-                  </select>
-                </label>
-                <button
-                  className="button primary"
-                  aria-label="Add train"
-                  disabled={h.fleet.length >= MAX_TRAINSETS || !!h.placingTrain || h.couplingBusy}
-                  onClick={() => h.addTrain(newTrainType, newTrainCarCount)}
-                >
-                  <Plus size={17} />
-                  Add train
-                </button>
-              </div>
-              <p className="fleet-note">
-                {h.fleet.length >= MAX_TRAINSETS
-                  ? `All ${MAX_TRAINSETS} train spaces are filled. Remove one to add another.`
-                  : selectedIsCoupled
-                    ? "Your connected trains share their controls. Select either partner to drive both."
-                  : "Each train has its own controls. Select a train here or click it in the scene."}
-              </p>
-            </section>
-            <div className="train-controls">
-              <button
-                className={`play-button ${h.running ? "playing" : ""}`}
-                aria-label={h.running ? "Pause train" : "Run train"}
-                disabled={!selectedIsPlaced || !!h.placingTrain || h.couplingBusy}
-                onClick={h.toggleRunning}
-              >
-                {h.running ? (
-                  <Pause size={22} fill="currentColor" />
-                ) : (
-                  <Play size={22} fill="currentColor" />
-                )}
-              </button>
-              <div className="speed-control">
-                <div className="speed-heading">
-                  <label htmlFor="train-speed">
-                    {h.running ? "Off we go!" : "Ready, conductor?"}
-                  </label>
-                  <span>
-                    {h.speed} <small>km/h</small>
-                  </span>
-                </div>
-                <input
-                  id="train-speed"
-                  aria-label="Train speed"
-                  type="range"
-                  min="5"
-                  max={h.trainSpec.maxServiceSpeed}
-                  step="5"
-                  value={h.speed}
-                  disabled={!selectedTrain || !!h.placingTrain || h.couplingBusy}
-                  onChange={(event) => h.setSpeed(Number(event.target.value))}
-                />
-                <div className="speed-labels">
-                  <span>Easy does it</span>
-                  <span>Max {h.trainSpec.maxServiceSpeed} km/h</span>
-                </div>
-                <p className="speed-service-note">{h.trainSpec.speedNote}</p>
-              </div>
-              <div className="control-divider" />
-              <button
-                className="icon-button direction-button"
-                aria-label="Reverse train direction"
-                disabled={!selectedIsPlaced || !!h.placingTrain || h.couplingBusy}
-                onClick={h.reverse}
-              >
-                <ArrowLeftRight size={21} />
-                <span>Reverse</span>
-              </button>
-              <button
-                className="icon-button direction-button"
-                aria-label="Sound train horn"
-                disabled={!selectedTrain}
-                onClick={() => void h.horn()}
-              >
-                <Volume2 size={21} />
-                <span>Toot toot</span>
-              </button>
-              <div className="lap-stat">
-                <span>{h.position.laps.toString().padStart(2, "0")}</span>
-                <small>laps explored</small>
-              </div>
-            </div>
-            <div className="train-name">
-              <span className="line-swatch" style={{ background: h.trainSpec.colors.primary }} />
-              <TrainFront size={18} />
-              <div className="train-identity">
-                <label className="train-select">
-                  Train
-                  <select
-                    aria-label="Train"
-                    value={h.trainType}
-                    disabled={!selectedTrain || selectedIsMoving || !!h.placingTrain || h.couplingBusy || selectedIsCoupled}
-                    onChange={(event) => h.chooseTrain(event.target.value as TrainType)}
-                  >
-                    {TRAIN_TYPES.map((type) => {
-                      const train = getTrainSpec(type);
-                      return <option key={type} value={type}>{train.name} · {train.line}</option>;
-                    })}
-                  </select>
-                </label>
-                <span>
-                  {TRAIN_DESCRIPTIONS[h.trainType]}
-                </span>
-                {h.trainSpec.minimumRadius && (
-                  <span className="train-fit-note">
-                    KATO minimum curve: R{h.trainSpec.minimumRadius} mm · 3–11 cars for play
-                  </span>
-                )}
-              </div>
-              <label className="car-select">
-                Cars
-                <select
-                  aria-label="Train car count"
-                  value={h.carCount}
-                  disabled={!selectedTrain || selectedIsMoving || !!h.placingTrain || h.couplingBusy}
-                  onChange={(event) =>
-                    h.changeTrainCarCount(Number(event.target.value))
-                  }
-                >
-                  {Array.from({ length: 9 }, (_, index) => index + 3).map(
-                    (count) => (
-                      <option key={count} value={count}>
-                        {count} cars
-                      </option>
-                    ),
-                  )}
-                </select>
-              </label>
-            </div>
-            {(selectedTrain?.type === "e5" || selectedTrain?.type === "e6" || selectedTrain?.type === "e7" || h.couplingBusy || selectedIsCoupled) && (
-              <section className="coupling-panel" aria-label="Nose coupling">
-                <div className="coupling-heading">
-                  <div>
-                    <Link2 size={19} />
-                    <h3>Join your Shinkansen</h3>
-                  </div>
-                  <div className="coupling-heading-actions">
-                    {selectedIsCoupled && (
-                      <span className="coupling-formation-badge">{selectedFormationLabel} · {selectedFormationCarCount} cars</span>
-                    )}
-                    {(h.couplingBusy || selectedIsCoupled) && (
-                      <button
-                        className="button secondary coupling-view-button"
-                        aria-label="Nose view"
-                        aria-pressed={h.cameraPreset === "coupling"}
-                        onClick={() => {
-                          h.setCameraPreset("coupling");
-                          h.setViewRevision((value) => value + 1);
-                          sceneWrap.current?.scrollIntoView({ block: "center", behavior: "instant" });
-                        }}
-                      >
-                        <Eye size={16} />
-                        Nose view
-                      </button>
-                    )}
-                  </div>
-                </div>
-                {h.couplingBusy ? (
-                  <div className="coupling-operation">
-                    <div className="coupling-progress" role="status" aria-live="polite">
-                      <span className={`status-dot ${h.couplingOperation?.paused ? "" : "running"}`} />
-                      <div>
-                        <strong>{couplingPhaseLabel}{h.couplingOperation?.paused ? " · Paused" : "…"}</strong>
-                        <p>{h.couplingOperation?.paused
-                          ? "Continue when you are ready. You can still look around."
-                          : "Watch the noses up close. You can pause at any time."}</p>
-                      </div>
-                    </div>
-                    <button
-                      className="button secondary"
-                      aria-label={h.couplingOperation?.paused ? "Continue coupling" : "Pause coupling"}
-                      onClick={h.couplingOperation?.paused ? h.resumeCoupling : h.pauseCoupling}
-                    >
-                      {h.couplingOperation?.paused ? <Play size={16} /> : <Pause size={16} />}
-                      {h.couplingOperation?.paused ? "Continue" : "Pause"}
-                    </button>
-                  </div>
-                ) : selectedIsCoupled ? (
-                  <>
-                    <div className="coupling-connected-note"><Check size={16} /><p>Connected! Drive either train to move both together. Stop to change either train's car count. Separate them before changing models or places.</p></div>
-                    <div className="coupling-actions">
-                      <p id="coupling-guidance">{h.couplingReason ?? "Stop with clear track behind the trains to separate them."}</p>
-                      <button
-                        className="button secondary"
-                        aria-label="Decouple trains"
-                        aria-describedby="coupling-guidance"
-                        disabled={selectedIsMoving || !!h.couplingReason || !!h.placingTrain}
-                        onClick={h.decoupleTrains}
-                      >
-                        <Unlink2 size={16} />
-                        Decouple trains
-                      </button>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <p className="coupling-intro">Mix any two E5, E6, or E7 trains, including the same model. Either nose can connect, even on a curve. Stop both trains with their noses near each other.</p>
-                    <div className="coupling-actions">
-                      {h.couplingPartners.length > 1 ? (
-                        <label className="coupling-partner-select">
-                          Join with
-                          <select
-                            aria-label="Coupling partner"
-                            value={couplingPartner?.id ?? ""}
-                            disabled={!!h.placingTrain}
-                            onChange={(event) => setCouplingPartnerId(event.target.value)}
-                          >
-                            {h.couplingPartners.map((partner) => (
-                              <option key={partner.id} value={partner.id}>{partner.name}{partner.allowed ? "" : " · Not ready"}</option>
-                            ))}
-                          </select>
-                        </label>
-                      ) : couplingPartner ? (
-                        <span className="coupling-partner-name">Join with <strong>{couplingPartner.name}</strong></span>
-                      ) : null}
-                      <button
-                        className="button primary"
-                        aria-label="Couple trains"
-                        aria-describedby="coupling-guidance"
-                        disabled={!couplingPartner?.allowed || selectedIsMoving || !!h.placingTrain}
-                        onClick={() => couplingPartner && h.coupleTrains(couplingPartner.id)}
-                      >
-                        <Link2 size={16} />
-                        Couple trains
-                      </button>
-                    </div>
-                    <p className="coupling-guidance" id="coupling-guidance">{couplingPartner?.reason
-                      ?? (couplingPartner?.allowed
-                        ? "Ready to join! The noses open and the trains move together slowly."
-                        : couplingPartner
-                          ? "Stop both trains and bring any two noses near each other on connected track."
-                          : "Add another E5, E6, or E7 Shinkansen, or choose your pair in Layouts → Coupling station.")}</p>
-                  </>
-                )}
-              </section>
-            )}
+            </RailwayCockpit>
           </section>
-          <SwitchPanel h={h} />
-          <div className="below-board">
-            <div className="tip-card">
-              <span>
-                <Move size={18} />
-              </span>
-              <div>
-                <strong>Build it your way</strong>
-                <p>Drag tracks and scenery into your 3D world.</p>
-              </div>
-            </div>
-            <div className="tip-card">
-              <span>
-                <ArrowUpFromLine size={18} />
-              </span>
-              <div>
-                <strong>Go up a level</strong>
-                <p>Set heights, add supports, and build overpasses.</p>
-              </div>
-            </div>
-            <div className="tip-card">
-              <span>
-                <TrainFront size={18} />
-              </span>
-              <div>
-                <strong>Ride your favourite train</strong>
-                <p>Try Train view to get closer to the journey.</p>
-              </div>
-            </div>
-          </div>
         </div>
         <aside className="builder-panel" aria-label="Kato track builder">
           <div className="panel-eyebrow">THE KATO-INSPIRED TRACK BOX</div>

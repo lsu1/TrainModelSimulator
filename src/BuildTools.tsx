@@ -11,25 +11,37 @@ import type { useRailway } from "./useRailway";
 
 type Railway = ReturnType<typeof useRailway>;
 
-export function SwitchPanel({ h }: { h: Railway }) {
+export function SwitchPanel({
+  h,
+  compact = false,
+}: {
+  h: Railway;
+  compact?: boolean;
+}) {
   return (
-    <section className="switch-panel" aria-label="Turnout switch controls">
+    <section
+      className={`switch-panel${compact ? " compact" : ""}`}
+      aria-label="Turnout switch controls"
+    >
       <div className="switch-panel-head">
         <div>
           <Waypoints size={19} />
-          <strong>Switch control desk</strong>
+          <strong>{compact ? "Switches" : "Switch control desk"}</strong>
         </div>
         <small>
-          {h.switches.length} numbered switch
-          {h.switches.length === 1 ? "" : "es"}
+          {compact
+            ? h.switches.length
+            : `${h.switches.length} numbered switch${h.switches.length === 1 ? "" : "es"}`}
         </small>
       </div>
       {h.switches.length ? (
         <>
-          <p>
-            Match each number to the label beside its turnout. You can set a
-            clear switch while the train runs.
-          </p>
+          {!compact && (
+            <p>
+              Match each number to the label beside its turnout. You can set a
+              clear switch while the train runs.
+            </p>
+          )}
           <div className="switch-panel-list">
             {h.switches.map((track) => (
               <div
@@ -38,11 +50,22 @@ export function SwitchPanel({ h }: { h: Railway }) {
                 role="group"
                 aria-label={`Switch ${track.switchNumber}`}
               >
-                <span className="switch-number">{track.switchNumber}</span>
-                <span className="switch-name">
-                  {CATALOG.get(track.kind)?.label}
-                  <small>Kato {CATALOG.get(track.kind)?.sku}</small>
+                <span
+                  className="switch-number"
+                  title={
+                    compact
+                      ? `${CATALOG.get(track.kind)?.label} · Kato ${CATALOG.get(track.kind)?.sku}`
+                      : undefined
+                  }
+                >
+                  {track.switchNumber}
                 </span>
+                {!compact && (
+                  <span className="switch-name">
+                    {CATALOG.get(track.kind)?.label}
+                    <small>Kato {CATALOG.get(track.kind)?.sku}</small>
+                  </span>
+                )}
                 <div className="switch-route-buttons">
                   <button
                     aria-label={`Switch ${track.switchNumber} straight`}
@@ -50,8 +73,24 @@ export function SwitchPanel({ h }: { h: Railway }) {
                     className={track.switchState !== "branch" ? "active" : ""}
                     disabled={h.couplingBusy}
                     onClick={() => h.setSwitchState(track.id, "straight")}
+                    title={compact ? "Straight" : undefined}
                   >
-                    Straight
+                    {compact ? (
+                      <svg
+                        width="20"
+                        height="20"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.8"
+                        strokeLinecap="round"
+                        aria-hidden="true"
+                      >
+                        <path d="M9 3v18M15 3v18M7 7h10M7 12h10M7 17h10" />
+                      </svg>
+                    ) : (
+                      "Straight"
+                    )}
                   </button>
                   <button
                     aria-label={`Switch ${track.switchNumber} branch`}
@@ -59,13 +98,30 @@ export function SwitchPanel({ h }: { h: Railway }) {
                     className={track.switchState === "branch" ? "active" : ""}
                     disabled={h.couplingBusy}
                     onClick={() => h.setSwitchState(track.id, "branch")}
+                    title={compact ? "Branch" : undefined}
                   >
-                    Branch
+                    {compact ? (
+                      <svg
+                        width="20"
+                        height="20"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.8"
+                        strokeLinecap="round"
+                        aria-hidden="true"
+                      >
+                        <path d="M7 21V3M12 21V3M12 16l9-9M7 14 18 3M5 18h9M11 10l4 4M16 5l4 4" />
+                      </svg>
+                    ) : (
+                      "Branch"
+                    )}
                   </button>
                 </div>
                 <button
                   className="switch-focus"
                   aria-label={`Show switch ${track.switchNumber}`}
+                  title={compact ? `Show switch ${track.switchNumber}` : undefined}
                   onClick={() => {
                     h.setSelectedId(track.id);
                     h.setCameraPreset("perspective");
@@ -73,7 +129,7 @@ export function SwitchPanel({ h }: { h: Railway }) {
                   }}
                 >
                   <LocateFixed size={15} />
-                  Show
+                  {!compact && "Show"}
                 </button>
               </div>
             ))}
@@ -81,8 +137,9 @@ export function SwitchPanel({ h }: { h: Railway }) {
         </>
       ) : (
         <p>
-          Add a turnout or crossover from the track box. Its numbered control
-          appears here automatically.
+          {compact
+            ? "No switches"
+            : "Add a turnout or crossover from the track box. Its numbered control appears here automatically."}
         </p>
       )}
     </section>

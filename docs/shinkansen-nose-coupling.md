@@ -8,17 +8,19 @@ These are playful combinations. The E5/E6 references below inspire the appearanc
 
 Open **Layouts → Coupling station**. Choose each train's model and **3–11 cars**, then press **Start coupling practice**. The practice oval uses fixed S248 straights and R381-30 curves; it grows its straight sections to fit the selected pair. The sets start paused with their closed noses 80 model mm apart. **Try 17 cars: E6 (7) + E5 (10)** starts that longer configuration directly. Changing the practice choices starts a new railway, so save an existing design first.
 
-Select either train and press **Couple trains**. For another layout, stop two independent Shinkansen with any two noses near each other on the same connected rail route. The interface detects the ends and explains an unmet condition. Parallel lanes and overpasses do not become connected just because their noses look close in 3D. The approach must be within **200 model mm** of engagement and clear for every car and both opening mechanisms.
+In the **0.10.0** main railway screen, select either train from the selector or fleet strip above the canvas. Choose its partner in the lower driving dock and press the linked-chain **Couple trains** icon. The adjacent eye icon is **Nose view**; a connected pair shows its two models and total cars, with a broken-chain **Decouple trains** icon. Hover labels and accessible names identify the icons. The controls stay beside the view rather than requiring page scrolling.
+
+For another layout, stop two independent Shinkansen with any two noses near each other on the same connected rail route. The interface detects the ends and shows a compact reason when a condition is unmet. Parallel lanes and overpasses do not become connected just because their noses look close in 3D. The approach must be within **200 model mm** of engagement and clear for every car and both opening mechanisms.
 
 The covers and couplers take **three seconds** to open fully. One set then creeps toward the other at an N-scale equivalent of **3 km/h**, and the mechanical heads lock. The shorter connector brings the open nose centers close together while remaining articulated through curves and slopes.
 
-Joining and separating open **Nose view** automatically and bring the scene into view. This camera follows the mating faces. Drag to orbit, scroll to zoom, or press **Nose view** again to reset the close-up. Other camera views remain available. **Pause coupling**, **Pause all**, or Space freezes an active operation; **Continue coupling** or Space resumes it.
+Joining and separating select **Nose view** automatically. This camera follows the mating faces. Drag to orbit, scroll to zoom, or press the eye **Nose view** icon again to reset the close-up. Other camera views remain available. The dock's **Pause coupling** icon, the top **Pause all trains** icon, or Space freezes an active operation; **Continue coupling** or Space resumes it. The operation's current phase remains visible without explanatory paragraphs.
 
 ## Drive, resize, and separate
 
 Selecting either connected train addresses the whole formation: one shared speed, acceleration, braking, pause, and reverse command. Each set retains its own model, identity, car ordering, and roof equipment. With **3–11 cars per set**, the pair can contain **6–22 cars**. Its maximum shared speed is the lower member limit: **275 km/h with E7**, otherwise **320 km/h**.
 
-Stop the formation to change either partner's **Cars** value. A change keeps the partnership when the new complete formation fits on the existing rails and clears other trains; an unsafe change is rejected. Separate partners before changing their models, moving an individual set, or removing it.
+Stop the formation to change either partner's **Cars** value above the canvas. A change keeps the partnership when the new complete formation fits on the existing rails and clears other trains; an unsafe change is rejected. Separate partners before changing their models, moving an individual set, or removing it.
 
 To separate, stop with enough clear connected track and press **Decouple trains**. The heads unlock, one set moves back **55 model mm**, and the couplers retract and covers close over **three seconds**. Both original sets then remain paused with separate controls and their rail placements preserved. Curves and grades remain allowed when the mechanisms and bodies have sufficient clearance.
 

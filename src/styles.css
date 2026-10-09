@@ -708,3 +708,217 @@ kbd { display: inline-block; padding: 1px 5px; min-width: 20px; border: 1px soli
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
 }
+
+/* Keep driving, formation and switches together around the railway canvas. */
+.app-shell { padding: 0 24px 20px; }
+.app-header { min-height: 62px; }
+.brand-mark { width: 38px; height: 38px; border-radius: 11px; }
+.brand-mark svg { width: 24px; height: 24px; }
+.brand-name { font-size: 18px; }
+.brand-caption { margin-top: 2px; font-size: 8px; letter-spacing: 1px; }
+.hero { align-items: center; min-height: 64px; padding: 10px 0 12px; gap: 15px; }
+.hero .eyebrow { font-size: 9px; letter-spacing: 1.3px; }
+.hero h1 { margin: 3px 0 0; font-size: 24px; line-height: 1.2; letter-spacing: -.8px; }
+.hero .subtitle { margin-top: 3px; font-size: 11px; }
+.hero-badge { padding: 6px 10px; font-size: 10px; }
+.hero-badge strong { font-size: 10px; }
+.hero-badge svg { width: 20px; height: 20px; }
+.workspace { grid-template-columns: minmax(0, 1fr) 280px; gap: 18px; }
+.railway-card { display: flex; flex-direction: column; height: calc(100dvh - 80px); min-height: min(540px, calc(100dvh - 80px)); border-radius: 15px; }
+.board-header { flex: 0 0 auto; min-height: 56px; padding: 7px 13px; gap: 9px; }
+.board-title { flex-basis: 140px; gap: 2px; }
+.board-title > span { font-size: 8px; letter-spacing: 1px; }
+.board-title h2 { gap: 7px; font-size: 16px; }
+.board-tools { gap: 4px; }
+.board-tools .icon-button { width: 40px; height: 40px; padding: 10px; }
+.board-tools .button { min-height: 40px; padding: 0 10px; font-size: 11px; }
+.layout-plan-info { flex: 0 0 auto; padding: 6px 13px; gap: 4px 12px; font-size: 10px; line-height: 1.4; }
+.layout-plan-info .layout-plan-note { margin-top: 1px; font-size: 9px; }
+.layout-plan-info > a { min-height: 32px; font-size: 10px; }
+.builder-panel { padding: 16px; border-radius: 15px; }
+.builder-panel h2 { margin: 2px 0 4px; font-size: 21px; }
+.catalog-summary { margin-bottom: 12px; font-size: 11px; }
+.toast { top: 10px; bottom: auto; max-width: min(500px, calc(100vw - 28px)); padding: 9px 13px; font-size: 11px; line-height: 1.4; pointer-events: none; }
+
+.railway-cockpit.scene-wrap { display: flex; flex: 1 1 auto; flex-direction: column; width: 100%; height: auto; min-height: 0; border-bottom: 0; background: #f8faf4; }
+.cockpit-fleet { flex: 0 0 auto; min-width: 0; padding: 8px 12px; border-bottom: 1px solid var(--line); background: #fbfcf6; }
+.cockpit-train-bar { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.cockpit-fleet-count { display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto; color: #58704c; font-size: 11px; white-space: nowrap; }
+.cockpit-fleet-count svg { width: 17px; height: 17px; }
+.cockpit-train-bar .driving-select { flex: 1 1 200px; min-width: 100px; gap: 6px; font-size: 11px; }
+.cockpit-train-bar .driving-select select { width: 100%; max-width: none; min-height: 40px; padding: 6px 8px; font-size: 11px; }
+.cockpit-train-bar .cockpit-model-select { display: flex; align-items: center; gap: 6px; flex: 0 1 160px; min-width: 105px; color: #617653; font-size: 11px; }
+.cockpit-train-bar .cockpit-model-select select { width: 100%; min-width: 0; min-height: 40px; padding: 6px 8px; border: 1px solid #cfddc2; border-radius: 7px; background: var(--surface); font-size: 11px; }
+.cockpit-train-bar .car-select { flex: 0 0 auto; margin-left: 0; gap: 5px; font-size: 11px; }
+.cockpit-train-bar .car-select input, .cockpit-train-bar .car-select select { min-height: 40px; min-width: 51px; padding: 6px; font-size: 11px; }
+.cockpit-train-bar .icon-button { flex: 0 0 40px; width: 40px; height: 40px; padding: 10px; border-radius: 7px; }
+.cockpit-train-bar .icon-button svg { width: 18px; height: 18px; }
+.cockpit-train-actions { display: flex; flex: 0 0 auto; gap: 6px; }
+.cockpit-fleet-strip { display: flex; gap: 7px; min-width: 0; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: thin; scrollbar-color: #c1ceb1 transparent; padding: 3px 2px 2px; margin: 5px -2px -2px; }
+.cockpit-fleet-strip .fleet-train { display: flex; flex: 0 0 auto; align-items: center; gap: 7px; min-height: 42px; max-width: 245px; padding: 5px 9px; border-radius: 7px; }
+.cockpit-fleet-strip .fleet-swatch { width: 4px; min-height: 27px; }
+.cockpit-fleet-strip .fleet-train strong { overflow: hidden; font-size: 11px; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; }
+.cockpit-fleet-strip .fleet-train div > span { display: flex; align-items: center; gap: 5px; margin-top: 1px; font-size: 9px; line-height: 1.4; white-space: nowrap; }
+.cockpit-fleet-strip .fleet-train .fleet-connected-badge { display: inline-flex; margin: 0; font-size: 9px; }
+.cockpit-fleet-strip .fleet-status { font-size: 9px; }
+.cockpit-fleet-strip .status-dot { width: 5px; height: 5px; }
+.cockpit-fleet .fleet-empty { margin: 8px 0 2px; font-size: 11px; }
+
+.cockpit-main { position: relative; display: flex; flex: 1 1 auto; min-width: 0; min-height: 0; overflow: hidden; }
+.cockpit-stage { position: relative; flex: 1 1 auto; min-width: 0; min-height: 0; overflow: hidden; background: #e3e9e7; isolation: isolate; }
+.cockpit-stage > .scene-container { position: absolute; inset: 0; }
+.cockpit-stage .scene-loading, .cockpit-stage .webgl-fallback { position: absolute; inset: 0; padding: 20px; }
+.cockpit-stage .scene-hud { top: 10px; left: 10px; max-width: calc(100% - 240px); padding: 7px 9px; font-size: 10px; }
+.cockpit-stage .scene-controls { top: 10px; right: 10px; padding: 3px; }
+.cockpit-stage .scene-controls button { min-height: 40px; padding: 0 9px; font-size: 11px; }
+.cockpit-stage .scene-controls button svg { width: 16px; height: 16px; }
+.cockpit-stage .view-controls { right: 10px; bottom: 10px; gap: 5px; }
+.cockpit-stage .camera-button { min-height: 40px; padding: 0 9px; gap: 5px; font-size: 11px; }
+.cockpit-stage .camera-button svg { width: 16px; height: 16px; }
+.cockpit-stage .scene-caption { bottom: 13px; left: 10px; max-width: calc(100% - 350px); padding: 6px 8px; font-size: 9px; }
+.cockpit-stage .train-placement-banner { bottom: 64px; left: 10px; right: 10px; padding: 9px 10px; gap: 8px; }
+.cockpit-stage .train-placement-banner strong { font-size: 11px; }
+.cockpit-stage .train-placement-banner span { font-size: 10px; }
+.cockpit-stage .train-placement-banner .button, .cockpit-stage .train-placement-banner .icon-button { min-height: 40px; }
+.cockpit-stage .train-placement-banner .icon-button { width: 40px; height: 40px; }
+.cockpit-sidebar-toggle { min-width: 48px; width: 48px; padding: 0 !important; }
+.cockpit-sidebar-toggle[aria-expanded='true'] { background: #e8f1df; color: var(--green); border-color: #a6bf91; }
+.cockpit-switch-drawer { display: flex; flex: 0 0 200px; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; border-left: 1px solid #d5dfc9; background: #f6f9ee; }
+.cockpit-switch-drawer .switch-panel.compact { display: flex; flex: 1; flex-direction: column; min-height: 0; padding: 10px; margin: 0; border: 0; border-radius: 0; background: transparent; }
+.switch-panel.compact .switch-panel-head { flex-direction: row; flex: 0 0 auto; align-items: center; gap: 6px; margin-bottom: 5px; }
+.switch-panel.compact .switch-panel-head strong { font-size: 12px; }
+.switch-panel.compact .switch-panel-head > small { min-width: 20px; font-size: 10px; text-align: right; }
+.switch-panel.compact .switch-panel-head svg { width: 16px; height: 16px; }
+.switch-panel.compact .switch-panel-list { flex: 1 1 auto; min-height: 0; max-height: none; padding: 0 2px; margin: 0 -2px; }
+.switch-panel.compact .switch-row { flex-wrap: nowrap; gap: 6px; padding: 7px 0; }
+.switch-panel.compact .switch-number { width: 26px; height: 26px; font-size: 11px; }
+.switch-panel.compact .switch-route-buttons { gap: 2px; padding: 2px; margin-left: auto; }
+.switch-panel.compact .switch-route-buttons button { display: grid; place-items: center; min-width: 40px; width: 40px; min-height: 40px; padding: 0; }
+.switch-panel.compact .switch-focus { width: 40px; min-height: 40px; padding: 0; }
+.switch-panel.compact .switch-focus svg { width: 17px; height: 17px; }
+.switch-panel.compact > p { margin: 8px 0; font-size: 11px; }
+
+.cockpit-drive-dock { display: flex; flex: 0 0 auto; flex-wrap: wrap; align-items: stretch; gap: 6px 12px; min-width: 0; padding: 9px 12px; border-top: 1px solid var(--line); background: #fffefa; }
+.cockpit-drive-dock .train-controls { display: flex; flex: 1 1 400px; flex-wrap: nowrap; align-items: center; gap: 10px; min-width: 260px; min-height: 52px; padding: 0; }
+.cockpit-drive-dock .play-button { width: 50px; height: 50px; }
+.cockpit-drive-dock .speed-control { flex: 1 1 170px; min-width: 120px; max-width: 230px; }
+.cockpit-drive-dock .speed-heading { gap: 5px; margin-bottom: 4px; font-size: 10px; }
+.cockpit-drive-dock .speed-heading label { font-size: 11px; }
+.cockpit-drive-dock .speed-heading > span { font-size: 12px; }
+.cockpit-drive-dock .speed-heading small { font-size: 9px; }
+.cockpit-drive-dock .speed-control input[type='range'] { height: 20px; margin: 0; }
+.cockpit-drive-dock .speed-labels { margin-top: 3px; font-size: 9px; }
+.cockpit-drive-dock .direction-button, .cockpit-drive-dock .icon-button { display: grid; flex: 0 0 40px; place-items: center; width: 40px; height: 40px; padding: 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+.cockpit-drive-dock .direction-button:hover { background: var(--soft); }
+.cockpit-drive-dock .direction-button svg { width: 19px; height: 19px; }
+.cockpit-drive-dock .control-divider { display: none; }
+.cockpit-coupling { display: flex; flex: 1 1 320px; flex-wrap: wrap; align-items: center; align-content: center; gap: 6px; min-width: 0; padding-left: 12px; border-left: 1px solid var(--line); }
+.cockpit-coupling-actions { display: flex; flex: 1; align-items: center; gap: 6px; min-width: 0; }
+.cockpit-coupling .coupling-partner-select { flex: 1 1 110px; gap: 0; }
+.cockpit-coupling .coupling-partner-select select { width: 100%; min-height: 40px; max-width: none; padding: 6px; font-size: 11px; }
+.cockpit-coupling .icon-button, .cockpit-coupling .button { flex: 0 0 40px; min-width: 40px; width: 40px; min-height: 40px; height: 40px; padding: 9px; border-radius: 8px; }
+.cockpit-coupling .icon-button svg, .cockpit-coupling .button svg { width: 19px; height: 19px; }
+.cockpit-coupling .coupling-view-button[aria-pressed='true'], .cockpit-coupling .icon-button[aria-pressed='true'] { background: #e6efdc; border-color: #a9be94; color: var(--green); }
+.cockpit-coupling .coupling-formation-badge { display: inline-flex; flex: 1; align-items: center; justify-content: center; gap: 5px; min-width: 0; min-height: 40px; padding: 3px 6px; overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.cockpit-coupling-status { flex: 1 1 auto; min-width: 0; overflow: hidden; color: #557345; font-size: 10px; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
+.cockpit-coupling .coupling-partner-name { flex: 1 1 100px; min-width: 0; margin: 0; overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.cockpit-notice { flex: 1 1 100%; min-width: 0; max-height: 58px; overflow: auto; padding: 5px 8px; border: 1px solid #e2d1ad; border-radius: 6px; background: #fff6e4; color: #8b622d; font-size: 10px; line-height: 1.5; }
+.cockpit-notice p { margin: 0; }
+.cockpit-add-row.fleet-add-row { display: flex; flex: 0 0 auto; align-items: center; justify-content: flex-end; gap: 8px; min-width: 0; min-height: 51px; margin: 0; padding: 5px 12px; border-top: 1px solid var(--line); background: #f7faf1; }
+.cockpit-add-row label { display: flex; flex: 0 1 230px; align-items: center; gap: 7px; min-width: 0; font-size: 10px; white-space: nowrap; }
+.cockpit-add-row select { flex: 1; min-width: 0; min-height: 40px; margin: 0; padding: 6px 8px; font-size: 11px; }
+.cockpit-add-row .fleet-add-count { flex: 0 0 95px; }
+.cockpit-add-row .button { min-height: 40px; padding: 0 12px; font-size: 11px; }
+.cockpit-panel { min-width: 0; }
+
+@media (max-width: 1100px) {
+  .workspace { grid-template-columns: minmax(0, 1fr); }
+  .builder-panel { padding: 20px; }
+  .catalog-tabs { grid-template-columns: repeat(8, minmax(0, 1fr)); }
+  .piece-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .cockpit-drive-dock .train-controls { flex-basis: 400px; }
+  .cockpit-stage .scene-caption { max-width: calc(100% - 355px); }
+}
+
+@media (max-width: 760px) {
+  .app-shell { padding-left: 14px; padding-right: 14px; }
+  .hero { min-height: 58px; padding: 8px 0 10px; }
+  .hero h1 { font-size: 21px; }
+  .hero-badge { display: none; }
+  .railway-card { height: calc(100dvh - 76px); min-height: min(580px, calc(100dvh - 76px)); }
+  .cockpit-train-bar { flex-wrap: wrap; gap: 6px; }
+  .cockpit-fleet-count { font-size: 10px; }
+  .cockpit-train-bar .driving-select { flex-basis: calc(100% - 170px); }
+  .cockpit-train-bar .cockpit-model-select { flex: 1 1 140px; }
+  .cockpit-train-bar .car-select { margin-left: auto; }
+  .cockpit-switch-drawer { position: absolute; z-index: 4; top: 65px; right: 10px; bottom: 62px; width: 194px; min-height: 75px; max-height: 200px; border: 1px solid #bccca8; border-radius: 10px; background: rgb(248 251 240 / 96%); box-shadow: 0 6px 18px rgb(48 72 34 / 13%); backdrop-filter: blur(8px); }
+  .cockpit-stage .scene-caption { display: none; }
+  .cockpit-stage .scene-hud { top: 62px; max-width: calc(100% - 20px); }
+  .cockpit-stage .scene-controls button { padding: 0 8px; font-size: 10px; }
+  .cockpit-stage .view-controls { max-width: calc(100% - 20px); }
+  .cockpit-stage .camera-button { padding: 0 8px; font-size: 10px; }
+  .cockpit-drive-dock { flex-wrap: wrap; gap: 7px; padding: 8px 10px; }
+  .cockpit-drive-dock .train-controls { flex: 1 1 100%; min-width: 0; justify-content: space-between; }
+  .cockpit-drive-dock .speed-control { max-width: none; }
+  .cockpit-coupling { flex: 1 1 100%; justify-content: flex-end; padding: 7px 0 0; border-top: 1px solid var(--line); border-left: 0; }
+  .cockpit-coupling .coupling-partner-select { flex: 1 1 120px; }
+  .cockpit-add-row.fleet-add-row { padding: 5px 10px; gap: 6px; }
+  .cockpit-add-row label { flex: 1 1 200px; gap: 5px; }
+  .cockpit-add-row .fleet-add-count { flex: 0 0 80px; }
+  .catalog-tabs { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .piece-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+@media (max-width: 480px) {
+  .app-shell { padding-left: 8px; padding-right: 8px; }
+  .app-header { min-height: 58px; }
+  .brand { gap: 8px; }
+  .brand-name { font-size: 16px; }
+  .brand-caption { font-size: 7px; letter-spacing: .6px; }
+  .brand-mark { width: 34px; height: 34px; }
+  .hero { min-height: 53px; padding: 7px 0 9px; }
+  .hero .eyebrow { font-size: 8px; }
+  .hero h1 { font-size: 19px; letter-spacing: -.6px; }
+  .railway-card { height: calc(100dvh - 76px); min-height: min(590px, calc(100dvh - 76px)); border-radius: 12px; }
+  .board-header { min-height: 53px; padding: 6px 9px; gap: 5px; }
+  .board-title { flex-basis: 90px; }
+  .board-title > span { font-size: 7px; }
+  .board-title h2 { font-size: 13px; }
+  .board-tools { gap: 1px; }
+  .board-tools .button { padding: 0 6px; gap: 4px; font-size: 10px; }
+  .board-tools .icon-button { width: 40px; }
+  .board-tools .button > svg { width: 14px; height: 14px; }
+  .board-tools .button > svg:last-child { width: 11px; }
+  .cockpit-fleet { padding: 7px 9px; }
+  .cockpit-train-bar .driving-select { flex-basis: calc(100% - 55px); min-width: 130px; }
+  .cockpit-train-bar .cockpit-model-select { flex: 1 1 120px; }
+  .cockpit-train-bar .cockpit-model-select select, .cockpit-train-bar .driving-select select { font-size: 10px; }
+  .cockpit-train-bar .car-select { gap: 4px; font-size: 10px; }
+  .cockpit-train-bar .car-select select { min-width: 46px; padding: 5px; }
+  .cockpit-train-bar .icon-button { flex-basis: 40px; }
+  .cockpit-fleet-strip .fleet-train { max-width: 210px; }
+  .cockpit-stage .scene-controls { right: 8px; top: 8px; }
+  .cockpit-stage .scene-controls button { padding: 0 6px; gap: 4px; }
+  .cockpit-stage .scene-controls button svg { width: 15px; height: 15px; }
+  .cockpit-stage .scene-hud { top: 60px; left: 8px; padding: 6px 8px; font-size: 9px; }
+  .cockpit-stage .view-controls { right: 8px; bottom: 8px; gap: 4px; }
+  .cockpit-stage .camera-button { min-width: 40px; padding: 0 6px; gap: 4px; font-size: 9px; }
+  .cockpit-stage .camera-button > span { display: none; }
+  .cockpit-stage .cockpit-sidebar-toggle > span { display: inline; }
+  .cockpit-stage .train-placement-banner { bottom: 58px; padding: 7px 8px; gap: 6px; }
+  .cockpit-stage .train-placement-banner > div { flex-basis: calc(100% - 50px); }
+  .cockpit-stage .train-placement-banner .button { order: 2; }
+  .cockpit-switch-drawer { top: 101px; right: 8px; bottom: 58px; max-height: 174px; }
+  .cockpit-drive-dock { padding: 7px 9px; }
+  .cockpit-drive-dock .train-controls { gap: 7px; }
+  .cockpit-drive-dock .play-button { width: 48px; height: 48px; }
+  .cockpit-drive-dock .speed-control { min-width: 115px; }
+  .cockpit-add-row.fleet-add-row { padding: 5px 9px; }
+  .cockpit-add-row label { flex-basis: 150px; gap: 4px; font-size: 9px; }
+  .cockpit-add-row .fleet-add-count { flex-basis: 54px; }
+  .cockpit-add-row .fleet-add-count { font-size: 0; gap: 0; }
+  .cockpit-add-row .fleet-add-count select { font-size: 10px; }
+  .cockpit-add-row select { padding: 5px 6px; font-size: 10px; }
+  .cockpit-add-row .button { padding: 0 8px; gap: 4px; font-size: 10px; }
+  .piece-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
