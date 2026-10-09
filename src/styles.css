@@ -413,6 +413,24 @@ kbd { display: inline-block; padding: 1px 5px; min-width: 20px; border: 1px soli
 .modal-intro { margin: -3px 0 20px; font-size: 13px; color: var(--muted); line-height: 1.7; }
 .modal > h3 { margin: 22px 0 8px; color: #496b36; font-size: 16px; font-weight: 600; }
 .layout-options { display: grid; gap: 11px; }
+.coupling-practice { margin-bottom: 14px; padding: 17px; border: 1px solid #bccfa8; border-radius: 11px; background: #f1f7e9; }
+.coupling-practice-heading { display: flex; align-items: center; gap: 11px; color: #567c3d; }
+.coupling-practice-heading > svg { flex-shrink: 0; }
+.coupling-practice-heading h4 { margin: 0; color: #3f6030; font-size: 15px; font-weight: 600; }
+.coupling-practice-heading p { margin: 4px 0 0; color: #60784f; font-size: 12px; line-height: 1.6; }
+.coupling-practice-controls { display: grid; gap: 12px; min-inline-size: 0; padding: 0; margin: 16px 0 0; border: 0; }
+.coupling-practice-controls > legend { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+.coupling-practice-train { display: flex; align-items: flex-end; gap: 10px; }
+.coupling-practice-number { display: grid; place-items: center; flex-shrink: 0; width: 29px; height: 39px; border-radius: 7px; color: white; font-size: 14px; font-weight: 600; }
+.coupling-practice-train label { display: flex; flex: 1; flex-direction: column; min-width: 0; gap: 5px; color: #54733f; font-size: 11px; }
+.coupling-practice-train .coupling-practice-count { flex: 0 0 65px; }
+.coupling-practice-train select { width: 100%; min-width: 0; min-height: 39px; padding: 7px 8px; border: 1px solid #c6d7b5; border-radius: 7px; background: var(--surface); font-size: 12px; }
+.coupling-practice-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-top: 2px; }
+.coupling-practice-actions > span { color: #4d6f37; font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.coupling-practice-actions .button { min-height: 41px; padding: 0 12px; font-size: 12px; }
+.coupling-practice-quick { display: flex; align-items: center; justify-content: center; gap: 5px; min-height: 35px; padding: 5px 8px; border: 1px solid #d0dec2; border-radius: 7px; color: #53743e; background: #f9fcf4; font-size: 11px; }
+.coupling-practice-quick:hover { background: #e8f1dd; border-color: #adc494; }
+.coupling-practice-note { margin: 12px 0 0; color: #647a55; font-size: 11px; line-height: 1.6; }
 .layout-option { display: flex; align-items: center; gap: 15px; min-width: 0; padding: 15px; border: 1px solid #dce6d1; border-radius: 11px; background: #f4f8ed; text-align: left; color: #567743; }
 .layout-option:hover { border-color: #a8c38a; background: #eaf4de; }
 .layout-option > svg:first-child { width: 65px; height: 46px; color: #6c9350; }

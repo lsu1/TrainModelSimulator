@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { COUPLING_DEMO_NOSE_GAP, makeCouplingDemo } from './couplingDemo'
 import { solveConsistPoses } from './consistPose'
+import { couplingEligibility } from './couplingMotion'
+import type { CouplingTrainType } from './couplingTypes'
+import { solveCoupledFormation } from './formationPose'
+import { physicalTrainFootprintsConflict, trainFootprint } from './trainSafety'
 import { createLayout, parseLayout } from './layout'
 import { restoreFleet } from './fleet'
 import { advanceTrain, closedRouteLength, openEndpoints, trackLength } from './track'
@@ -52,5 +56,43 @@ describe('Shinkansen nose-coupling practice railway', () => {
     expect(e5Poses.cars).toHaveLength(10)
     expect([...e6Poses.cars, ...e5Poses.cars].every(car => car && Math.abs(car.center.angle) < 1e-8 && car.pitch === 0)).toBe(true)
     expect(e5Poses.cars[9]!.rearEnd.x).toBeGreaterThan(layout.tracks[0].x)
+  })
+
+  const configured: { firstType: CouplingTrainType; firstCars: number; secondType: CouplingTrainType; secondCars: number }[] = [
+    { firstType: 'e6', firstCars: 7, secondType: 'e5', secondCars: 10 },
+    { firstType: 'e7', firstCars: 11, secondType: 'e7', secondCars: 11 },
+    { firstType: 'e5', firstCars: 11, secondType: 'e7', secondCars: 11 },
+  ]
+  it.each(configured)('places $firstCars-car $firstType and $secondCars-car $secondType on a clear straight, ready to couple in a closed loop', options => {
+    const layout = makeCouplingDemo(options)
+    const roundTrip = parseLayout(JSON.parse(JSON.stringify(layout)))
+    const fleet = restoreFleet(roundTrip)
+    const [leader, follower] = fleet
+    expect(fleet.map(train => [train.type, train.carCount])).toEqual([
+      [options.firstType, options.firstCars], [options.secondType, options.secondCars],
+    ])
+    expect(fleet.every(train => !train.running && train.actualSpeed === 0 && train.position)).toBe(true)
+    expect(openEndpoints(layout.tracks)).toEqual([])
+    expect(layout.tracks.filter(track => track.kind === 'c381')).toHaveLength(12)
+    expect(closedRouteLength(layout.tracks, leader.position!)).toBeGreaterThan(6_000)
+    for (const train of fleet) expect(validateTrainPlacement(layout.tracks, train, fleet)).toEqual({ allowed: true })
+    expect(physicalTrainFootprintsConflict(trainFootprint(layout.tracks, leader), trainFootprint(layout.tracks, follower))).toBe(false)
+    const first = solveConsistPoses(layout.tracks, leader.position!, leader.cabForward, leader.carCount, leader.type)
+    const second = solveConsistPoses(layout.tracks, follower.position!, follower.cabForward, follower.carCount, follower.type)
+    expect(first.cars).toHaveLength(options.firstCars)
+    expect(second.cars).toHaveLength(options.secondCars)
+    expect([...first.cars, ...second.cars].every(car => car && Math.abs(car.center.angle) < 1e-8 && car.pitch === 0)).toBe(true)
+    expect(first.cars.at(-1)!.rearEnd.x - second.cars[0]!.frontEnd.x).toBeCloseTo(COUPLING_DEMO_NOSE_GAP, 6)
+    expect(second.cars.at(-1)!.rearEnd.x).toBeGreaterThan(layout.tracks[0].x)
+    const eligibility = couplingEligibility(layout.tracks, fleet, follower.id, leader.id)
+    expect(eligibility.allowed, eligibility.reason).toBe(true)
+    const pair = eligibility.pair!
+    const reference = fleet.find(train => train.id === pair.e6Id)!
+    const partner = fleet.find(train => train.id === pair.e5Id)!
+    const formation = solveCoupledFormation(layout.tracks, reference, partner, pair)
+    expect(formation.complete).toBe(true)
+    expect([...formation.e6.cars, ...formation.e5.cars].every(car => car && Math.abs(car.center.angle) < 1e-8 && car.pitch === 0)).toBe(true)
+    expect(formation.e6.cars.length + formation.e5.cars.length).toBe(options.firstCars + options.secondCars)
+    if (options.firstCars === 11 && options.secondCars === 11) expect(layout.tracks.filter(track => track.kind === 's248').length).toBeGreaterThan(24)
   })
 })

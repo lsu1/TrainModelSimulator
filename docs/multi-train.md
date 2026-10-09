@@ -30,7 +30,7 @@ New placement requires every car to fit on connected track and rejects overlap o
 
 Named layouts, autosave and exported JSON files include each train's identity, model, car count, track position, direction, orientation and requested speed, plus the selected train. Reopened or imported trains start **paused**. Running animation state is deliberately excluded from saved files.
 
-Version **4** stores the fleet and settled E5/E6 partnerships. Version 3 retains its independent sets; earlier version 1 and 2 layouts migrate to one independent trainset. A missing model selection still defaults to E235. Named saved designs continue using the existing layout library. Browser storage remains local to this browser and computer, so export a layout file for a portable backup. During a joining/separating animation, autosave retains the last complete configuration; an interrupted operation reopens safely paused at that configuration.
+Version **5** stores the fleet, settled Shinkansen partnerships, and each partner's connected cab end. Version 4 E5/E6 partnerships retain their original ends; version 3 retains its independent sets; earlier version 1 and 2 layouts migrate to one independent trainset. A missing model selection still defaults to E235. Named saved designs continue using the existing layout library. Browser storage remains local to this browser and computer, so export a layout file for a portable backup. During a joining/separating animation, autosave retains the last complete configuration; an interrupted operation reopens safely paused at that configuration.
 
 ## Implementation and checks
 
@@ -38,4 +38,10 @@ Version **4** stores the fleet and settled E5/E6 partnerships. Version 3 retains
 
 Unit checks exercise placement, head-on and following conflicts, crossing approaches, parallel and elevated tracks, multi-train interactions, saved-layout migration and clearance review. Browser checks cover all four models and duplicate E5 sets, independent controls, selection, removal, unsafe placement, high-speed conflicts, paused saves, old layouts and a small-screen interface. Existing single-train curve and gradient checks continue to verify the same car and connector geometry.
 
-E5–E6 nose coupling is available from version 0.8.0. Both original train IDs, names, models, counts and roof roles remain distinct, while one shared solver advances the mixed formation. Selecting either member addresses the whole formation; separate it before moving, changing or removing an individual member. A full 10-car E5 plus 7-car E6 is supported, as are shortened 3–11-car sets. See [joining, splitting and mechanism references](shinkansen-nose-coupling.md).
+## Connected Shinkansen
+
+Version **0.9.0** lets any two E5, E6, or E7 sets join, including two of the same model. Either cab end can connect on straight, curved, or graded track, with the nearby ends detected automatically. They still need a shared rail route and enough clear space for the complete formation and opening covers. These are playful combinations; real trains do not support every pairing. E235 remains independent, and each Shinkansen can have one partner.
+
+Both original train IDs, names, models, counts and roof roles remain distinct while one shared solver advances the formation. Selecting either member drives both. The shared maximum speed is the lower member limit: **275 km/h when E7 is included**, otherwise **320 km/h**. Pause or reverse affects both partners.
+
+Choose each model and **3–11 cars** in **Layouts → Coupling station**, or use **Try 17 cars: E6 (7) + E5 (10)**. The practice oval grows to fit the chosen sets. A connected formation can therefore have **6–22 cars**; its complete length must fit safely on the railway. Stop both partners to change either car count while keeping them joined. A count change is rejected if the resulting formation would not fit or would touch another train. Separate partners before changing their models, moving an individual set, or removing it. See [joining, splitting and mechanism references](shinkansen-nose-coupling.md).

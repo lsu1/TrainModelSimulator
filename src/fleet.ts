@@ -86,8 +86,12 @@ export function snapshotFleetLayout(
   const trains = fleet.map(trainSnapshot)
   const selected = trains.find(train => train.id === selectedTrainId) ?? trains[0]
   return {
-    ...layout, version: 4, trains,
-    couplings: couplings.map(group => ({ id: group.id, e6Id: group.e6Id, e5Id: group.e5Id })),
+    ...layout, version: 5, trains,
+    couplings: couplings.map(group => ({
+      id: group.id, e6Id: group.e6Id, e5Id: group.e5Id,
+      ...(group.e6End === undefined ? {} : { e6End: group.e6End }),
+      ...(group.e5End === undefined ? {} : { e5End: group.e5End }),
+    })),
     ...(selected ? { selectedTrainId: selected.id, trainType: selected.type, carCount: selected.carCount } : { selectedTrainId: undefined }),
   }
 }

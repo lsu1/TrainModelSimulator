@@ -419,8 +419,8 @@ export function createShinkansenCar(index: number, total: number, type: Shinkans
       boxes(car, dark, [{ position: [end * (halfLength - .6), 3.45, 0], size: [1.8, 1.0, 2.0] }], `covered-coupler-mount-${name}`)
     }
   }
-  if ((type === 'e5' || type === 'e6') && isNoseCouplingCar(type, index, total)) {
-    attachNoseCoupler(car, exterior, spec, type, (x, theta) => shinkansenSurface(spec, type, x, theta), noseState)
+  if (isNoseCouplingCar(type, index, total)) {
+    attachNoseCoupler(car, exterior, spec, type, (x, theta) => shinkansenSurface(spec, type, x, theta), noseState, index === 0 ? 'front' : 'rear')
   }
   return car
 }

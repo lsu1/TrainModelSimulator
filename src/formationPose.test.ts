@@ -8,12 +8,13 @@ import { makeKatoPlan02 } from './katoPlan'
 import { advanceTrain, attachTrack, closedRouteLength, endpoints, pointAt, sampleBehind, samplePositionBehind } from './track'
 import type { Track, TrainPosition } from './track'
 import { getCouplingLinkLength, getTrainCarSpec } from './trains'
+import type { CouplingTrainType, CabEnd } from './couplingTypes'
 
 function distance(a: PoseVector, b: PoseVector): number {
   return Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z)
 }
 
-function snapshot(type: 'e5' | 'e6', count: number, position: TrainPosition | null): TrainSnapshot {
+function snapshot(type: CouplingTrainType, count: number, position: TrainPosition | null): TrainSnapshot {
   return { id: type, name: type, type, carCount: count, position, cabForward: true, requestedSpeed: 65 }
 }
 
@@ -58,8 +59,9 @@ describe('shared mixed E6 + E5 nose-coupled poses', () => {
     expect(distance(result.joint!.e6Mount, result.joint!.head)).toBeCloseTo(NOSE_COUPLER_PROFILES.e6.extensionLength, 6)
     expect(distance(result.joint!.e5Mount, result.joint!.head)).toBeCloseTo(NOSE_COUPLER_PROFILES.e5.extensionLength, 6)
     const originalTips = distance(result.e6.cars.at(-1)!.rearEnd, result.e5.cars[0]!.frontEnd)
-    expect(originalTips).toBeCloseTo(17, 6)
-    expect(result.e5Offset).toBeCloseTo(result.e6.rearOffset - 17, 6)
+    const overlap = NOSE_COUPLER_PROFILES.e6.mountInset + NOSE_COUPLER_PROFILES.e5.mountInset - NOSE_JOINT_LENGTH
+    expect(originalTips).toBeCloseTo(overlap, 6)
+    expect(result.e5Offset).toBeCloseTo(result.e6.rearOffset - overlap, 6)
     expect(result.rearOffset).toBeCloseTo(result.e5Offset + result.e5.rearOffset, 6)
     expect(result.e5Position!.laps).toBe(4)
     expect(result.e5Position!.direction).toBe(1)
@@ -155,8 +157,8 @@ describe('shared mixed E6 + E5 nose-coupled poses', () => {
     const car = result.e6.cars.at(-1)!
     const mount = noseMount(car, 'e6')
     const delta = { x: mount.x - car.rearEnd.x, y: mount.y - car.rearEnd.y, z: mount.z - car.rearEnd.z }
-    expect(delta.x * car.direction.x + delta.y * car.direction.y + delta.z * car.direction.z).toBeCloseTo(18, 7)
-    expect(distance(car.rearEnd, mount)).toBeCloseTo(Math.hypot(18, 9.5), 7)
+    expect(delta.x * car.direction.x + delta.y * car.direction.y + delta.z * car.direction.z).toBeCloseTo(NOSE_COUPLER_PROFILES.e6.mountInset, 7)
+    expect(distance(car.rearEnd, mount)).toBeCloseTo(Math.hypot(NOSE_COUPLER_PROFILES.e6.mountInset, NOSE_COUPLER_PROFILES.e6.height), 7)
   })
 })
 
@@ -182,5 +184,105 @@ describe('exact backwards rail cursors', () => {
     const position: TrainPosition = { trackId: tracks[0].id, distance: 100, direction: 1, laps: 0 }
     expect(samplePositionBehind(tracks, position, 100)).toEqual({ ...position, distance: 0 })
     expect(samplePositionBehind(tracks, position, 100.001)).toBeNull()
+  })
+})
+
+
+describe('playful Shinkansen formations in either cab orientation', () => {
+  const types: CouplingTrainType[] = ['e5', 'e6', 'e7']
+  const ends: CabEnd[] = ['front', 'rear']
+  const combinations = types.flatMap(leaderType => types.flatMap(followerType =>
+    ends.flatMap(e6End => ends.map(e5End => ({ leaderType, followerType, e6End, e5End })))))
+
+  it.each(combinations)('$leaderType $e6End joins $followerType $e5End while preserving original car indices and fixed joints on curves and grades', ({ leaderType, followerType, e6End, e5End }) => {
+    const tracks = makeKatoPlan02().tracks
+    let leader = snapshot(leaderType, 3, { trackId: 'kato-plan02-main-20', distance: 35, direction: 1, laps: 5 })
+    const follower = snapshot(followerType, 3, null)
+    const descriptor = { e6End, e5End }
+    let previous: CarPose[] | null = null
+    for (let step = 0; step < 12; step += 1) {
+      const result = solveCoupledFormation(tracks, leader, follower, descriptor)
+      expect(result.complete, `${leaderType}/${followerType} ${e6End}/${e5End} step ${step}`).toBe(true)
+      expect(result.e6).toEqual(solveConsistPoses(tracks, leader.position!, leader.cabForward, leader.carCount, leader.type))
+      expect(result.e5).toEqual(solveConsistPoses(tracks, result.e5Position!, result.e5CabForward, follower.carCount, follower.type))
+      checkMember(result.e6, leader)
+      checkMember(result.e5, follower)
+      const leadCab = e6End === 'front' ? result.e6.cars[0]! : result.e6.cars.at(-1)!
+      const followCab = e5End === 'front' ? result.e5.cars[0]! : result.e5.cars.at(-1)!
+      expect(result.joint!.e6Mount).toEqual(noseMount(leadCab, leader.type, e6End))
+      expect(result.joint!.e5Mount).toEqual(noseMount(followCab, follower.type, e5End))
+      const leadProfile = NOSE_COUPLER_PROFILES[leaderType]
+      const followProfile = NOSE_COUPLER_PROFILES[followerType]
+      expect(distance(result.joint!.e6Mount, result.joint!.e5Mount)).toBeCloseTo(leadProfile.extensionLength + followProfile.extensionLength, 5)
+      expect(distance(result.joint!.e6Mount, result.joint!.head)).toBeCloseTo(leadProfile.extensionLength, 5)
+      expect(distance(result.joint!.e5Mount, result.joint!.head)).toBeCloseTo(followProfile.extensionLength, 5)
+      expect(result.e5CabForward).toBe(e6End !== e5End)
+      if (e6End === 'front') expect(result.frontOffset).toBeGreaterThan(250)
+      else expect(result.frontOffset).toBe(0)
+      expect(result.rearOffset).toBeGreaterThanOrEqual(result.e6.rearOffset)
+      const reversed = solveCoupledFormation(tracks, { ...leader, position: { ...leader.position!, direction: -1 }, cabForward: false }, follower, descriptor)
+      expect(reversed.e6).toEqual(result.e6)
+      expect(reversed.e5).toEqual(result.e5)
+      expect(reversed.joint).toEqual(result.joint)
+      expect(reversed.e5CabForward).toBe(!result.e5CabForward)
+      expect(reversed.e5Position).toEqual({ ...result.e5Position!, direction: result.e5Position!.direction === 1 ? -1 : 1 })
+      const cars = [...result.e6.cars, ...result.e5.cars] as CarPose[]
+      if (previous) for (const [index, car] of cars.entries()) expect(distance(car.center, previous[index].center)).toBeLessThan(8)
+      previous = cars
+      leader = { ...leader, position: advanceTrain(tracks, leader.position!, 5).position }
+    }
+  })
+
+  it.each(combinations)('$leaderType $e6End + $followerType $e5End keeps both sets connected through a whole elevated KATO loop in both physical orientations', ({ leaderType, followerType, e6End, e5End }) => {
+    const tracks = makeKatoPlan02().tracks
+    const follower = snapshot(followerType, 3, null)
+    const descriptor = { e6End, e5End }
+    for (const direction of [1, -1] as const) {
+      let leader = snapshot(leaderType, 3, { trackId: 'kato-plan02-main-7', distance: 30, direction, laps: 0 })
+      const length = closedRouteLength(tracks, leader.position!)!
+      let encounteredElevation = false
+      for (let traveled = 0; traveled <= length; traveled += 175) {
+        const result = solveCoupledFormation(tracks, leader, follower, descriptor)
+        expect(result.complete, `${leaderType}/${followerType} ${e6End}/${e5End} ${direction} ${leader.position!.trackId}`).toBe(true)
+        checkMember(result.e6, leader)
+        checkMember(result.e5, follower)
+        expect(distance(result.joint!.e6Mount, result.joint!.e5Mount)).toBeCloseTo(NOSE_COUPLER_PROFILES[leaderType].extensionLength + NOSE_COUPLER_PROFILES[followerType].extensionLength, 5)
+        if (result.e6.cars.some(car => car!.center.z > 40) || result.e5.cars.some(car => car!.center.z > 40)) encounteredElevation = true
+        leader = { ...leader, position: advanceTrain(tracks, leader.position!, 175).position }
+      }
+      expect(encounteredElevation).toBe(true)
+    }
+  })
+
+  it.each(['front', 'rear'] as const)('keeps a maximum 11 + 11 formation complete when joining either leader %s cab', e6End => {
+    const tracks = chain(40)
+    const leader = snapshot('e7', 11, { trackId: tracks[20].id, distance: 100, direction: 1, route: 0, laps: 3 })
+    const follower = snapshot('e7', 11, null)
+    const result = solveCoupledFormation(tracks, leader, follower, { e6End, e5End: 'rear' })
+    expect(result.complete).toBe(true)
+    checkMember(result.e6, leader)
+    checkMember(result.e5, follower)
+    expect(result.frontOffset + result.rearOffset).toBeGreaterThan(3400)
+    expect(result.e5Position!.laps).toBe(leader.position!.laps)
+  })
+
+  it('refuses the front-attached follower when it would extend beyond an open forward endpoint', () => {
+    const tracks = chain(5)
+    const leader = snapshot('e7', 3, { trackId: tracks[4].id, distance: 210, direction: 1, laps: 0 })
+    const result = solveCoupledFormation(tracks, leader, snapshot('e6', 3, null), { e6End: 'front', e5End: 'rear' })
+    expect(result.complete).toBe(false)
+    expect(result.e6.cars.every(Boolean)).toBe(true)
+  })
+
+  it('keeps the chosen lane when the follower reference must be sampled ahead through an overpass', () => {
+    const tracks = chain(12, 'ds248')
+    const high = tracks.map(track => ({ ...track, id: `${track.id}-high`, elevation: 60 }))
+    const leader = snapshot('e7', 3, { trackId: tracks[4].id, distance: 160, direction: 1, route: 1, laps: 7 })
+    const result = solveCoupledFormation([...tracks, ...high], leader, snapshot('e5', 3, null), { e6End: 'front', e5End: 'rear' })
+    expect(result.complete).toBe(true)
+    expect(result.e5Position!.route).toBe(1)
+    expect(result.e5Position!.trackId.endsWith('-high')).toBe(false)
+    expect(result.e5.cars.every(car => car!.center.z === 0)).toBe(true)
+    expect(result.e5Offset).toBeLessThan(0)
   })
 })

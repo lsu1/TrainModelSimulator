@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { KATO_CATALOG } from './catalog'
-import { LEGACY_STORAGE_KEY, PREVIOUS_STORAGE_KEY, STORAGE_KEY, V2_STORAGE_KEY, createLayout, loadLayout, parseLayout, type LayoutData, type PlacedAccessory } from './layout'
+import { LEGACY_STORAGE_KEY, PREVIOUS_STORAGE_KEY, STORAGE_KEY, V3_STORAGE_KEY, V2_STORAGE_KEY, createLayout, loadLayout, parseLayout, type LayoutData, type PlacedAccessory } from './layout'
 import { endpoints, makeStarterLayout, openEndpoints } from './track'
 import { getTrainSpec, TRAIN_TYPES } from './trains'
 import { MAX_TRAINSETS, restoreFleet, snapshotFleetLayout } from './fleet'
@@ -250,7 +250,7 @@ describe('documented viaduct supports', () => {
 })
 
 describe('saved layout recovery', () => {
-  it('reads a previous 3D autosave without modifying it and prefers a valid v4 snapshot', () => {
+  it('reads a previous 3D autosave without modifying it and prefers a valid v5 snapshot', () => {
     const original = { ...createLayout('compact'), trainType: 'e7' as const, carCount: 5 }
     const fleetLayout = snapshotFleetLayout(original, restoreFleet(original), 'train-1')
     const values = new Map([[PREVIOUS_STORAGE_KEY, JSON.stringify(original)]])
@@ -264,21 +264,26 @@ describe('saved layout recovery', () => {
     expect(loadLayout()).toEqual(original)
   })
 
-  it('tries v4, v3, v2 and v1 in order without replacing any original autosave', () => {
+  it('tries v5, v4, v3, v2 and v1 in order without replacing any original autosave', () => {
     const original = createLayout('compact')
     const oldFleet = { ...snapshotFleetLayout(original, restoreFleet(original), 'train-1'), version: 3 }
+    const oldCouplingFleet = { ...snapshotFleetLayout(original, restoreFleet(original), 'train-1'), version: 4, name: 'Previous draft' }
     const latest = { ...snapshotFleetLayout(original, restoreFleet(original), 'train-1'), name: 'Latest draft' }
     const values = new Map([[LEGACY_STORAGE_KEY, JSON.stringify(legacy())], [V2_STORAGE_KEY, JSON.stringify(original)]])
     const setItem = vi.fn()
     vi.stubGlobal('localStorage', { getItem: (key: string) => values.get(key) ?? null, setItem })
     expect(loadLayout()).toEqual(original)
-    values.set(PREVIOUS_STORAGE_KEY, JSON.stringify(oldFleet))
+    values.set(V3_STORAGE_KEY, JSON.stringify(oldFleet))
     expect(loadLayout()).toEqual(parseLayout(oldFleet))
+    values.set(PREVIOUS_STORAGE_KEY, JSON.stringify(oldCouplingFleet))
+    expect(loadLayout()).toEqual(parseLayout(oldCouplingFleet))
     values.set(STORAGE_KEY, JSON.stringify(latest))
     expect(loadLayout()).toEqual(latest)
-    values.set(STORAGE_KEY, '{ damaged v4')
+    values.set(STORAGE_KEY, '{ damaged v5')
+    expect(loadLayout()).toEqual(parseLayout(oldCouplingFleet))
+    values.set(PREVIOUS_STORAGE_KEY, '{ damaged v4')
     expect(loadLayout()).toEqual(parseLayout(oldFleet))
-    values.set(PREVIOUS_STORAGE_KEY, '{ damaged v3')
+    values.set(V3_STORAGE_KEY, '{ damaged v3')
     expect(loadLayout()).toEqual(original)
     values.set(V2_STORAGE_KEY, '{ damaged v2')
     expect(loadLayout()).toEqual(parseLayout(legacy()))
@@ -454,7 +459,7 @@ describe('version 3 independent train validation', () => {
 describe('version 4 stable nose-coupled partnerships', () => {
   const paired = () => {
     const original = createLayout('coupling-demo')
-    return { ...original, couplings: [{ id: 'pair-1', e6Id: original.trains![0].id, e5Id: original.trains![1].id }] }
+    return { ...original, version: 4 as const, couplings: [{ id: 'pair-1', e6Id: original.trains![0].id, e5Id: original.trains![1].id }] }
   }
 
   it('round trips both member trainsets, their exact positions, selection and stable relation', () => {
@@ -481,10 +486,23 @@ describe('version 4 stable nose-coupled partnerships', () => {
     const original = paired()
     const parsed = parseLayout({ ...original,
       couplingOperation: { phase: 'approaching' },
-      couplings: [{ ...original.couplings[0], elapsed: 2, paused: false, open: .5 }],
+      couplings: [{ ...original.couplings[0], elapsed: 2, paused: false, open: .5, e6End: 'front', e5End: 'rear' }],
       trains: original.trains!.map(train => ({ ...train, noseCoupling: { open: .5, extension: .3, locked: false }, running: true })),
     })
     expect(parsed).toEqual(original)
+  })
+
+  it('upgrades an old stable partnership on its next fleet snapshot without losing its members or saved positions', () => {
+    const original = paired()
+    const before = JSON.stringify(original)
+    const restored = restoreFleet(parseLayout(JSON.parse(before)))
+    const upgraded = snapshotFleetLayout(original, restored, original.selectedTrainId)
+    expect(upgraded.version).toBe(5)
+    expect(upgraded.couplings).toEqual(original.couplings)
+    expect(upgraded.trains!.map(train => train.position)).toEqual(original.trains!.map(train => train.position))
+    expect(parseLayout(JSON.parse(JSON.stringify(upgraded)))).toEqual(upgraded)
+    expect(JSON.stringify(original)).toBe(before)
+    expect(restored.every(train => !train.running && train.actualSpeed === 0)).toBe(true)
   })
 
   it.each([
@@ -515,5 +533,91 @@ describe('version 4 stable nose-coupled partnerships', () => {
     expect(() => parseLayout({ ...original, trains, couplings: [...original.couplings, { ...second, id: 'pair-1' }] })).toThrow(/coupling/)
     expect(() => parseLayout({ ...original, trains, couplings: [...original.couplings, { ...second, e6Id: trains[0].id }] })).toThrow(/coupling/)
     expect(() => parseLayout({ ...original, trains, couplings: [...original.couplings, { ...second, e5Id: trains[1].id }] })).toThrow(/coupling/)
+  })
+})
+
+describe('version 5 playful Shinkansen partnerships', () => {
+  const types = ['e5', 'e6', 'e7'] as const
+  const ends = ['front', 'rear'] as const
+  const combinations = types.flatMap(referenceType => types.flatMap(partnerType =>
+    ends.flatMap(e6End => ends.map(e5End => ({ referenceType, partnerType, e6End, e5End }))))
+  )
+  const paired = () => {
+    const original = createLayout('coupling-demo')
+    return {
+      ...original, version: 5 as const,
+      couplings: [{ id: 'pair-1', e6Id: original.trains![0].id, e5Id: original.trains![1].id }],
+    }
+  }
+
+  it.each(combinations)('round trips $referenceType $e6End with $partnerType $e5End', ({ referenceType, partnerType, e6End, e5End }) => {
+    const original = paired()
+    const group = { ...original.couplings[0], e6End, e5End }
+    const candidate = { ...original, couplings: [group], trains: original.trains!.map((train, index) => ({
+      ...train, type: index === 0 ? referenceType : partnerType, carCount: index === 0 ? 11 : 7,
+      cabForward: index === 0,
+    })) }
+    const parsed = parseLayout(JSON.parse(JSON.stringify(candidate)))
+    expect(parsed).toEqual(candidate)
+    expect(parsed.couplings![0]).not.toBe(group)
+    expect(parsed.trains![0].position).not.toBe(candidate.trains[0].position)
+    expect(restoreFleet(parsed).map(train => train.carCount)).toEqual([11, 7])
+    expect(restoreFleet(parsed).every(train => !train.running && train.actualSpeed === 0)).toBe(true)
+  })
+
+  it('keeps missing cab ends absent for the legacy rear/front defaults and allows explicit ends independently', () => {
+    const original = paired()
+    expect(parseLayout(original)).toEqual(original)
+    for (const patch of [{ e6End: 'front' }, { e5End: 'rear' }] as const) {
+      const couplings = [{ ...original.couplings[0], ...patch }]
+      expect(parseLayout({ ...original, couplings }).couplings).toEqual(couplings)
+    }
+    expect(parseLayout({ ...original, couplings: undefined }).couplings).toEqual([])
+  })
+
+  it.each(['head', 'tail', 'FRONT', '', null, 1, {}, []])('rejects an invalid saved cab end: %j', end => {
+    const original = paired()
+    for (const field of ['e6End', 'e5End']) {
+      expect(() => parseLayout({ ...original, couplings: [{ ...original.couplings[0], [field]: end }] })).toThrow(/coupling end/)
+    }
+  })
+
+  it.each([
+    { id: '' }, { id: 'x'.repeat(101) }, { id: 1 }, { e6Id: 'absent' }, { e5Id: 'absent' },
+    { e6Id: 'coupling-demo-e6', e5Id: 'coupling-demo-e6' }, { e6Id: null }, { e5Id: 3 },
+  ])('rejects malformed or missing group identities: %j', patch => {
+    const original = paired()
+    expect(() => parseLayout({ ...original, couplings: [{ ...original.couplings[0], ...patch }] })).toThrow(/coupling/)
+  })
+
+  it('rejects commuter members on either side while permitting the other Shinkansen combinations', () => {
+    const original = paired()
+    for (const commuterIndex of [0, 1]) {
+      expect(() => parseLayout({ ...original, trains: original.trains!.map((train, index) => ({
+        ...train, type: index === commuterIndex ? 'e235' : 'e7',
+      })) })).toThrow(/coupling/)
+    }
+  })
+
+  it('supports separate same-model pairs and prevents shared members or duplicate group IDs', () => {
+    const original = paired()
+    const trains = [...original.trains!, ...original.trains!.map(train => ({ ...train, id: `${train.id}-2` }))]
+      .map(train => ({ ...train, type: 'e7' as const }))
+    const second = { id: 'pair-2', e6Id: trains[2].id, e5Id: trains[3].id, e6End: 'front' as const, e5End: 'front' as const }
+    expect(parseLayout({ ...original, trains, couplings: [...original.couplings, second] }).couplings).toHaveLength(2)
+    for (const patch of [{ id: 'pair-1' }, { e6Id: trains[0].id }, { e5Id: trains[1].id }, { e6Id: trains[1].id }]) {
+      expect(() => parseLayout({ ...original, trains, couplings: [...original.couplings, { ...second, ...patch }] })).toThrow(/coupling/)
+    }
+  })
+
+  it('strips transient animation and commands while retaining both stable cab ends', () => {
+    const original = paired()
+    const couplings = [{ ...original.couplings[0], e6End: 'front' as const, e5End: 'rear' as const }]
+    const parsed = parseLayout({ ...original, couplings: [{ ...couplings[0], phase: 'closing', elapsed: 2, paused: false }],
+      couplingOperation: { phase: 'opening' }, trains: original.trains!.map(train => ({ ...train,
+        running: true, actualSpeed: 50, noseCoupling: { end: 'rear', open: .5, extension: .3, locked: false },
+      })),
+    })
+    expect(parsed).toEqual({ ...original, couplings })
   })
 })

@@ -68,6 +68,9 @@ const TRAIN_DESCRIPTIONS: Record<TrainType, string> = {
   e6: "Red and silver with a pointed nose",
   e7: "Blue and white with a copper stripe",
 };
+type ShinkansenType = Exclude<TrainType, "e235">;
+const SHINKANSEN_TYPES: readonly ShinkansenType[] = ["e5", "e6", "e7"];
+const PLAY_CAR_COUNTS = Array.from({ length: 9 }, (_, index) => index + 3);
 const TRAIN_STATUS_LABELS: Record<TrainRuntime["status"], string> = {
   unplaced: "Unplaced",
   stopped: "Stopped",
@@ -185,6 +188,10 @@ export default function App() {
   const [newTrainType, setNewTrainType] = useState<TrainType>("e5");
   const [newTrainCarCount, setNewTrainCarCount] = useState(3);
   const [couplingPartnerId, setCouplingPartnerId] = useState("");
+  const [practiceFirstType, setPracticeFirstType] = useState<ShinkansenType>("e6");
+  const [practiceFirstCars, setPracticeFirstCars] = useState(3);
+  const [practiceSecondType, setPracticeSecondType] = useState<ShinkansenType>("e5");
+  const [practiceSecondCars, setPracticeSecondCars] = useState(3);
   const selectedTrain = h.fleet.find((train) => train.id === h.selectedTrainId);
   const selectedIsPlaced = !!selectedTrain?.position;
   const selectedIsMoving = !!selectedTrain && (selectedTrain.running || selectedTrain.actualSpeed > 0);
@@ -194,9 +201,14 @@ export default function App() {
     ? h.fleet.filter((train) => train.id === h.selectedCoupling?.e5Id || train.id === h.selectedCoupling?.e6Id)
     : [];
   const selectedFormationCarCount = selectedFormation.reduce((count, train) => count + train.carCount, 0);
+  const selectedFormationLabel = selectedFormation.map((train) => train.type.toUpperCase()).join(" + ");
   const formationCarCountFor = (trainId: string) => {
     const group = h.couplings.find((coupling) => coupling.e5Id === trainId || coupling.e6Id === trainId);
     return group ? h.fleet.reduce((count, train) => count + (train.id === group.e5Id || train.id === group.e6Id ? train.carCount : 0), 0) : undefined;
+  };
+  const formationLabelFor = (trainId: string) => {
+    const group = h.couplings.find((coupling) => coupling.e5Id === trainId || coupling.e6Id === trainId);
+    return group ? h.fleet.filter((train) => train.id === group.e5Id || train.id === group.e6Id).map((train) => train.type.toUpperCase()).join(" + ") : undefined;
   };
   const couplingPartner = h.couplingPartners.find((partner) => partner.id === couplingPartnerId)
     ?? h.couplingPartners.find((partner) => partner.allowed)
@@ -532,7 +544,7 @@ export default function App() {
                         <strong>{train.name}</strong>
                         <span>{getTrainSpec(train.type).name} · {train.carCount} cars</span>
                         {formationCarCountFor(train.id) !== undefined && (
-                          <span className="fleet-connected-badge"><Link2 size={12} /> E5 + E6 · {formationCarCountFor(train.id)} cars</span>
+                          <span className="fleet-connected-badge"><Link2 size={12} /> {formationLabelFor(train.id)} · {formationCarCountFor(train.id)} cars</span>
                         )}
                         <span className={`fleet-status ${train.status}`}>
                           <span className={`status-dot ${train.running && train.status !== "blocked" ? "running" : ""}`} />
@@ -610,7 +622,7 @@ export default function App() {
                 {h.fleet.length >= MAX_TRAINSETS
                   ? `All ${MAX_TRAINSETS} train spaces are filled. Remove one to add another.`
                   : selectedIsCoupled
-                    ? "Your E5 and E6 share their controls while connected. Select either partner to drive both."
+                    ? "Your connected trains share their controls. Select either partner to drive both."
                   : "Each train has its own controls. Select a train here or click it in the scene."}
               </p>
             </section>
@@ -709,7 +721,7 @@ export default function App() {
                 <select
                   aria-label="Train car count"
                   value={h.carCount}
-                  disabled={!selectedTrain || selectedIsMoving || !!h.placingTrain || h.couplingBusy || selectedIsCoupled}
+                  disabled={!selectedTrain || selectedIsMoving || !!h.placingTrain || h.couplingBusy}
                   onChange={(event) =>
                     h.changeTrainCarCount(Number(event.target.value))
                   }
@@ -724,7 +736,7 @@ export default function App() {
                 </select>
               </label>
             </div>
-            {(selectedTrain?.type === "e5" || selectedTrain?.type === "e6" || h.couplingBusy || selectedIsCoupled) && (
+            {(selectedTrain?.type === "e5" || selectedTrain?.type === "e6" || selectedTrain?.type === "e7" || h.couplingBusy || selectedIsCoupled) && (
               <section className="coupling-panel" aria-label="Nose coupling">
                 <div className="coupling-heading">
                   <div>
@@ -733,7 +745,7 @@ export default function App() {
                   </div>
                   <div className="coupling-heading-actions">
                     {selectedIsCoupled && (
-                      <span className="coupling-formation-badge">E5 + E6 · {selectedFormationCarCount} cars</span>
+                      <span className="coupling-formation-badge">{selectedFormationLabel} · {selectedFormationCarCount} cars</span>
                     )}
                     {(h.couplingBusy || selectedIsCoupled) && (
                       <button
@@ -774,9 +786,9 @@ export default function App() {
                   </div>
                 ) : selectedIsCoupled ? (
                   <>
-                    <div className="coupling-connected-note"><Check size={16} /><p>Connected! Drive either train to move both together. Separate them before changing their cars or places.</p></div>
+                    <div className="coupling-connected-note"><Check size={16} /><p>Connected! Drive either train to move both together. Stop to change either train's car count. Separate them before changing models or places.</p></div>
                     <div className="coupling-actions">
-                      <p id="coupling-guidance">{h.couplingReason ?? "Stop on a clear, straight, level track to separate the trains."}</p>
+                      <p id="coupling-guidance">{h.couplingReason ?? "Stop with clear track behind the trains to separate them."}</p>
                       <button
                         className="button secondary"
                         aria-label="Decouple trains"
@@ -791,7 +803,7 @@ export default function App() {
                   </>
                 ) : (
                   <>
-                    <p className="coupling-intro">An E5 and an E6 can join nose to nose. Stop their coupling ends together on a clear, straight, level track.</p>
+                    <p className="coupling-intro">Mix any two E5, E6, or E7 trains, including the same model. Either nose can connect, even on a curve. Stop both trains with their noses near each other.</p>
                     <div className="coupling-actions">
                       {h.couplingPartners.length > 1 ? (
                         <label className="coupling-partner-select">
@@ -825,8 +837,8 @@ export default function App() {
                       ?? (couplingPartner?.allowed
                         ? "Ready to join! The noses open and the trains move together slowly."
                         : couplingPartner
-                          ? "Stop both trains and bring their coupling ends together on a clear, straight, level track."
-                          : `Add an ${selectedTrain?.type === "e5" ? "E6" : "E5"} Shinkansen to give this train a partner.`)}</p>
+                          ? "Stop both trains and bring any two noses near each other on connected track."
+                          : "Add another E5, E6, or E7 Shinkansen, or choose your pair in Layouts → Coupling station.")}</p>
                   </>
                 )}
               </section>
@@ -1430,15 +1442,65 @@ export default function App() {
                 <h3 className="saved-layout-heading preset-heading">
                   Start a new layout
                 </h3>
+                <section className="coupling-practice" aria-labelledby="coupling-practice-title">
+                  <div className="coupling-practice-heading">
+                    <Link2 size={25} strokeWidth={1.5} />
+                    <div>
+                      <h4 id="coupling-practice-title">Coupling station</h4>
+                      <p>Any Shinkansen pair, either nose, even on curves. Choose 3–11 cars for each.</p>
+                    </div>
+                  </div>
+                  <fieldset className="coupling-practice-controls" disabled={h.couplingBusy}>
+                    <legend className="sr-only">Coupling practice trains</legend>
+                    <div className="coupling-practice-train">
+                      <span className="coupling-practice-number" style={{ background: getTrainSpec(practiceFirstType).colors.primary }}>1</span>
+                      <label>
+                        Train 1
+                        <select aria-label="First coupling train model" value={practiceFirstType} onChange={(event) => setPracticeFirstType(event.target.value as ShinkansenType)}>
+                          {SHINKANSEN_TYPES.map((type) => <option key={type} value={type}>{getTrainSpec(type).name}</option>)}
+                        </select>
+                      </label>
+                      <label className="coupling-practice-count">
+                        Cars
+                        <select aria-label="First coupling train car count" value={practiceFirstCars} onChange={(event) => setPracticeFirstCars(Number(event.target.value))}>
+                          {PLAY_CAR_COUNTS.map((count) => <option key={count} value={count}>{count}</option>)}
+                        </select>
+                      </label>
+                    </div>
+                    <div className="coupling-practice-train">
+                      <span className="coupling-practice-number" style={{ background: getTrainSpec(practiceSecondType).colors.primary }}>2</span>
+                      <label>
+                        Train 2
+                        <select aria-label="Second coupling train model" value={practiceSecondType} onChange={(event) => setPracticeSecondType(event.target.value as ShinkansenType)}>
+                          {SHINKANSEN_TYPES.map((type) => <option key={type} value={type}>{getTrainSpec(type).name}</option>)}
+                        </select>
+                      </label>
+                      <label className="coupling-practice-count">
+                        Cars
+                        <select aria-label="Second coupling train car count" value={practiceSecondCars} onChange={(event) => setPracticeSecondCars(Number(event.target.value))}>
+                          {PLAY_CAR_COUNTS.map((count) => <option key={count} value={count}>{count}</option>)}
+                        </select>
+                      </label>
+                    </div>
+                    <div className="coupling-practice-actions">
+                      <span>{practiceFirstCars} + {practiceSecondCars} = {practiceFirstCars + practiceSecondCars} cars</span>
+                      <button className="button primary" aria-label="Start coupling practice in Coupling station" onClick={() => h.loadCouplingPractice(practiceFirstType, practiceFirstCars, practiceSecondType, practiceSecondCars)}>
+                        <Link2 size={16} /> Start coupling practice
+                      </button>
+                    </div>
+                    <button className="coupling-practice-quick" onClick={() => {
+                      setPracticeFirstType("e6");
+                      setPracticeFirstCars(7);
+                      setPracticeSecondType("e5");
+                      setPracticeSecondCars(10);
+                      h.loadCouplingPractice("e6", 7, "e5", 10);
+                    }}>Try 17 cars: E6 (7) + E5 (10) <ChevronRight size={14} /></button>
+                  </fieldset>
+                  <p className="coupling-practice-note">Playful combinations include ones that do not connect in real life. Change these choices any time to start a new practice layout.</p>
+                </section>
                 <div className="layout-options">
                   {(
                     [
-                      {
-                        kind: "coupling-demo",
-                        title: "Coupling station",
-                        text: "E5 + E6 · open the noses, join the trains, and try driving together.",
-                        icon: Link2,
-                      },
                       {
                         kind: "kato-plan02",
                         title: "KATO M1 + V1 + V2",
@@ -1569,11 +1631,11 @@ export default function App() {
                     },
                     {
                       title: "Run your favourite trains together",
-                      text: "Add E235 Yamanote Line or E5, E6, and E7 Shinkansen trainsets, with 3 to 11 cars each. You can add the same model more than once. Select a train in Your trains or click it in the scene: the speed, Play, Reverse and horn controls affect that train, and Train view follows it. Connected E5 and E6 partners share their driving controls. The others keep their own journeys. Pause all stops every train. Change a train's model or car count while it is stopped and uncoupled. Shinkansen formations here can be shorter than the real train.",
+                      text: "Add E235 Yamanote Line or E5, E6, and E7 Shinkansen trainsets, with 3 to 11 cars each. You can add the same model more than once. Select a train in Your trains or click it in the scene: the speed, Play, Reverse and horn controls affect that train, and Train view follows it. Connected partners share their driving controls. The others keep their own journeys. Pause all stops every train. Stop a train before changing its car count; a connected formation stays joined if its new length fits safely. Separate partners before changing their models. Shinkansen formations here can be shorter than the real train.",
                     },
                     {
                       title: "Join two Shinkansen nose to nose",
-                      text: "Open Coupling station in Layouts to practise with an E5 and an E6. Select either train, then choose Couple trains. Watch the nose covers open and the couplers connect. Pause or Continue the joining sequence whenever you like. Once connected, selecting either partner controls the whole formation. Stop on a clear, straight, level track and choose Decouple trains to separate them; their noses close after they move apart. Separate the trains before changing their models, car counts, or places.",
+                      text: "Open Coupling station in Layouts, choose any two E5, E6, or E7 models and 3–11 cars for each, then start coupling practice. You can also try the 17-car E6 + E5 shortcut. Select either train and choose Couple trains. Either nose can join, including on curves; the simulator chooses the nearby ends. Nose view lets you watch the covers open and the couplers connect. Pause or Continue whenever you like. Once connected, either partner controls the whole formation. Stop to change a partner's car count, or stop with room to move apart and choose Decouple trains. Their noses close after separation. Separate partners before changing their models or places. These playful combinations do not all couple in real life.",
                     },
                     {
                       title: "Find a safe place and share the rails",

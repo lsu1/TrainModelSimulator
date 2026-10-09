@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { STORAGE_KEY, PREVIOUS_STORAGE_KEY, V2_STORAGE_KEY, createLayout, parseLayout } from './layout';
+import { STORAGE_KEY, PREVIOUS_STORAGE_KEY, V3_STORAGE_KEY, V2_STORAGE_KEY, createLayout, parseLayout } from './layout';
 import { restoreFleet, snapshotFleetLayout } from './fleet';
 import {
   DESIGN_RECOVERY_PREFIX,
@@ -236,13 +236,25 @@ describe('working saved-design identity', () => {
     expect(stored.setItem).not.toHaveBeenCalled();
   });
 
-  it('keeps a v2 saved-design identity available after v3 and v4 storage are introduced', () => {
+  it('keeps a v2 saved-design identity available after v3, v4 and v5 storage are introduced', () => {
     const original = library();
     const previous = { ...createLayout('compact'), savedDesignId: 'design-a' };
-    const stored = storage({ [V2_STORAGE_KEY]: JSON.stringify(previous), [PREVIOUS_STORAGE_KEY]: '{ damaged v3', [STORAGE_KEY]: '{ damaged v4' });
+    const stored = storage({ [V2_STORAGE_KEY]: JSON.stringify(previous), [V3_STORAGE_KEY]: '{ damaged v3',
+      [PREVIOUS_STORAGE_KEY]: '{ damaged v4', [STORAGE_KEY]: '{ damaged v5' });
     expect(readWorkingDesignId(original, stored)).toBe('design-a');
     expect(stored.setItem).not.toHaveBeenCalled();
     expect(stored.values.get(V2_STORAGE_KEY)).toBe(JSON.stringify(previous));
+  });
+
+  it('recovers a v3 design identity when v5 and v4 working saves are damaged without writing to earlier keys', () => {
+    const original = library();
+    const previous = { ...snapshotFleetLayout(createLayout('compact'), restoreFleet(createLayout('compact')), 'train-1'),
+      version: 3, savedDesignId: 'design-b' };
+    const raw = JSON.stringify(previous);
+    const stored = storage({ [V3_STORAGE_KEY]: raw, [PREVIOUS_STORAGE_KEY]: '{ damaged v4', [STORAGE_KEY]: '{ damaged v5' });
+    expect(readWorkingDesignId(original, stored)).toBe('design-b');
+    expect(stored.setItem).not.toHaveBeenCalled();
+    expect(stored.values.get(V3_STORAGE_KEY)).toBe(raw);
   });
 
   it('retains stable partnerships in separate named designs and independent save-as copies', () => {
@@ -264,6 +276,53 @@ describe('working saved-design identity', () => {
     opened.library.designs[2].layout.couplings![0].id = 'changed';
     expect(opened.library.designs[0].layout.couplings![0].id).toBe('nose-pair');
     expect(first.library.designs[0].layout.couplings![0].id).toBe('nose-pair');
+  });
+
+  it('retains old E6/E5 designs beside new same-model and reversed-cab Shinkansen copies in the existing library', () => {
+    const working = createLayout('coupling-demo');
+    const oldRelation = { id: 'old-pair', e6Id: working.trains![0].id, e5Id: working.trains![1].id };
+    const oldLayout = { ...working, version: 4 as const, couplings: [oldRelation] };
+    const first = saveDesignSnapshot(empty(), oldLayout, 'Original E6 plus E5', null, false,
+      { id: 'old-design', updatedAt: timestamp });
+    const firstJson = JSON.stringify(first.library);
+    const newFleet = restoreFleet(working).map((train, index) => ({ ...train, type: 'e7' as const,
+      carCount: index === 0 ? 11 : 7, cabForward: index === 0,
+    }));
+    const newRelation = { ...oldRelation, id: 'new-pair', e6End: 'front' as const, e5End: 'front' as const };
+    const newLayout = snapshotFleetLayout(working, newFleet, newFleet[1].id, [newRelation]);
+    const copied = saveDesignSnapshot(first.library, newLayout, 'Two E7 trains', 'old-design', true,
+      { id: 'new-design', updatedAt: timestamp });
+    const stored = storage();
+    persistSavedDesigns(copied.library, null, stored);
+    const reopened = readSavedDesigns(stored);
+    expect(reopened.error).toBeNull();
+    expect(reopened.library.version).toBe(1);
+    expect(reopened.library.designs.map(design => design.layout.version)).toEqual([4, 5]);
+    expect(reopened.library.designs[0].layout.couplings).toEqual([oldRelation]);
+    expect(reopened.library.designs[1].layout.couplings).toEqual([newRelation]);
+    expect(reopened.library.designs[1].layout.trains!.map(train => train.carCount)).toEqual([11, 7]);
+    expect(restoreFleet(reopened.library.designs[1].layout).every(train => !train.running && train.actualSpeed === 0)).toBe(true);
+    reopened.library.designs[1].layout.couplings![0].e6End = 'rear';
+    expect(copied.library.designs[1].layout.couplings![0].e6End).toBe('front');
+    expect(JSON.stringify(first.library)).toBe(firstJson);
+  });
+
+  it('preserves a damaged new cab-end save for recovery instead of changing its connection', () => {
+    const working = createLayout('coupling-demo');
+    const original = library();
+    const damaged = { id: 'bad-end', name: 'Unrecognized cab end', updatedAt: timestamp,
+      layout: { ...working, version: 5, couplings: [{ id: 'pair', e6Id: working.trains![0].id,
+        e5Id: working.trains![1].id, e6End: 'head', e5End: 'front' }] } };
+    const raw = JSON.stringify({ version: 1, designs: [original.designs[0], damaged] });
+    const stored = storage({ [SAVED_DESIGNS_KEY]: raw });
+    const read = readSavedDesigns(stored);
+    expect(read.library.designs).toEqual([original.designs[0]]);
+    expect(read.recoveryRaw).toBe(raw);
+    expect(read.error).toMatch(/original data is kept/);
+    expect(stored.setItem).not.toHaveBeenCalled();
+    persistSavedDesigns(read.library, read.recoveryRaw, stored);
+    expect(stored.setItem.mock.calls[0][0]).toContain(DESIGN_RECOVERY_PREFIX);
+    expect(stored.setItem.mock.calls[0][1]).toBe(raw);
   });
 
   it('keeps each named fleet snapshot independent with selection and stopped restoration', () => {

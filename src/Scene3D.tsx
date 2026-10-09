@@ -744,6 +744,7 @@ export default function Scene3D(props: Scene3DProps) {
     const formationCache = new Map<string, {
       tracks: Track[]; e6Position: TrainPosition | null; e5Position: TrainPosition | null;
       e6Forward: boolean; e5Forward: boolean; e6Count: number; e5Count: number;
+      pairing: string;
       poses: CoupledFormationPoses;
     }>();
     const noseJoints = new THREE.Group(); noseJoints.name = 'shinkansen-mechanical-nose-joints'; world.add(noseJoints);
@@ -1365,15 +1366,16 @@ export default function Scene3D(props: Scene3DProps) {
       const selectedMembers = new Set(selectedId ? [selectedId] : []);
       for (const group of groups) {
         const e6 = fleet.find(train => train.id === group.e6Id), e5 = fleet.find(train => train.id === group.e5Id);
-        if (!e6 || !e5 || e6.type !== 'e6' || e5.type !== 'e5') continue;
+        if (!e6 || !e5 || e6.type === 'e235' || e5.type === 'e235') continue;
         if (group.e6Id === selectedId || group.e5Id === selectedId) { selectedMembers.add(group.e6Id); selectedMembers.add(group.e5Id); }
         let cached = formationCache.get(group.id);
+        const pairing = `${e6.type}:${e5.type}:${group.e6End ?? 'rear'}:${group.e5End ?? 'front'}`;
         if (!cached || cached.tracks !== current.tracks || cached.e6Position !== e6.position || cached.e5Position !== e5.position ||
-          cached.e6Forward !== e6.cabForward || cached.e5Forward !== e5.cabForward || cached.e6Count !== e6.carCount || cached.e5Count !== e5.carCount) {
+          cached.e6Forward !== e6.cabForward || cached.e5Forward !== e5.cabForward || cached.e6Count !== e6.carCount || cached.e5Count !== e5.carCount || cached.pairing !== pairing) {
           cached = {
             tracks: current.tracks, e6Position: e6.position, e5Position: e5.position,
             e6Forward: e6.cabForward, e5Forward: e5.cabForward, e6Count: e6.carCount, e5Count: e5.carCount,
-            poses: solveCoupledFormation(current.tracks, e6, e5),
+            pairing, poses: solveCoupledFormation(current.tracks, e6, e5, group),
           };
           formationCache.set(group.id, cached);
         }
@@ -1430,8 +1432,8 @@ export default function Scene3D(props: Scene3DProps) {
         renderer.domElement.dataset.couplingGroups = JSON.stringify(groups.map(group => {
           const formation = formationCache.get(group.id)?.poses;
           const joint = renderedNoseJoints.get(group.id);
-          const e6Car = renderedFleet.get(group.e6Id)?.cars.children.at(-1);
-          const e5Car = renderedFleet.get(group.e5Id)?.cars.children[0];
+          const e6Car = renderedFleet.get(group.e6Id)?.cars.children.at(group.e6End === 'front' ? 0 : -1);
+          const e5Car = renderedFleet.get(group.e5Id)?.cars.children.at(group.e5End === 'rear' ? -1 : 0);
           const nosePoint = (car: THREE.Object3D | undefined, key: 'pivot' | 'matingFace') => {
             if (!car) return null;
             const nose = getNoseCouplerDiagnostics(car);
@@ -1447,7 +1449,7 @@ export default function Scene3D(props: Scene3DProps) {
           };
         }));
         renderer.domElement.dataset.couplingOperation = JSON.stringify(operation ? {
-          id: operation.id, e6Id: operation.e6Id, e5Id: operation.e5Id,
+          id: operation.id, e6Id: operation.e6Id, e5Id: operation.e5Id, e6End: operation.e6End, e5End: operation.e5End,
           phase: operation.phase, elapsed: operation.elapsed, paused: operation.paused,
         } : null);
         renderer.domElement.dataset.fleetCount = String(fleet.length);
@@ -1484,15 +1486,15 @@ export default function Scene3D(props: Scene3DProps) {
       if (current.cameraPreset === 'coupling' && !current.placingTrain) {
         const pair = operation ?? groups.find(group => selectedMembers.has(group.e6Id) || selectedMembers.has(group.e5Id));
         if (pair) {
-          const e6Car = renderedFleet.get(pair.e6Id)?.cars.children.at(-1);
-          const e5Car = renderedFleet.get(pair.e5Id)?.cars.children[0];
+          const e6Car = renderedFleet.get(pair.e6Id)?.cars.children.at(pair.e6End === 'front' ? 0 : -1);
+          const e5Car = renderedFleet.get(pair.e5Id)?.cars.children.at(pair.e5End === 'rear' ? -1 : 0);
           const e6Nose = e6Car && getNoseCouplerDiagnostics(e6Car);
           const e5Nose = e5Car && getNoseCouplerDiagnostics(e5Car);
           if (e6Car?.visible && e5Car?.visible && e6Nose && e5Nose) {
             const e6Face = e6Nose.matingFace.clone().applyQuaternion(e6Car.quaternion).add(e6Car.position);
             const e5Face = e5Nose.matingFace.clone().applyQuaternion(e5Car.quaternion).add(e5Car.position);
             couplingFocus = e6Face.add(e5Face).multiplyScalar(.5 * SCALE);
-            const pairKey = `${pair.e6Id}:${pair.e5Id}`;
+            const pairKey = `${pair.e6Id}:${pair.e5Id}:${pair.e6End ?? 'rear'}:${pair.e5End ?? 'front'}`;
             if (resetCouplingCamera || cameraPresetChanged || previousCouplingPair !== pairKey || !previousCouplingFocus) {
               // A side view reveals both recessed nose cavities and the
               // mechanical head. It starts once, then remains freely orbitable.

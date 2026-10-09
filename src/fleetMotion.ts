@@ -24,8 +24,7 @@ function junctionOccupancy(tracks: Track[], train: TrainRuntime, footprint: Trai
   const result: JunctionOccupancy = new Map()
   if (!train.position) return result
   const physicalDirection = train.cabForward ? train.position.direction : -train.position.direction
-  let position: TrainPosition = { ...train.position, direction: physicalDirection === 1 ? -1 : 1 }
-  let remaining = footprint.rearOffset
+  let position: TrainPosition = { ...train.position }
   const record = () => {
     const track = tracks.find(piece => piece.id === position.trackId)
     const shape = track && TRACK_SHAPES.get(track.kind)
@@ -33,12 +32,16 @@ function junctionOccupancy(tracks: Track[], train: TrainRuntime, footprint: Trai
     const routes = result.get(position.trackId) ?? new Set<number>()
     routes.add(position.route ?? 0); result.set(position.trackId, routes)
   }
-  record()
-  while (remaining > 0) {
-    const step = Math.min(20, remaining), next = advanceTrain(tracks, position, step)
-    position = next.position; record()
-    if (next.stopped) break
-    remaining -= step
+  for (const [direction, extent] of [[-physicalDirection, footprint.rearOffset], [physicalDirection, footprint.frontOffset ?? 0]]) {
+    position = { ...train.position, direction: direction === 1 ? 1 : -1 }
+    let remaining = extent
+    record()
+    while (remaining > 0) {
+      const step = Math.min(20, remaining), next = advanceTrain(tracks, position, step)
+      position = next.position; record()
+      if (next.stopped) break
+      remaining -= step
+    }
   }
   return result
 }
@@ -58,7 +61,7 @@ const millimetersPerSecond = (train: TrainSnapshot, speed: number) => speed / 3.
 const travelDistance = (train: TrainRuntime, seconds: number) => millimetersPerSecond(train, train.actualSpeed) * seconds
 const footprintKey = (train: TrainSnapshot) => {
   const nose = (train as TrainRuntime).noseCoupling
-  return `${train.type}:${train.carCount}:${train.position?.trackId}:${train.position?.route ?? 0}:${train.position?.distance}:${train.position ? (train.cabForward ? train.position.direction : -train.position.direction) : 0}:${nose?.open ?? 0}:${nose?.extension ?? 0}:${nose?.axis?.x ?? 1}:${nose?.axis?.y ?? 0}:${nose?.axis?.z ?? 0}`
+  return `${train.type}:${train.carCount}:${train.position?.trackId}:${train.position?.route ?? 0}:${train.position?.distance}:${train.position ? (train.cabForward ? train.position.direction : -train.position.direction) : 0}:${nose?.end ?? ''}:${nose?.open ?? 0}:${nose?.extension ?? 0}:${nose?.axis?.x ?? 1}:${nose?.axis?.y ?? 0}:${nose?.axis?.z ?? 0}`
 }
 function frameCache(tracks: Track[]) {
   // React replaces edited track arrays. The fingerprint also protects callers
@@ -292,10 +295,12 @@ export function occupiedFleetTrackIds(tracks: Track[], fleet: readonly TrainSnap
     for (const group of groups) {
       const e6 = fleet.find(train => train.id === group.e6Id), e5 = fleet.find(train => train.id === group.e5Id)
       if (!e6?.position || !e5?.position) continue
-      const solved = solveCoupledFormation(tracks, e6, e5)
+      const solved = solveCoupledFormation(tracks, e6, e5, group)
       const direction = e6.cabForward ? e6.position.direction : -e6.position.direction
-      let trace: TrainPosition = { ...e6.position, direction: direction === 1 ? -1 : 1 }, remaining = solved.rearOffset
-      while (remaining > 0) { const distance = Math.min(20, remaining), next = advanceTrain(tracks, trace, distance); trace = next.position; result.add(trace.trackId); if (next.stopped) break; remaining -= distance }
+      for (const [axis, extent] of [[-direction, solved.rearOffset], [direction, solved.frontOffset]]) {
+        let trace: TrainPosition = { ...e6.position, direction: axis === 1 ? 1 : -1 }, remaining = extent
+        while (remaining > 0) { const distance = Math.min(20, remaining), next = advanceTrain(tracks, trace, distance); trace = next.position; result.add(trace.trackId); if (next.stopped) break; remaining -= distance }
+      }
     }
     bodyOccupiedTurnoutIds(tracks, fleet.filter(train => train.position).map(train => trainFootprint(tracks, train))).forEach(id => result.add(id))
     return result

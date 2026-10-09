@@ -1,49 +1,53 @@
-# E5 / E6 nose mechanisms
+# Shinkansen nose coupling
 
-The simulator couples the E5 E514 cab (car 10) to the E6 E611 cab (car 11). The existing model arrays retain these roles in short formations: E5 index 0 and E6's last index. The opposite cabs, E7, and E235 have no opening nose mechanism.
+Version **0.9.0** lets any two **E5, E6, or E7** trainsets join nose to nose, including two of the same model. Both cab ends have opening mechanisms, and the simulator chooses the nearby ends automatically. Joining and separating can happen on curves and grades when the rails connect and the train bodies and opening covers have enough room.
 
-## Play and operation
+These are playful combinations. The E5/E6 references below inspire the appearance; the E7 mechanism, opposite-end mechanisms, and unrestricted pairings do not represent real production capabilities. E235 remains independent, and a Shinkansen can have one partner at a time.
 
-Open **Layouts → Coupling station**, select either set, then press **Couple trains**. The practice oval uses fixed S248 straights and R381-30 curves, with 2,976 mm straight approaches. Its two three-car sets start paused with their closed noses 80 mm apart. The same straight also fits the authentic seven-car E6 plus ten-car E5 formation.
+## Choose and join a pair
 
-Joining and separating open **Nose view** automatically and bring the scene into view. Continuing a paused operation also brings the scene back into sight. This camera follows the two mechanical mating faces, so the opening panels and shared joint stay visible. Drag to look around and scroll to zoom; press **Nose view** again to reset the close-up. Other camera views remain available.
+Open **Layouts → Coupling station**. Choose each train's model and **3–11 cars**, then press **Start coupling practice**. The practice oval uses fixed S248 straights and R381-30 curves; it grows its straight sections to fit the selected pair. The sets start paused with their closed noses 80 model mm apart. **Try 17 cars: E6 (7) + E5 (10)** starts that longer configuration directly. Changing the practice choices starts a new railway, so save an existing design first.
 
-Joining requires one independent E5 and one independent E6, both fully placed and stopped. Their equipped noses must face each other along the same connected, straight, nearly level rail route. Parallel lanes and overpasses are not accepted merely because they are close in the 3D view. The approach must be within 200 model mm of engagement and clear for the complete formation and opening panels. The interface explains the first unmet condition.
+Select either train and press **Couple trains**. For another layout, stop two independent Shinkansen with any two noses near each other on the same connected rail route. The interface detects the ends and explains an unmet condition. Parallel lanes and overpasses do not become connected just because their noses look close in 3D. The approach must be within **200 model mm** of engagement and clear for every car and both opening mechanisms.
 
-Both noses open before the E5 creeps toward the stationary E6 at a scale equivalent of 3 km/h. The mechanical heads lock at their shared mating face. There is one common speed, acceleration, braking and reverse command after joining; selecting either train controls both. Individual sets still use 3–11 cars, so the combined count can be 6–22. The maximum shared speed is 320 km/h. Bodies, wheelbase chords, internal links and the nose joint remain rigid through curves, grades and selected turnout routes.
+The covers and couplers take **three seconds** to open fully. One set then creeps toward the other at an N-scale equivalent of **3 km/h**, and the mechanical heads lock. The shorter connector brings the open nose centers close together while remaining articulated through curves and slopes.
 
-To separate, stop on another clear, straight, nearly level section and press **Decouple trains**. After unlocking, E5 moves back 55 model mm. The couplers retract and covers close only after this clearance is reached. Both original sets then remain paused with separate controls and exact rail placements. Individual model/count changes, moving and removal require separating first.
+Joining and separating open **Nose view** automatically and bring the scene into view. This camera follows the mating faces. Drag to orbit, scroll to zoom, or press **Nose view** again to reset the close-up. Other camera views remain available. **Pause coupling**, **Pause all**, or Space freezes an active operation; **Continue coupling** or Space resumes it.
 
-**Pause coupling**, **Pause all**, or Space freezes the active operation; **Continue coupling** or Space resumes it. Camera controls remain usable. Editing track, changing switches, driving trains, loading/saving/exporting layouts and undo wait until the operation finishes. A completed join or split is one undo step. Only the intended mechanical-head contact is exempted; other car parts and unrelated trains retain physical contact checks and the existing conservative collision reserves.
+## Drive, resize, and separate
 
-## Saves and interrupted operations
+Selecting either connected train addresses the whole formation: one shared speed, acceleration, braking, pause, and reverse command. Each set retains its own model, identity, car ordering, and roof equipment. With **3–11 cars per set**, the pair can contain **6–22 cars**. Its maximum shared speed is the lower member limit: **275 km/h with E7**, otherwise **320 km/h**.
 
-Layout version 4 stores trainsets and their settled relationship, with E6's original cab as the canonical rail reference and E5's exact reference derived by the shared formation solver. Named saved designs, copies and exported layouts retain the pair. All reopened trainsets start paused; coupled sets retain open, locked noses. Earlier v1/v2/v3 layouts remain readable and preserve their existing track and fleet data.
+Stop the formation to change either partner's **Cars** value. A change keeps the partnership when the new complete formation fits on the existing rails and clears other trains; an unsafe change is rejected. Separate partners before changing their models, moving an individual set, or removing it.
 
-Animation progress is runtime state. Periodic autosave and browser-close recovery retain the last settled independent/coupled snapshot during a transition. Reloading midway through joining therefore restores the original stopped independent sets with closed covers; reloading midway through separation restores the original stopped coupled formation. This prevents partial relationships and overlapping closed noses in saved files.
+To separate, stop with enough clear connected track and press **Decouple trains**. The heads unlock, one set moves back **55 model mm**, and the couplers retract and covers close over **three seconds**. Both original sets then remain paused with separate controls and their rail placements preserved. Curves and grades remain allowed when the mechanisms and bodies have sufficient clearance.
 
-## References and limits
+Track editing, switch changes, driving, layout loading/saving/exporting, and undo wait until a coupling operation finishes. A completed join or split is one undo step. Only the intended mechanical-head contact is exempted from contact checks; covers, arms, bodywork, other cars, and unrelated trains retain the physical checks and collision reserves.
+
+## Save and reopen
+
+Layout **version 5** stores settled partnerships and the cab ends used. The two train IDs remain distinct. Internal `e6Id` and `e5Id` field names are retained for compatibility: they identify the reference train and its partner, which can now be any Shinkansen models. Optional `e6End` and `e5End` identify their physical cab ends. When absent, they use the original rear/front pairing. Named designs, copies, autosave, and exported layouts retain a settled pair. Reopened sets start **paused**, with joined noses open and locked.
+
+Earlier **v1–v4** files remain readable. Version 4 restores its E6/E5 relationship with the original cab ends; version 3 preserves independent sets; versions 1 and 2 migrate to one trainset.
+
+Animation progress stays in runtime state. Autosave and browser-close recovery keep the last settled independent or coupled snapshot during a transition. Reloading during joining restores the original stopped independent sets with closed covers; reloading during separation restores the original stopped coupled pair. Partial relationships and overlapping closed noses are not written to saved layouts.
+
+## Appearance and geometry
+
+Opening caps are partitioned from the original shell and paint triangles, keeping the original closed outline and materials. Their opening edges are beveled so the noses can meet closely through a curve while the wider side edges retain clearance. Caps keep their inner skins and original geometry throughout opening, using rigid translations rather than fades, replacement geometry, or animated stretching. Separate liner and rim sectors preserve the open cavity in physical contact checks.
+
+Each cab exterior uses local +X outward, +Y upward, and Z lateral. `NOSE_COUPLER_PROFILES` in `couplingTypes.ts` defines the body-mounted pivot and fixed extension for each model. All three models use a **3.5 mm pivot-to-mating-face reach**, giving a **7 mm joint between the two body-mounted pivots**. The opening rims have approximately **1 mm clearance at their centers** on straight track. Bevels provide more room at their sides. These dimensions are procedural visual choices, not measurements of KATO hardware.
+
+The retained guide socket surrounds a rigid sliding arm and mechanical head. The assembly swivels about its body mount toward the shared joint axis. Its extended reach remains fixed through curves and gradients. The selected cab opens while the opposite cab stays closed. Only the head carries the `mechanicalCouplerContact` marker.
+
+`getNoseCouplerDiagnostics()` reads current rendered transforms for the selected cab end, pivot, mating face, mechanical head, and covers. Focused checks cover every model/end pairing, fixed reach, preserved closed shell and paint geometry, retained opening panels, curves and grades, larger formations, shared controls, and saved-layout migration.
+
+## Visual references
 
 - [KATO E5 product page](https://www.katomodels.com/product/n/e5kei_hayabusa_slm) identifies E514's opening nose coupling mechanism.
 - [KATO E6 product page](https://www.katomodels.com/product/n/e6kei_komachi) identifies E611/car 11 as the E5/H5 coupling end.
-- Photographs of the [E5 open nose](https://www.dreamstime.com/editorial-stock-image-e-series-bullet-train-opens-nose-cover-coupling-process-iwate-japan-april-green-high-speed-aomori-couples-image76584224) and [E6 open nose](https://www.dreamstime.com/editorial-image-e-series-bullet-train-opens-nose-cover-coupling-process-iwate-japan-april-red-high-speed-akita-couples-image76584340), taken at Morioka on 19 April 2016, show a retained rim, a dark opening, an exposed central mechanical head, and covers stowed inside the nose.
-- [JR East Technical Review No. 31, page 29, section 2.1](https://www.jreast.co.jp/development/tech/pdf_31/Tech-31-29-30.pdf) describes a cover that advances, opens sideways, and stows inside the body. This article concerns the predecessor FASTECH360 test vehicles; it does not verify production E5/E6 mechanism paths.
-- Production video references were located for [E5 opening](https://www.youtube.com/watch?v=FWXyoYbv29k) and an [E611-1 mechanism demonstration](https://www.youtube.com/watch?v=I8ZFWFxvdMQ). The cloud proxy blocked both video pages during implementation, so their frames could not be inspected.
+- Photographs of the [E5 open nose](https://www.dreamstime.com/editorial-stock-image-e-series-bullet-train-opens-nose-cover-coupling-process-iwate-japan-april-green-high-speed-aomori-couples-image76584224) and [E6 open nose](https://www.dreamstime.com/editorial-image-e-series-bullet-train-opens-nose-cover-coupling-process-iwate-japan-april-red-high-speed-akita-couples-image76584340), taken at Morioka on 19 April 2016, show a retained rim, dark opening, exposed central mechanical head, and covers stowed inside the nose.
+- [JR East Technical Review No. 31, page 29, section 2.1](https://www.jreast.co.jp/development/tech/pdf_31/Tech-31-29-30.pdf) describes covers that advance, open sideways, and stow inside the body on the predecessor FASTECH360 test vehicles. It does not verify production E5/E6 mechanism paths.
+- Production video references were located for [E5 opening](https://www.youtube.com/watch?v=FWXyoYbv29k) and an [E611-1 mechanism demonstration](https://www.youtube.com/watch?v=I8ZFWFxvdMQ). The cloud proxy blocked those pages during the original implementation, so their frames could not be inspected.
 
-The implementation uses the photographed open appearance and a clear-seam, sideways, inward translation sequence. E5 and E6 have separate cap dimensions, lateral clearance, retract distances, and timing. These paths are illustrative rigid motion, not measured production hinge/actuator kinematics. Coupler head dimensions, mechanical details, and extension distances are procedural approximations rather than KATO mechanism specifications.
-
-## Retained geometry and coordinates
-
-The coupling-equipped nose is cut from its existing triangle surfaces. The shell, primary paint, chin paint, and any intersecting belt are split at the same longitudinal plane, then at the center line into left/right cap pieces. Interpolated positions, normals, and texture coordinates retain the original closed outline and shared materials. Paint is attached to the moving cap, rather than opening only a silver overlay while leaving a solid shell underneath.
-
-Caps retain inner skins and all original geometry throughout opening. Their group transforms use translations only; there are no opacity fades, geometry substitutions, object visibility changes, or animated scale changes. The cavity has separate lining/rim sectors, which preserve the open void when safety extracts convex mesh parts.
-
-Each cab exterior uses local +X outward, +Y upward, and Z lateral. The E6 rear exterior already has its existing 180-degree rotation, so the same local convention applies to both ends. `NOSE_COUPLER_PROFILES` in `couplingTypes.ts` defines the body-mounted pivot from the original nose tip and its fixed full extension. At full extension, the mating face is exactly 11 mm from the E5 pivot and 10 mm from the E6 pivot. Both pivots are 9.5 mm above rail contact.
-
-The retained guide socket surrounds a rigid sliding arm and mechanical head. The whole assembly swivels about the body mount toward the formation solver's shared joint axis. Its full extension stays fixed while taking curves and gradients. Only the mechanical head has `mechanicalCouplerContact: true`; covers, arms, mounts, electrical details, bodywork, and other cars retain ordinary physical checks.
-
-`getNoseCouplerDiagnostics()` reads actual current transforms for the pivot, mating face, mechanical head, and covers. These diagnostics allow browser checks to confirm the rendered anchors, including parked nose animation, rather than substituting idealized nominal tips.
-
-## Focused verification
-
-Nose tests compare closed shell/paint triangle areas with unchanged opposite cab geometry, to within two parts per million. They also check the correct physical cab roles, retained rigid geometry across opening/closing, exact pivot/face dimensions, articulated fixed-length reach, isolated mechanical-contact marking, unaffected E7/unsupported ends, and disposal of all retained geometry/materials. The existing Shinkansen body and roof tests continue to pass.
+The procedural motion uses a clear-seam, sideways, inward sequence inspired by those photographs and the test-vehicle description. Model-specific cap dimensions and stow paths are illustrative rigid motion, rather than measured hinge or actuator kinematics. Photographs are references only and are not bundled as textures.

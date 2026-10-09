@@ -20,7 +20,8 @@ import type { TrainRuntime } from "./fleet";
 import { occupiedFleetTrackIds } from "./fleetMotion";
 import { findTrainPlacement, validateTrainPlacement } from "./trainPlacement";
 import { solveConsistPoses } from "./consistPose";
-import type { CouplingGroup, CouplingOperation } from "./couplingTypes";
+import type { CouplingGroup, CouplingOperation, CouplingTrainType } from "./couplingTypes";
+import { makeCouplingDemo } from "./couplingDemo";
 import { couplingEligibility, decouplingEligibility, stepCouplingSystem, synchronizeCoupledFleet, validateCoupledFleet } from "./couplingMotion";
 import { auditClearances, checkPlacement } from "./clearance";
 import { auditEngineering, planRamp, trackGradePercent } from "./engineering";
@@ -110,9 +111,14 @@ export function useRailway() {
   );
   const selectedTrainIdRef = useRef(selectedTrainId);
   const selectedTrain = fleet.find((train) => train.id === selectedTrainId);
+  const selectedCoupling = couplings.find(group => group.e5Id === selectedTrainId || group.e6Id === selectedTrainId) ?? null;
   const trainType = selectedTrain?.type ?? layout.trainType ?? "e235";
   const carCount = selectedTrain?.carCount ?? layout.carCount;
-  const trainSpec = getTrainSpec(trainType);
+  const baseTrainSpec = getTrainSpec(trainType);
+  const formationSpeedLimit = selectedCoupling
+    ? Math.min(...fleet.filter(train => train.id === selectedCoupling.e6Id || train.id === selectedCoupling.e5Id).map(train => getTrainSpec(train.type).maxServiceSpeed))
+    : baseTrainSpec.maxServiceSpeed;
+  const trainSpec = { ...baseTrainSpec, maxServiceSpeed: formationSpeedLimit };
   const position = selectedTrain?.position ?? initialTrain([], trainType, carCount);
   const running = selectedTrain?.running ?? false;
   const speed = selectedTrain?.requestedSpeed ?? DEFAULT_TRAIN_SPEED;
@@ -148,14 +154,12 @@ export function useRailway() {
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [saved, setSaved] = useState(true);
   const couplingBusy = couplingOperation !== null;
-  const selectedCoupling = couplings.find(group => group.e5Id === selectedTrainId || group.e6Id === selectedTrainId) ?? null;
   const couplingPhase = couplingOperation?.phase ?? (selectedCoupling ? "coupled" : undefined);
   const couplingPartners = useMemo(() => {
-    if (!selectedTrain || selectedCoupling || (selectedTrain.type !== "e5" && selectedTrain.type !== "e6")) return [];
-    return fleet.filter(train => train.type === (selectedTrain.type === "e5" ? "e6" : "e5")).map(partner => {
+    if (!selectedTrain || selectedCoupling || selectedTrain.type === "e235") return [];
+    return fleet.filter(train => train.id !== selectedTrain.id && train.type !== "e235").map(partner => {
       const result = couplingBusy ? { allowed: false, reason: "Finish the current coupling operation first." }
-        : couplingEligibility(tracks, fleet, selectedTrain.type === "e5" ? selectedTrain.id : partner.id,
-          selectedTrain.type === "e6" ? selectedTrain.id : partner.id, couplings);
+        : couplingEligibility(tracks, fleet, selectedTrain.id, partner.id, couplings);
       return { id: partner.id, name: partner.name, ...result };
     });
   }, [fleet, tracks, selectedTrainId, couplings, couplingBusy]);
@@ -405,7 +409,9 @@ export function useRailway() {
   };
   const setSpeed = (value: number) => {
     if (!operationAllowsEdit()) return;
-    updateControlledTrain((train) => ({ ...train, requestedSpeed: clampTrainSpeed(train.type, Math.max(5, value)) }), true);
+    const group = couplingsRef.current.find(entry => entry.e5Id === selectedTrainIdRef.current || entry.e6Id === selectedTrainIdRef.current);
+    const limit = group ? Math.min(...fleetRef.current.filter(train => train.id === group.e6Id || train.id === group.e5Id).map(train => getTrainSpec(train.type).maxServiceSpeed)) : Infinity;
+    updateControlledTrain((train) => ({ ...train, requestedSpeed: clampTrainSpeed(train.type, Math.min(limit, Math.max(5, value))) }), true);
   };
   const setRunning = (value: boolean) => {
     if (couplingOperationRef.current) { if (!value) pauseCoupling(); else notify("Continue the coupling operation first."); return; }
@@ -413,10 +419,10 @@ export function useRailway() {
       ? { ...train, running: true, status: "accelerating", stopReason: undefined }
       : pausedTrain(train), !value);
   };
-  const startCouplingOperation = (e5Id: string, e6Id: string, phase: "opening" | "unlocking") => {
+  const startCouplingOperation = (pair: Pick<CouplingGroup, "e5Id" | "e6Id" | "e5End" | "e6End">, phase: "opening" | "unlocking") => {
     couplingHistoryId.current = activeSavedDesignId;
     const next: CouplingOperation = {
-      id: crypto.randomUUID(), e5Id, e6Id, phase, elapsed: 0, paused: false,
+      ...pair, id: crypto.randomUUID(), phase, elapsed: 0, paused: false,
       beforeTrains: fleetRef.current.map(trainSnapshot), beforeGroups: couplingsRef.current.map(group => ({ ...group })),
       separationTravel: 0,
     };
@@ -433,19 +439,17 @@ export function useRailway() {
     const selected = fleetRef.current.find(train => train.id === selectedTrainIdRef.current);
     const partner = fleetRef.current.find(train => train.id === partnerId);
     if (!selected || !partner) return;
-    const e5Id = selected.type === "e5" ? selected.id : partner.id;
-    const e6Id = selected.type === "e6" ? selected.id : partner.id;
-    const result = couplingEligibility(layoutRef.current.tracks, fleetRef.current, e5Id, e6Id, couplingsRef.current);
-    if (!result.allowed) { notify(result.reason ?? "Move compatible noses onto the same clear straight track.", true); return; }
-    startCouplingOperation(e5Id, e6Id, "opening");
+    const result = couplingEligibility(layoutRef.current.tracks, fleetRef.current, selected.id, partner.id, couplingsRef.current);
+    if (!result.allowed || !result.pair) { notify(result.reason ?? "Bring either pair of noses close together on the same clear rails.", true); return; }
+    startCouplingOperation(result.pair, "opening");
   };
   const decoupleTrains = () => {
     if (!operationAllowsEdit()) return;
     const group = couplingsRef.current.find(entry => entry.e5Id === selectedTrainIdRef.current || entry.e6Id === selectedTrainIdRef.current);
     if (!group) return;
     const result = decouplingEligibility(layoutRef.current.tracks, fleetRef.current, group);
-    if (!result.allowed) { notify(result.reason ?? "Stop on a clear straight track before separating.", true); return; }
-    startCouplingOperation(group.e5Id, group.e6Id, "unlocking");
+    if (!result.allowed) { notify(result.reason ?? "Stop with enough clear rails to separate.", true); return; }
+    startCouplingOperation(group, "unlocking");
   };
   useEffect(() => {
     if (designLibrary.error) notify(designLibrary.error, true);
@@ -1076,6 +1080,19 @@ export function useRailway() {
         : "Your 3D railway is ready. All aboard!",
     );
   };
+  const loadCouplingPractice = (firstType: CouplingTrainType, firstCars: number, secondType: CouplingTrainType, secondCars: number) => {
+    if (![firstType, secondType].every(type => type === "e5" || type === "e6" || type === "e7")
+      || ![firstCars, secondCars].every(count => Number.isInteger(count) && count >= 3 && count <= 11)) return;
+    const next = makeCouplingDemo({ firstType, firstCars, secondType, secondCars });
+    if (!changeLayout(next, false, true)) return;
+    setActiveSavedDesignId(null);
+    setLayoutRevision(value => value + 1);
+    setBuildHeight(0);
+    setCameraPreset("perspective");
+    setViewRevision(value => value + 1);
+    setModal(null);
+    notify(`${firstCars} + ${secondCars} cars are ready to join. Either nose can connect!`);
+  };
   const changeTrainConfiguration = (type: TrainType, count: number) => {
     const train = fleetRef.current.find((entry) => entry.id === selectedTrainIdRef.current);
     if (!train || (train.type === type && train.carCount === count) || !Number.isInteger(count) || count < 3 || count > 11) return;
@@ -1103,7 +1120,20 @@ export function useRailway() {
     notify(`${candidate.name} has ${count} cars. Your other trains are unchanged.`);
   };
   const chooseTrain = (type: TrainType) => changeTrainConfiguration(type, fleetRef.current.find((entry) => entry.id === selectedTrainIdRef.current)?.carCount ?? carCount);
-  const changeTrainCarCount = (count: number) => changeTrainConfiguration(fleetRef.current.find((entry) => entry.id === selectedTrainIdRef.current)?.type ?? trainType, count);
+  const changeTrainCarCount = (count: number) => {
+    const train = fleetRef.current.find(entry => entry.id === selectedTrainIdRef.current);
+    const group = couplingsRef.current.find(entry => entry.e5Id === train?.id || entry.e6Id === train?.id);
+    if (!train || !group) { changeTrainConfiguration(train?.type ?? trainType, count); return; }
+    if (!operationAllowsEdit() || placementTrainId || !Number.isInteger(count) || count < 3 || count > 11 || train.carCount === count) return;
+    if (fleetRef.current.some(entry => (entry.id === group.e5Id || entry.id === group.e6Id) && (entry.running || entry.actualSpeed > 0))) {
+      notify("Stop the connected trains before changing their car counts.", true); return;
+    }
+    const next = synchronizeCoupledFleet(tracks, fleetRef.current.map(entry => ({ ...pausedTrain(entry), ...(entry.id === train.id ? { carCount: count } : {}) })), couplingsRef.current);
+    if (!proposedFleetIsSafe(tracks, next)) return;
+    rememberCurrentLayout();
+    commitFleet(next, true);
+    notify(`${train.name} now has ${count} cars. The trains stay connected.`);
+  };
   const saveDesign = (name: string, asCopy = false): boolean => {
     if (!operationAllowsEdit()) return false;
     try {
@@ -1236,6 +1266,7 @@ export function useRailway() {
     cancelTrainPlacement,
     placeTrain,
     changeTrainCarCount,
+    loadCouplingPractice,
     tracks,
     accessories,
     history,

@@ -6,9 +6,12 @@ import { restoreFleet } from './fleet'
 import { solveCoupledFormation } from './formationPose'
 import { synchronizeCoupledFleet } from './couplingMotion'
 import { combineTrainFootprints, physicalTrainFootprintsConflict, trainFootprintFromPoses, trainFootprintOverlapsItself, trainFootprintsConflict, trainSelfCollisionBounds } from './trainSafety'
-import { advanceTrain } from './track'
+import { advanceTrain, attachTrack, endpoints } from './track'
+import type { Track } from './track'
+import type { CabEnd, CouplingTrainType } from './couplingTypes'
 import { createShinkansenCar } from './shinkansenModel'
 import { disposeTrainModel } from './trainModel'
+import { solveConsistPoses } from './consistPose'
 
 function joined(offset = 0) {
   const layout = makeCouplingDemo(), fleet = restoreFleet(layout), group = { id: 'pair', e6Id: fleet[0].id, e5Id: fleet[1].id }
@@ -19,6 +22,33 @@ function joined(offset = 0) {
 }
 
 describe('actual moving nose-cover collision geometry', () => {
+  it.each([381, 315, 282])('keeps every Shinkansen model/end combination physically clear on R%s curves with the short joint', radius => {
+    const tracks: Track[] = []
+    let anchor = { position: { x: 0, y: 0, z: 0 }, angle: 0 }
+    for (let index = 0; index < (radius === 381 ? 12 : 8); index++) {
+      const track = attachTrack(`c${radius}`, 1, anchor, `circle-${index}`)
+      tracks.push(track)
+      const end = endpoints(track)[1]
+      anchor = { position: { ...end.position, z: end.position.z ?? 0 }, angle: end.angle }
+    }
+    const models: CouplingTrainType[] = ['e5', 'e6', 'e7'], ends: CabEnd[] = ['front', 'rear']
+    for (const firstType of models) for (const secondType of models) for (const e6End of ends) for (const e5End of ends) for (const direction of [1, -1] as const) {
+      const original = restoreFleet(makeCouplingDemo())
+      original[0] = { ...original[0], type: firstType, position: { trackId: tracks[0].id, distance: 40, direction, laps: 0 } }
+      original[1] = { ...original[1], type: secondType }
+      const group = { id: 'all-play-pairs', e6Id: original[0].id, e5Id: original[1].id, e6End, e5End }
+      const members = synchronizeCoupledFleet(tracks, original, [group])
+      const solved = solveCoupledFormation(tracks, members[0], members[1], group)
+      const label = `${firstType} ${e6End} / ${secondType} ${e5End} direction ${direction}`
+      expect(solved.complete, label).toBe(true)
+      expect(Math.hypot(solved.joint!.e6Mount.x - solved.joint!.e5Mount.x, solved.joint!.e6Mount.y - solved.joint!.e5Mount.y, solved.joint!.e6Mount.z - solved.joint!.e5Mount.z), label).toBeCloseTo(7, 5)
+      const first = trainFootprintFromPoses(members[0], solved.e6), second = trainFootprintFromPoses(members[1], solved.e5)
+      const firstIndex = e6End === 'front' ? 0 : members[0].carCount - 1, secondIndex = e5End === 'front' ? 0 : members[1].carCount - 1
+      expect(physicalTrainFootprintsConflict(first, second, [firstIndex, secondIndex]), label).toBe(false)
+      expect(trainFootprintOverlapsItself(combineTrainFootprints(first, second, members[0].carCount, [firstIndex, members[0].carCount + secondIndex])), label).toBe(false)
+    }
+  }, 30000)
+
   it('has globally unique cars in the composite group while intentional mating contact stays clear', () => {
     const { members, solved, first, second } = joined()
     const formation = combineTrainFootprints(first, second, members[0].carCount, [members[0].carCount - 1, members[0].carCount], solved.rearOffset)
@@ -75,11 +105,18 @@ describe('actual moving nose-cover collision geometry', () => {
     ]
     expect(cabs.some(({ poses, index }) => Math.abs(poses.cars[index]!.pitch) > .001)).toBe(true)
     expect(cabs.some(({ train }) => Math.hypot(train.noseCoupling!.axis!.y, train.noseCoupling!.axis!.z) > .005)).toBe(true)
+    // Independently articulate both ends of all three models, including the
+    // newly supported E5 rear/E6 front/E7 cabs, at the same curved grade.
+    const direction = new THREE.Vector3(1, .08, -.16).normalize()
+    for (const type of ['e5', 'e6', 'e7'] as const) for (const end of ['front', 'rear'] as const) {
+      const train = { ...original[0], type, noseCoupling: { open: 1, extension: 1, locked: true, end, axis: { x: direction.x, y: direction.y, z: direction.z } } }
+      cabs.push({ train, poses: solveConsistPoses(tracks, train.position!, train.cabForward, train.carCount, type), index: end === 'front' ? 0 : train.carCount - 1 })
+    }
     for (const { train, poses, index } of cabs) {
       const pose = poses.cars[index]!, footprint = trainFootprintFromPoses(train, poses)
       const solid = trainSelfCollisionBounds(footprint).find(volume => volume.carIndex === index)!
       const reserves = footprint.volumes.filter(volume => volume.carIndex === index)
-      const car = createShinkansenCar(index, train.carCount, train.type as 'e5' | 'e6', train.noseCoupling)
+      const car = createShinkansenCar(index, train.carCount, train.type as CouplingTrainType, train.noseCoupling)
       // Apply the renderer's world transform independently of the safety box.
       const forward = new THREE.Vector3(pose.direction.x, pose.direction.z, pose.direction.y)
       const sideways = forward.clone().cross(new THREE.Vector3(0, 1, 0)).normalize()

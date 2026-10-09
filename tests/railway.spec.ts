@@ -8,7 +8,7 @@ import type { Track } from '../src/track';
 // Software WebGL may compile several detailed catalog models per workflow.
 test.setTimeout(60_000);
 
-const STORAGE_KEY = 'little-railways-layout-v4';
+const STORAGE_KEY = 'little-railways-layout-v5';
 const SAVED_DESIGNS_KEY = 'little-railways-saved-designs-v1';
 const canvasName = '3D railway layout: rotate, zoom, select trains, and move Kato track pieces';
 const straightButton = 'Add 248 mm straight';
@@ -442,7 +442,7 @@ test('a selected turnout switches the running train onto its branch and persists
   expect((await trainPoint(page)).y).toBeLessThan(-.5);
 });
 
-test('version 4 saves export tracks, scenery, heights, and train formation and can be reopened', async ({ page }, testInfo) => {
+test('version 5 saves export tracks, scenery, heights, and train formation and can be reopened', async ({ page }, testInfo) => {
   await openRailway(page);
   await startFresh(page);
   await page.getByRole('button', { name: 'Remove selected train', exact: true }).click();
@@ -454,7 +454,7 @@ test('version 4 saves export tracks, scenery, heights, and train formation and c
   await importData(page, { version: 2, name: 'My Railway', tracks: built.tracks, accessories: built.accessories, carCount: 3 });
   await page.getByRole('combobox', { name: 'Train car count', exact: true }).selectOption('6');
   const saved = await savedLayout(page);
-  expect(saved.version).toBe(4);
+  expect(saved.version).toBe(5);
   expect(saved.tracks).toHaveLength(1);
   expect(saved.accessories).toHaveLength(1);
   expect(saved.carCount).toBe(6);
@@ -484,7 +484,7 @@ test('earlier 2D browser saves migrate into 3D without losing their railway geom
   await openRailway(page);
   await expect(page.getByRole('heading', { name: legacy.name, exact: true })).toBeVisible();
   const migrated = await savedLayout(page);
-  expect(migrated).toMatchObject({ ...legacy, version: 4, tracks: [{ ...legacy.tracks[0], elevation: 0, endElevation: 0 }], accessories: [], carCount: 11 });
+  expect(migrated).toMatchObject({ ...legacy, version: 5, tracks: [{ ...legacy.tracks[0], elevation: 0, endElevation: 0 }], accessories: [], carCount: 11 });
   expect(migrated.trains).toHaveLength(1);
   expect(migrated.trains[0]).toMatchObject({ type: 'e235', carCount: 11 });
   await expect(scene(page)).toHaveAttribute('data-car-count', '11');
@@ -505,7 +505,7 @@ test('invalid 3D imports preserve the current railway and allow a later valid im
   await importData(page, imported);
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(page.getByRole('heading', { name: imported.name, exact: true })).toBeVisible();
-  expect(await savedLayout(page)).toMatchObject({ ...imported, version: 4 });
+  expect(await savedLayout(page)).toMatchObject({ ...imported, version: 5 });
   await expect(scene(page)).toHaveAttribute('data-car-count', '3');
 });
 
@@ -1153,7 +1153,7 @@ for (const [count, turnout] of [[3, true], [11, false]] as const) {
 
 async function seedLayout(page: Page, layout: ReturnType<typeof fixtureLayout>) {
   await page.addInitScript(value => {
-    if (!localStorage.getItem('little-railways-layout-v4') && !localStorage.getItem('little-railways-layout-v2')) {
+    if (!localStorage.getItem('little-railways-layout-v5') && !localStorage.getItem('little-railways-layout-v2')) {
       localStorage.setItem('little-railways-layout-v2', JSON.stringify(value));
     }
   }, layout);

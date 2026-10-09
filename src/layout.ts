@@ -19,27 +19,28 @@ export interface PlacedAccessory {
 }
 
 export interface LayoutData {
-  version: 2 | 3 | 4;
+  version: 2 | 3 | 4 | 5;
   name: string;
   tracks: Track[];
   accessories: PlacedAccessory[];
   carCount: number;
   /** Older layouts omit this field and continue to use the E235 Yamanote train. */
   trainType?: TrainType;
-  /** Versions 3 and 4 contain independent trainsets; version 2 keeps legacy semantics. */
+  /** Versions 3 onward contain individual trainsets; version 2 keeps legacy semantics. */
   trains?: TrainSnapshot[];
   selectedTrainId?: string;
-  /** Stable E6/E5 partnerships; animations and running commands are never saved. */
+  /** Stable Shinkansen partnerships; animations and running commands are never saved. */
   couplings?: CouplingGroup[];
   /** Source drawing retained when a preset is saved, edited, or exported. */
   sourcePlan?: 'kato-plan02-1a';
 }
 
-export const STORAGE_KEY = 'little-railways-layout-v4';
-export const PREVIOUS_STORAGE_KEY = 'little-railways-layout-v3';
+export const STORAGE_KEY = 'little-railways-layout-v5';
+export const PREVIOUS_STORAGE_KEY = 'little-railways-layout-v4';
+export const V3_STORAGE_KEY = 'little-railways-layout-v3';
 export const V2_STORAGE_KEY = 'little-railways-layout-v2';
 export const LEGACY_STORAGE_KEY = 'little-railways-layout-v1';
-export const LAYOUT_STORAGE_KEYS = [STORAGE_KEY, PREVIOUS_STORAGE_KEY, V2_STORAGE_KEY, LEGACY_STORAGE_KEY] as const;
+export const LAYOUT_STORAGE_KEYS = [STORAGE_KEY, PREVIOUS_STORAGE_KEY, V3_STORAGE_KEY, V2_STORAGE_KEY, LEGACY_STORAGE_KEY] as const;
 const MAX_PIECES = 300;
 const MAX_SUPPORTED_SPEED = Math.max(...TRAIN_TYPES.map(type => getTrainSpec(type).maxServiceSpeed));
 const CATALOG = new Map(KATO_CATALOG.map((item) => [item.kind, item]));
@@ -60,7 +61,7 @@ function validElevation(value: unknown): value is number {
 export function parseLayout(value: unknown): LayoutData {
   if (!isObject(value)) throw new Error('This is not a railway layout.');
   const candidate = value;
-  if ((candidate.version !== 1 && candidate.version !== 2 && candidate.version !== 3 && candidate.version !== 4)
+  if ((candidate.version !== 1 && candidate.version !== 2 && candidate.version !== 3 && candidate.version !== 4 && candidate.version !== 5)
     || typeof candidate.name !== 'string' || !Array.isArray(candidate.tracks)) {
     throw new Error('Choose a layout saved by Little Railways.');
   }
@@ -220,7 +221,7 @@ export function parseLayout(value: unknown): LayoutData {
   }
 
   let couplings: CouplingGroup[] | undefined;
-  if (candidate.version === 4) {
+  if (candidate.version >= 4) {
     const groups = candidate.couplings === undefined ? [] : candidate.couplings;
     if (!Array.isArray(groups) || groups.length > Math.floor(MAX_TRAINSETS / 2)) {
       throw new Error('This layout has an invalid coupled-train list.');
@@ -232,19 +233,36 @@ export function parseLayout(value: unknown): LayoutData {
       if (!isObject(value) || typeof value.id !== 'string' || !value.id.trim()
         || value.id.length > 100 || groupIds.has(value.id)
         || typeof value.e6Id !== 'string' || typeof value.e5Id !== 'string'
-        || value.e6Id === value.e5Id || members.has(value.e6Id) || members.has(value.e5Id)
-        || trainById.get(value.e6Id)?.type !== 'e6' || trainById.get(value.e5Id)?.type !== 'e5') {
-        throw new Error('This layout contains an invalid E6/E5 coupling.');
+        || value.e6Id === value.e5Id || members.has(value.e6Id) || members.has(value.e5Id)) {
+        throw new Error('This layout contains an invalid Shinkansen coupling.');
+      }
+      const reference = trainById.get(value.e6Id);
+      const partner = trainById.get(value.e5Id);
+      // Version 4 only described the original E6 rear / E5 front arrangement.
+      // Keep that validation when importing old files instead of silently
+      // interpreting malformed historical relations as playful combinations.
+      if (!reference || !partner || reference.type === 'e235' || partner.type === 'e235'
+        || (candidate.version === 4 && (reference.type !== 'e6' || partner.type !== 'e5'))) {
+        throw new Error('This layout contains an invalid Shinkansen coupling.');
+      }
+      if (candidate.version === 5
+        && ((value.e6End !== undefined && value.e6End !== 'front' && value.e6End !== 'rear')
+          || (value.e5End !== undefined && value.e5End !== 'front' && value.e5End !== 'rear'))) {
+        throw new Error('This layout contains an invalid Shinkansen coupling end.');
       }
       groupIds.add(value.id);
       members.add(value.e6Id);
       members.add(value.e5Id);
-      return { id: value.id, e6Id: value.e6Id, e5Id: value.e5Id };
+      return {
+        id: value.id, e6Id: value.e6Id, e5Id: value.e5Id,
+        ...(candidate.version === 5 && value.e6End !== undefined ? { e6End: value.e6End as 'front' | 'rear' } : {}),
+        ...(candidate.version === 5 && value.e5End !== undefined ? { e5End: value.e5End as 'front' | 'rear' } : {}),
+      };
     });
   }
 
   return {
-    version: candidate.version === 4 ? 4 : candidate.version === 3 ? 3 : 2,
+    version: candidate.version === 5 ? 5 : candidate.version === 4 ? 4 : candidate.version === 3 ? 3 : 2,
     name: candidate.name.trim().slice(0, 60) || 'My Railway',
     tracks,
     accessories,

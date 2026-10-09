@@ -5,18 +5,19 @@ import { solveCoupledFormation } from '../src/formationPose';
 import { getCouplingLinkLength, getTrainCarSpec } from '../src/trains';
 import type { TrainSnapshot } from '../src/fleet';
 import type { CouplingGroup, CouplingOperation, NoseCouplingState } from '../src/couplingTypes';
+import { NOSE_COUPLER_PROFILES } from '../src/couplingTypes';
 
 // The real rendered anchors are checked here; the CPU suite covers full laps,
 // body contact, turnouts, grades, interruption, and high-speed collision sweeps.
 // Software WebGL renders every bounded approach/separation frame. The long
 // journey's timeout accommodates that QA cost without skipping transitions.
 test.setTimeout(600_000);
-const STORAGE_KEY = 'little-railways-layout-v4';
+const STORAGE_KEY = 'little-railways-layout-v5';
 const scene = (page: Page) => page.getByRole('img', { name: '3D railway layout: rotate, zoom, select trains, and move Kato track pieces' });
 const driving = (page: Page) => page.getByRole('combobox', { name: 'Train to drive', exact: true });
 type Point = { x: number; y: number; z: number };
 type Nose = {
-  type: 'e5' | 'e6'; state: NoseCouplingState; pivot: Point; matingFace: Point;
+  type: 'e5' | 'e6' | 'e7'; end: 'front' | 'rear'; state: NoseCouplingState; pivot: Point; matingFace: Point;
   coverTransforms: { side: string; position: number[]; quaternion: number[]; scale: number[] }[];
 };
 type Car = {
@@ -96,9 +97,10 @@ async function capture(page: Page, info: TestInfo, name: string) {
 
 function noseOf(value: RenderedTrain): Nose {
   const noses = value.cars.filter(car => car.noseCoupler);
-  expect(noses, 'Only the correct physical cab has the opening coupling mechanism').toHaveLength(1);
-  expect(noses[0].index).toBe(value.type === 'e5' ? 0 : value.carCount - 1);
-  return noses[0].noseCoupler!;
+  expect(noses, 'Either physical Shinkansen cab can open for playful coupling').toHaveLength(2);
+  expect(noses.map(car => car.index)).toEqual([0, value.carCount - 1]);
+  const active = noses.find(car => car.noseCoupler!.state.open > 0 || car.noseCoupler!.state.extension > 0 || car.noseCoupler!.state.locked);
+  return (active ?? noses.find(car => car.index === (value.type === 'e6' ? value.carCount - 1 : 0)))!.noseCoupler!;
 }
 
 function expectRigid(value: RenderedTrain) {
@@ -133,8 +135,9 @@ async function expectLocked(page: Page) {
   expect(joined[0].complete).toBe(true);
   const joint = joined[0].joint!;
   expect(joint).not.toBeNull();
-  expect(gap(joint.e6Mount, joint.head), 'The E6 shank remains exactly 10 model mm').toBeCloseTo(10, 4);
-  expect(gap(joint.e5Mount, joint.head), 'The E5 shank remains exactly 11 model mm').toBeCloseTo(11, 4);
+  expect(gap(joint.e6Mount, joint.head), 'The E6 shank remains compact').toBeCloseTo(NOSE_COUPLER_PROFILES.e6.extensionLength, 4);
+  expect(gap(joint.e5Mount, joint.head), 'The E5 shank remains compact').toBeCloseTo(NOSE_COUPLER_PROFILES.e5.extensionLength, 4);
+  expect(gap(joint.e6Mount, joint.e5Mount), 'The two mounts are seven model millimetres apart').toBeCloseTo(7, 4);
   expect(gap(joint.e6Face, joint.e5Face), 'Rendered mechanical mating faces share one point through articulation').toBeLessThan(.0001);
   expect(gap(joint.e6Face, joint.head)).toBeLessThan(.0001);
   expect(gap(joint.e5Face, joint.head)).toBeLessThan(.0001);
@@ -318,14 +321,14 @@ test('the authentic seventeen-car mixed formation saves, reloads stopped, and re
   await freeze(page); await seed(page, value);
   const initial = await expectLocked(page);
   expect(initial.reduce((sum, train) => sum + train.carCount, 0)).toBe(17);
-  await expect(page.getByRole('combobox', { name: 'Train car count', exact: true })).toBeDisabled();
+  await expect(page.getByRole('combobox', { name: 'Train car count', exact: true })).toBeEnabled();
   await page.getByRole('button', { name: 'Save layout', exact: true }).click();
   const dialog = page.getByRole('dialog');
   await dialog.getByRole('textbox', { name: 'Layout name', exact: true }).fill('Our seventeen-car Hayabusa and Komachi');
   await dialog.getByRole('button', { name: 'Save layout', exact: true }).click();
   await advance(page, 100);
   const stored = await saved(page);
-  expect(stored.version).toBe(4);
+  expect(stored.version).toBe(5);
   expect(stored.couplings).toEqual(value.couplings);
   expect(stored.trains.map((train: TrainSnapshot) => train.carCount)).toEqual([7, 10]);
   await page.reload();

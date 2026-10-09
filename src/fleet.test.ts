@@ -54,7 +54,7 @@ describe('independent fleet snapshots', () => {
     expect(snapshot.position).not.toBe(moving.position)
     const selected = { ...moving, id: 'second', name: 'Komachi', type: 'e6' as const, carCount: 3 }
     const saved = snapshotFleetLayout(layout, [moving, selected], selected.id)
-    expect(saved).toMatchObject({ version: 4, trainType: 'e6', carCount: 3, selectedTrainId: 'second', couplings: [] })
+    expect(saved).toMatchObject({ version: 5, trainType: 'e6', carCount: 3, selectedTrainId: 'second', couplings: [] })
     expect(saved.trains![0]).toEqual(snapshot)
     expect(layout).not.toHaveProperty('trains')
   })
@@ -83,7 +83,7 @@ describe('independent fleet snapshots', () => {
     const group = { id: 'coupled-1', e6Id: fleet[0].id, e5Id: fleet[1].id }
     const coupled = snapshotFleetLayout(layout, fleet, fleet[1].id, [group])
     const savedAgain = snapshotFleetLayout(coupled, fleet, fleet[0].id)
-    expect(savedAgain.version).toBe(4)
+    expect(savedAgain.version).toBe(5)
     expect(savedAgain.couplings).toEqual([group])
     expect(savedAgain.couplings![0]).not.toBe(group)
     expect(savedAgain.couplings![0]).not.toBe(coupled.couplings![0])
@@ -91,6 +91,23 @@ describe('independent fleet snapshots', () => {
     expect(restoreFleet(savedAgain).map(train => train.id)).toEqual(fleet.map(train => train.id))
     expect(snapshotFleetLayout(coupled, fleet, fleet[0].id, []).couplings).toEqual([])
     expect(snapshotFleetLayout(layout, fleet, fleet[0].id, [{ ...group, phase: 'locking' } as typeof group]).couplings).toEqual([group])
+  })
+
+  it('saves either cab end on generic Shinkansen pairs as isolated stable data', () => {
+    const layout = createLayout('coupling-demo')
+    const fleet = restoreFleet(layout).map(train => ({ ...train, type: 'e7' as const,
+      running: true, actualSpeed: 40, noseCoupling: { end: 'front' as const, open: 1, extension: 1, locked: true },
+    }))
+    const group = { id: 'e7-pair', e6Id: fleet[0].id, e5Id: fleet[1].id, e6End: 'front' as const, e5End: 'rear' as const }
+    const snapshot = snapshotFleetLayout(layout, fleet, fleet[1].id, [{ ...group, phase: 'locking' } as typeof group])
+    expect(snapshot.version).toBe(5)
+    expect(snapshot.couplings).toEqual([group])
+    expect(snapshot.couplings![0]).not.toBe(group)
+    expect(snapshot.trains!.every(train => !('noseCoupling' in train) && !('running' in train))).toBe(true)
+    const another = snapshotFleetLayout(snapshot, fleet, fleet[0].id)
+    another.couplings![0].e6End = 'rear'
+    expect(snapshot.couplings![0].e6End).toBe('front')
+    expect(restoreFleet(snapshot).every(train => !train.running && train.actualSpeed === 0 && !train.noseCoupling)).toBe(true)
   })
 })
 
