@@ -752,6 +752,9 @@ kbd { display: inline-block; padding: 1px 5px; min-width: 20px; border: 1px soli
 .cockpit-train-bar .icon-button { flex: 0 0 40px; width: 40px; height: 40px; padding: 10px; border-radius: 7px; }
 .cockpit-train-bar .icon-button svg { width: 18px; height: 18px; }
 .cockpit-train-actions { display: flex; flex: 0 0 auto; gap: 6px; }
+.cockpit-create-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 6px; }
+.cockpit-create-actions .button { min-height: 40px; padding: 0 10px; gap: 5px; border-radius: 7px; font-size: 11px; }
+.cockpit-create-actions .button svg { width: 16px; height: 16px; }
 .cockpit-fleet-strip { display: flex; flex: 1 1 160px; gap: 7px; min-width: 120px; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: thin; scrollbar-color: #c1ceb1 transparent; padding: 3px 2px; margin: -3px -2px; }
 .cockpit-fleet-strip .fleet-train { display: flex; flex: 0 0 auto; align-items: center; gap: 7px; min-height: 42px; max-width: min(245px, 100%); padding: 5px 9px; border-radius: 7px; }
 .cockpit-fleet-strip .fleet-draft { border-style: dashed; }
@@ -798,7 +801,6 @@ kbd { display: inline-block; padding: 1px 5px; min-width: 20px; border: 1px soli
 .switch-panel.compact .switch-focus svg { width: 17px; height: 17px; }
 .switch-panel.compact > p { margin: 8px 0; font-size: 11px; }
 
-.cockpit-bottom { display: flex; flex: 0 0 auto; flex-direction: column; min-width: 0; }
 .cockpit-drive-dock { display: flex; flex: 0 0 auto; flex-wrap: wrap; align-items: stretch; gap: 6px 12px; min-width: 0; padding: 9px 12px; border-top: 1px solid var(--line); background: #fffefa; }
 .cockpit-drive-dock .train-controls { display: flex; flex: 1 1 400px; flex-wrap: nowrap; align-items: center; gap: 10px; min-width: 260px; min-height: 52px; padding: 0; }
 .cockpit-drive-dock .play-button { width: 50px; height: 50px; }
@@ -825,9 +827,6 @@ kbd { display: inline-block; padding: 1px 5px; min-width: 20px; border: 1px soli
 .cockpit-coupling .coupling-partner-name { flex: 1 1 100px; min-width: 0; margin: 0; overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .cockpit-notice { flex: 1 1 100%; min-width: 0; max-height: 58px; overflow: auto; padding: 5px 8px; border: 1px solid #e2d1ad; border-radius: 6px; background: #fff6e4; color: #8b622d; font-size: 10px; line-height: 1.5; }
 .cockpit-notice p { margin: 0; }
-.cockpit-add-row.fleet-add-row { display: flex; flex: 0 0 auto; align-items: center; justify-content: flex-end; gap: 8px; min-width: 0; min-height: 51px; margin: 0; padding: 5px 12px; border-top: 1px solid var(--line); background: #f7faf1; }
-.cockpit-editor-context { min-width: 0; overflow: hidden; color: #627956; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.cockpit-add-row .button { flex: 0 0 auto; min-height: 40px; padding: 0 12px; font-size: 11px; white-space: nowrap; }
 .cockpit-panel { min-width: 0; }
 
 /* Give the railway more height while keeping its controls inside the viewport. */
@@ -839,12 +838,7 @@ kbd { display: inline-block; padding: 1px 5px; min-width: 20px; border: 1px soli
 }
 
 @media (min-width: 1000px) {
-  .cockpit-bottom--simple { flex-direction: row; align-items: stretch; border-top: 1px solid var(--line); }
-  .cockpit-bottom--simple .cockpit-drive-dock { flex: 1 1 0; min-width: 280px; padding: 7px 12px; border-top: 0; }
-  .cockpit-bottom--simple .cockpit-drive-dock .train-controls { flex: 1 1 0; min-width: 280px; }
-  .cockpit-bottom--simple .cockpit-add-row.fleet-add-row { flex: 0 0 auto; min-width: 120px; max-width: 250px; padding: 5px 12px; border-top: 0; border-left: 1px solid var(--line); }
-  .cockpit-bottom--simple .cockpit-add-row--draft { min-width: 220px; }
-  .cockpit-bottom--simple .cockpit-add-row .button { padding: 0 10px; white-space: nowrap; }
+  .cockpit-drive-dock { padding: 7px 12px; }
 }
 
 @media (max-width: 1100px) {
@@ -878,7 +872,6 @@ kbd { display: inline-block; padding: 1px 5px; min-width: 20px; border: 1px soli
   .cockpit-drive-dock .speed-control { max-width: none; }
   .cockpit-coupling { flex: 1 1 100%; justify-content: flex-end; padding: 7px 0 0; border-top: 1px solid var(--line); border-left: 0; }
   .cockpit-coupling .coupling-partner-select { flex: 1 1 120px; }
-  .cockpit-add-row.fleet-add-row { padding: 5px 10px; gap: 6px; }
   .catalog-tabs { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .piece-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
@@ -904,11 +897,15 @@ kbd { display: inline-block; padding: 1px 5px; min-width: 20px; border: 1px soli
   .board-tools .button > svg { width: 14px; height: 14px; }
   .board-tools .button > svg:last-child { width: 11px; }
   .cockpit-fleet { padding: 7px 9px; }
-  .cockpit-train-bar .cockpit-model-select { flex: 1 1 120px; }
+  .cockpit-train-bar { gap: 4px; }
+  .cockpit-train-bar .cockpit-model-select { flex: 1 1 100px; min-width: 100px; }
   .cockpit-train-bar .cockpit-model-select select { font-size: 10px; }
-  .cockpit-train-bar .car-select { gap: 4px; font-size: 10px; }
+  .cockpit-train-bar .car-select { gap: 3px; font-size: 10px; }
   .cockpit-train-bar .car-select select { min-width: 46px; padding: 5px; }
   .cockpit-train-bar .icon-button { flex-basis: 40px; }
+  .cockpit-train-actions, .cockpit-create-actions { gap: 4px; }
+  .cockpit-create-actions .button { padding: 0 7px; gap: 4px; font-size: 10px; }
+  .cockpit-create-actions .button svg { width: 14px; height: 14px; }
   .cockpit-fleet-strip .fleet-train { max-width: min(245px, 100%); }
   .cockpit-stage .scene-controls { right: 8px; top: 8px; }
   .cockpit-stage .scene-controls button { padding: 0 6px; gap: 4px; }
@@ -926,7 +923,5 @@ kbd { display: inline-block; padding: 1px 5px; min-width: 20px; border: 1px soli
   .cockpit-drive-dock .train-controls { gap: 7px; }
   .cockpit-drive-dock .play-button { width: 48px; height: 48px; }
   .cockpit-drive-dock .speed-control { min-width: 115px; }
-  .cockpit-add-row.fleet-add-row { padding: 5px 9px; }
-  .cockpit-add-row .button { padding: 0 8px; gap: 4px; font-size: 10px; }
   .piece-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

@@ -99,12 +99,21 @@ async function expectCockpitFits(page: Page, includeSwitch = false, drafting = f
     page.getByRole('button', { name: /^(Run|Pause) train$/ }),
     page.getByRole('button', { name: 'Reverse train direction', exact: true }),
     page.getByRole('button', { name: 'Sound train horn', exact: true }),
-    page.getByRole('button', { name: 'Pause all trains', exact: true }),
     page.getByRole('button', { name: 'Place selected train', exact: true }),
     page.getByRole('button', { name: 'Remove selected train', exact: true }),
     page.getByRole('button', { name: drafting ? 'Add train' : 'Prepare a new train', exact: true }),
   ]) await visibleInside(page, locator);
   if (drafting && await page.getByRole('button', { name: 'Cancel new train', exact: true }).count()) await visibleInside(page, page.getByRole('button', { name: 'Cancel new train', exact: true }));
+  await expect(page.getByRole('button', { name: 'Pause all trains', exact: true })).toHaveCount(0);
+  await expect(screen(page).locator('.cockpit-add-row')).toHaveCount(0);
+  const trainBar = page.getByRole('region', { name: 'Your trains', exact: true });
+  const createActions = trainBar.locator('.cockpit-create-actions');
+  const createBounds = (await createActions.boundingBox())!;
+  const barBounds = (await trainBar.boundingBox())!;
+  expect(createBounds.y).toBeGreaterThanOrEqual(barBounds.y - 1);
+  expect(createBounds.y + createBounds.height).toBeLessThanOrEqual(barBounds.y + barBounds.height + 1);
+  await expect(createActions.getByRole('button', { name: drafting ? 'Add train' : 'Prepare a new train', exact: true })).toHaveCount(1);
+  expect(await createActions.evaluate(element => Boolean(element.compareDocumentPosition(element.parentElement!.querySelector('.cockpit-model-select')!) & Node.DOCUMENT_POSITION_FOLLOWING)), 'Train creation controls precede the shared model editor in the top bar').toBe(true);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   const stage = (await page.getByTestId('railway-canvas-stage').boundingBox())!;
   const dock = (await page.getByTestId('railway-driving-dock').boundingBox())!;
@@ -124,10 +133,13 @@ async function expectCockpitFits(page: Page, includeSwitch = false, drafting = f
 async function expectActiveChipVisible(page: Page, trainId: string) {
   const strip = page.getByRole('group', { name: 'Select a train to drive', exact: true });
   const chip = strip.locator(`button[data-train-id="${trainId}"]`);
-  const [viewport, bounds] = await Promise.all([strip.boundingBox(), chip.boundingBox()]);
-  expect(bounds).not.toBeNull();
-  expect(bounds!.x).toBeGreaterThanOrEqual(viewport!.x - 1);
-  expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(viewport!.x + viewport!.width + 1);
+  // Browser resize notifications settle independently of the frozen train clock.
+  // Poll the visible geometry instead of reading between layout and ResizeObserver.
+  await expect.poll(() => chip.evaluate(element => {
+    const bounds = element.getBoundingClientRect();
+    const viewport = element.parentElement!.getBoundingClientRect();
+    return Math.max(viewport.left - bounds.left, bounds.right - viewport.right);
+  }), { message: 'The active train card stays inside the resized fleet strip' }).toBeLessThanOrEqual(1);
   expect(await strip.evaluate(element => element.scrollLeft)).toBeGreaterThan(0);
 }
 
@@ -209,11 +221,11 @@ test('Mac-sized screens keep driving and active-train controls in view without p
   await expect(page.getByRole('combobox', { name: 'Train car count', exact: true })).toBeDisabled();
   await page.getByRole('button', { name: 'Prepare a new train', exact: true }).click();
   await expect(page.getByRole('button', { name: /^(Run|Pause) train$/ })).toBeDisabled();
-  await expect(page.getByRole('button', { name: 'Pause all trains', exact: true })).toBeEnabled();
-  await page.getByRole('button', { name: 'Pause all trains', exact: true }).click();
-  await advance(page, 100);
-  expect((await fleet(page)).every(train => !train.running && train.actualSpeed === 0), 'Global safety pause remains available while preparing another train').toBe(true);
+  await expect(page.getByRole('button', { name: 'Pause all trains', exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: 'Cancel new train', exact: true }).click();
+  await page.getByRole('button', { name: 'Pause train', exact: true }).click();
+  await advance(page, 100);
+  expect((await fleet(page)).every(train => !train.running && train.actualSpeed === 0), 'The main pause control stops the selected train after leaving its draft editor').toBe(true);
   await page.getByRole('button', { name: 'Run train', exact: true }).click();
   await advance(page, 100);
   await speed(page).focus();
@@ -232,7 +244,14 @@ test('Mac-sized screens keep driving and active-train controls in view without p
   await expect(page.getByRole('button', { name: 'Drive Green train 2', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await page.getByRole('button', { name: 'Run train', exact: true }).click();
   await advance(page, 100);
-  await page.getByRole('button', { name: 'Pause all trains', exact: true }).click();
+  await trainCard(page, 'cockpit-train-1').click();
+  await page.getByRole('button', { name: 'Run train', exact: true }).click();
+  await advance(page, 100);
+  await page.getByRole('button', { name: 'Pause train', exact: true }).click();
+  await advance(page, 100);
+  expect((await fleet(page))[1].running, 'Pausing one train preserves the other train’s journey').toBe(true);
+  await trainCard(page, 'cockpit-train-2').click();
+  await page.getByRole('button', { name: 'Pause train', exact: true }).click();
   await advance(page, 100);
   expect((await fleet(page)).every(train => !train.running && train.actualSpeed === 0)).toBe(true);
   expect(await scrollPosition(page)).toEqual({ x: 0, y: 0 });

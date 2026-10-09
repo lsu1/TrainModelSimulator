@@ -117,8 +117,11 @@ test('each train has its operating speed limit and independent model-scale movem
   await slider(page).press('Home');
   await advance(page, 100);
   expect((await fleet(page)).slice(1).map(value => value.requestedSpeed)).toEqual([320, 320, 275]);
-  await page.getByRole('button', { name: 'Pause all trains', exact: true }).click();
-  await advance(page, 100);
+  for (const [index] of types.entries()) {
+    await select(page, `set-${index}`);
+    await page.getByRole('button', { name: 'Pause train', exact: true }).click();
+    await advance(page, 100);
+  }
   const screenshot = testInfo.outputPath('independent-real-world-train-speeds.png');
   await page.screenshot({ path: screenshot });
   await testInfo.attach('real-world-speed-controls', { path: screenshot, contentType: 'image/png' });

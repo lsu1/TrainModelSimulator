@@ -188,7 +188,8 @@ test('independent controls, scene selection and removal leave the other journey 
   await advance(page, 500);
   expect((await fleet(page))[0].cars).toEqual(stoppedGreen);
   expect(gap((await fleet(page))[1].cars[0].center, redBefore)).toBeGreaterThan(5);
-  await page.getByRole('button', { name: 'Pause all trains', exact: true }).click();
+  await select(page, 'red-set');
+  await page.getByRole('button', { name: 'Pause train', exact: true }).click();
   await advance(page, 100);
   await page.getByRole('button', { name: 'Top view', exact: true }).click();
   await advance(page, 500);
