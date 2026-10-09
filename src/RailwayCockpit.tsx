@@ -126,7 +126,10 @@ export default function RailwayCockpit({
       aria-label="Railway control screen"
       data-testid="railway-main-screen"
     >
-      <section className="cockpit-fleet" aria-label="Your trains">
+      <section
+        className={`cockpit-fleet ${h.fleet.length === 1 ? "cockpit-fleet--single" : ""}`}
+        aria-label="Your trains"
+      >
         <div className="cockpit-train-bar">
           <span className="cockpit-fleet-count" aria-label="Train count">
             <TrainFront size={18} />
@@ -150,6 +153,18 @@ export default function RailwayCockpit({
               ))}
             </select>
           </label>
+          {h.fleet.length === 1 && selected && (
+            <span
+              className="cockpit-solo-status"
+              aria-label="Selected train status"
+              title={`${selected.name} · ${STATUS[selected.status]}`}
+            >
+              <span
+                className={`status-dot ${selected.running && selected.status !== "blocked" ? "running" : ""}`}
+              />
+              {STATUS[selected.status]}
+            </span>
+          )}
           <label className="cockpit-model-select">
             <span className="visually-hidden">Train model</span>
             <select
@@ -427,226 +442,230 @@ export default function RailwayCockpit({
         )}
       </div>
 
-      <div className="cockpit-drive-dock" data-testid="railway-driving-dock">
-        <div
-          className="train-controls"
-          role="group"
-          aria-label="Driving controls"
-        >
-          <button
-            className={`play-button ${h.running ? "playing" : ""}`}
-            aria-label={h.running ? "Pause train" : "Run train"}
-            title={h.running ? "Pause train" : "Run train"}
-            disabled={!placed || !!h.placingTrain || h.couplingBusy}
-            onClick={h.toggleRunning}
+      <div
+        className={`cockpit-bottom ${!showCoupling && !notice ? "cockpit-bottom--simple" : ""}`}
+      >
+        <div className="cockpit-drive-dock" data-testid="railway-driving-dock">
+          <div
+            className="train-controls"
+            role="group"
+            aria-label="Driving controls"
           >
-            {h.running ? (
-              <Pause size={22} fill="currentColor" />
-            ) : (
-              <Play size={22} fill="currentColor" />
-            )}
-          </button>
-          <div className="speed-control">
-            <div className="speed-heading">
-              <label htmlFor="train-speed">Speed</label>
-              <span>
-                {h.speed}
-                <small> km/h</small>
-              </span>
+            <button
+              className={`play-button ${h.running ? "playing" : ""}`}
+              aria-label={h.running ? "Pause train" : "Run train"}
+              title={h.running ? "Pause train" : "Run train"}
+              disabled={!placed || !!h.placingTrain || h.couplingBusy}
+              onClick={h.toggleRunning}
+            >
+              {h.running ? (
+                <Pause size={22} fill="currentColor" />
+              ) : (
+                <Play size={22} fill="currentColor" />
+              )}
+            </button>
+            <div className="speed-control">
+              <div className="speed-heading">
+                <label htmlFor="train-speed">Speed</label>
+                <span>
+                  {h.speed}
+                  <small> km/h</small>
+                </span>
+              </div>
+              <input
+                id="train-speed"
+                aria-label="Train speed"
+                title={h.trainSpec.speedNote}
+                type="range"
+                min="5"
+                max={h.trainSpec.maxServiceSpeed}
+                step="5"
+                value={h.speed}
+                disabled={!selected || !!h.placingTrain || h.couplingBusy}
+                onChange={(event) => h.setSpeed(Number(event.target.value))}
+              />
+              <div className="speed-labels">
+                <span>Max {h.trainSpec.maxServiceSpeed} km/h</span>
+              </div>
             </div>
-            <input
-              id="train-speed"
-              aria-label="Train speed"
-              title={h.trainSpec.speedNote}
-              type="range"
-              min="5"
-              max={h.trainSpec.maxServiceSpeed}
-              step="5"
-              value={h.speed}
-              disabled={!selected || !!h.placingTrain || h.couplingBusy}
-              onChange={(event) => h.setSpeed(Number(event.target.value))}
-            />
-            <div className="speed-labels">
-              <span>Max {h.trainSpec.maxServiceSpeed} km/h</span>
-            </div>
+            <button
+              className="icon-button direction-button"
+              aria-label="Reverse train direction"
+              title="Reverse train direction"
+              disabled={!placed || !!h.placingTrain || h.couplingBusy}
+              onClick={h.reverse}
+            >
+              <ArrowLeftRight size={21} />
+            </button>
+            <button
+              className="icon-button direction-button"
+              aria-label="Sound train horn"
+              title="Sound train horn"
+              disabled={!selected}
+              onClick={() => void h.horn()}
+            >
+              <Volume2 size={21} />
+            </button>
           </div>
+          {showCoupling && (
+            <section className="cockpit-coupling" aria-label="Nose coupling">
+              <div className="cockpit-coupling-actions">
+                {h.couplingBusy ? (
+                  <span
+                    className="cockpit-coupling-status"
+                    role="status"
+                    aria-live="polite"
+                  >
+                    {phase}
+                    {operationPaused ? " · Paused" : "…"}
+                  </span>
+                ) : coupled ? (
+                  <span className="coupling-formation-badge">
+                    <Link2 size={13} />
+                    {formation
+                      .map((train) => train.type.toUpperCase())
+                      .join(" + ")}{" "}
+                    · {formation.reduce((sum, train) => sum + train.carCount, 0)}{" "}
+                    cars
+                  </span>
+                ) : (
+                  <label className="coupling-partner-select">
+                    <span className="visually-hidden">Join with</span>
+                    <select
+                      aria-label="Coupling partner"
+                      value={partner?.id ?? ""}
+                      disabled={!h.couplingPartners.length || !!h.placingTrain}
+                      onChange={(event) => setPartnerId(event.target.value)}
+                    >
+                      {!h.couplingPartners.length && (
+                        <option value="">Choose a partner</option>
+                      )}
+                      {h.couplingPartners.map((train) => (
+                        <option key={train.id} value={train.id}>
+                          {train.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                {h.couplingBusy ? (
+                  <button
+                    className="icon-button"
+                    aria-label={
+                      operationPaused ? "Continue coupling" : "Pause coupling"
+                    }
+                    title={
+                      operationPaused ? "Continue coupling" : "Pause coupling"
+                    }
+                    onClick={operationPaused ? h.resumeCoupling : h.pauseCoupling}
+                  >
+                    {operationPaused ? <Play size={18} /> : <Pause size={18} />}
+                  </button>
+                ) : coupled ? (
+                  <button
+                    className="icon-button"
+                    aria-label="Decouple trains"
+                    aria-describedby={
+                      couplingReason ? "coupling-guidance" : undefined
+                    }
+                    title={couplingReason ?? "Decouple trains"}
+                    disabled={moving || !!h.couplingReason || !!h.placingTrain}
+                    onClick={h.decoupleTrains}
+                  >
+                    <Unlink2 size={20} />
+                  </button>
+                ) : (
+                  <button
+                    className="icon-button cockpit-join"
+                    aria-label="Couple trains"
+                    aria-describedby={
+                      couplingReason ? "coupling-guidance" : undefined
+                    }
+                    title={partner?.reason ?? "Couple trains"}
+                    disabled={!partner?.allowed || moving || !!h.placingTrain}
+                    onClick={() => partner && h.coupleTrains(partner.id)}
+                  >
+                    <Link2 size={20} />
+                  </button>
+                )}
+                <button
+                  className={`icon-button coupling-view-button ${h.cameraPreset === "coupling" ? "active" : ""}`}
+                  aria-label="Nose view"
+                  title="Nose view"
+                  aria-pressed={h.cameraPreset === "coupling"}
+                  disabled={!h.couplingBusy && !coupled}
+                  onClick={() => {
+                    h.setCameraPreset("coupling");
+                    h.setViewRevision((value) => value + 1);
+                    revealScreen();
+                  }}
+                >
+                  <Eye size={20} />
+                </button>
+              </div>
+            </section>
+          )}
+          {notice && (
+            <div className="cockpit-notice" id="coupling-guidance" title={notice}>
+              {notice}
+            </div>
+          )}
+        </div>
+
+        <div className="cockpit-add-row fleet-add-row">
+          <label>
+            <span>Add a train</span>
+            <select
+              aria-label="New train model"
+              value={newTrainType}
+              disabled={h.couplingBusy}
+              onChange={(event) =>
+                setNewTrainType(event.target.value as TrainType)
+              }
+            >
+              {TRAIN_TYPES.map((type) => (
+                <option key={type} value={type}>
+                  {getTrainSpec(type).name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="fleet-add-count">
+            Cars
+            <select
+              aria-label="New train car count"
+              value={newTrainCarCount}
+              disabled={h.couplingBusy}
+              onChange={(event) =>
+                setNewTrainCarCount(Number(event.target.value))
+              }
+            >
+              {CAR_COUNTS.map((count) => (
+                <option key={count} value={count}>
+                  {count}
+                </option>
+              ))}
+            </select>
+          </label>
           <button
-            className="icon-button direction-button"
-            aria-label="Reverse train direction"
-            title="Reverse train direction"
-            disabled={!placed || !!h.placingTrain || h.couplingBusy}
-            onClick={h.reverse}
+            className="button primary"
+            aria-label="Add train"
+            title={
+              h.fleet.length >= MAX_TRAINSETS
+                ? "All train spaces are filled"
+                : "Add train"
+            }
+            disabled={
+              h.fleet.length >= MAX_TRAINSETS ||
+              !!h.placingTrain ||
+              h.couplingBusy
+            }
+            onClick={() => h.addTrain(newTrainType, newTrainCarCount)}
           >
-            <ArrowLeftRight size={21} />
-          </button>
-          <button
-            className="icon-button direction-button"
-            aria-label="Sound train horn"
-            title="Sound train horn"
-            disabled={!selected}
-            onClick={() => void h.horn()}
-          >
-            <Volume2 size={21} />
+            <Plus size={17} />
+            Add train
           </button>
         </div>
-        {showCoupling && (
-          <section className="cockpit-coupling" aria-label="Nose coupling">
-            <div className="cockpit-coupling-actions">
-              {h.couplingBusy ? (
-                <span
-                  className="cockpit-coupling-status"
-                  role="status"
-                  aria-live="polite"
-                >
-                  {phase}
-                  {operationPaused ? " · Paused" : "…"}
-                </span>
-              ) : coupled ? (
-                <span className="coupling-formation-badge">
-                  <Link2 size={13} />
-                  {formation
-                    .map((train) => train.type.toUpperCase())
-                    .join(" + ")}{" "}
-                  · {formation.reduce((sum, train) => sum + train.carCount, 0)}{" "}
-                  cars
-                </span>
-              ) : (
-                <label className="coupling-partner-select">
-                  <span className="visually-hidden">Join with</span>
-                  <select
-                    aria-label="Coupling partner"
-                    value={partner?.id ?? ""}
-                    disabled={!h.couplingPartners.length || !!h.placingTrain}
-                    onChange={(event) => setPartnerId(event.target.value)}
-                  >
-                    {!h.couplingPartners.length && (
-                      <option value="">Choose a partner</option>
-                    )}
-                    {h.couplingPartners.map((train) => (
-                      <option key={train.id} value={train.id}>
-                        {train.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
-              {h.couplingBusy ? (
-                <button
-                  className="icon-button"
-                  aria-label={
-                    operationPaused ? "Continue coupling" : "Pause coupling"
-                  }
-                  title={
-                    operationPaused ? "Continue coupling" : "Pause coupling"
-                  }
-                  onClick={operationPaused ? h.resumeCoupling : h.pauseCoupling}
-                >
-                  {operationPaused ? <Play size={18} /> : <Pause size={18} />}
-                </button>
-              ) : coupled ? (
-                <button
-                  className="icon-button"
-                  aria-label="Decouple trains"
-                  aria-describedby={
-                    couplingReason ? "coupling-guidance" : undefined
-                  }
-                  title={couplingReason ?? "Decouple trains"}
-                  disabled={moving || !!h.couplingReason || !!h.placingTrain}
-                  onClick={h.decoupleTrains}
-                >
-                  <Unlink2 size={20} />
-                </button>
-              ) : (
-                <button
-                  className="icon-button cockpit-join"
-                  aria-label="Couple trains"
-                  aria-describedby={
-                    couplingReason ? "coupling-guidance" : undefined
-                  }
-                  title={partner?.reason ?? "Couple trains"}
-                  disabled={!partner?.allowed || moving || !!h.placingTrain}
-                  onClick={() => partner && h.coupleTrains(partner.id)}
-                >
-                  <Link2 size={20} />
-                </button>
-              )}
-              <button
-                className={`icon-button coupling-view-button ${h.cameraPreset === "coupling" ? "active" : ""}`}
-                aria-label="Nose view"
-                title="Nose view"
-                aria-pressed={h.cameraPreset === "coupling"}
-                disabled={!h.couplingBusy && !coupled}
-                onClick={() => {
-                  h.setCameraPreset("coupling");
-                  h.setViewRevision((value) => value + 1);
-                  revealScreen();
-                }}
-              >
-                <Eye size={20} />
-              </button>
-            </div>
-          </section>
-        )}
-        {notice && (
-          <div className="cockpit-notice" id="coupling-guidance" title={notice}>
-            {notice}
-          </div>
-        )}
-      </div>
-
-      <div className="cockpit-add-row fleet-add-row">
-        <label>
-          <span>Add a train</span>
-          <select
-            aria-label="New train model"
-            value={newTrainType}
-            disabled={h.couplingBusy}
-            onChange={(event) =>
-              setNewTrainType(event.target.value as TrainType)
-            }
-          >
-            {TRAIN_TYPES.map((type) => (
-              <option key={type} value={type}>
-                {getTrainSpec(type).name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="fleet-add-count">
-          Cars
-          <select
-            aria-label="New train car count"
-            value={newTrainCarCount}
-            disabled={h.couplingBusy}
-            onChange={(event) =>
-              setNewTrainCarCount(Number(event.target.value))
-            }
-          >
-            {CAR_COUNTS.map((count) => (
-              <option key={count} value={count}>
-                {count}
-              </option>
-            ))}
-          </select>
-        </label>
-        <button
-          className="button primary"
-          aria-label="Add train"
-          title={
-            h.fleet.length >= MAX_TRAINSETS
-              ? "All train spaces are filled"
-              : "Add train"
-          }
-          disabled={
-            h.fleet.length >= MAX_TRAINSETS ||
-            !!h.placingTrain ||
-            h.couplingBusy
-          }
-          onClick={() => h.addTrain(newTrainType, newTrainCarCount)}
-        >
-          <Plus size={17} />
-          Add train
-        </button>
       </div>
     </div>
   );

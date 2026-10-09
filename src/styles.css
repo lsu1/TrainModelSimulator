@@ -763,6 +763,7 @@ kbd { display: inline-block; padding: 1px 5px; min-width: 20px; border: 1px soli
 .cockpit-fleet-strip .fleet-status { font-size: 9px; }
 .cockpit-fleet-strip .status-dot { width: 5px; height: 5px; }
 .cockpit-fleet .fleet-empty { margin: 8px 0 2px; font-size: 11px; }
+.cockpit-solo-status { display: none; }
 
 .cockpit-main { position: relative; display: flex; flex: 1 1 auto; min-width: 0; min-height: 0; overflow: hidden; }
 .cockpit-stage { position: relative; flex: 1 1 auto; min-width: 0; min-height: 0; overflow: hidden; background: #e3e9e7; isolation: isolate; }
@@ -798,6 +799,7 @@ kbd { display: inline-block; padding: 1px 5px; min-width: 20px; border: 1px soli
 .switch-panel.compact .switch-focus svg { width: 17px; height: 17px; }
 .switch-panel.compact > p { margin: 8px 0; font-size: 11px; }
 
+.cockpit-bottom { display: flex; flex: 0 0 auto; flex-direction: column; min-width: 0; }
 .cockpit-drive-dock { display: flex; flex: 0 0 auto; flex-wrap: wrap; align-items: stretch; gap: 6px 12px; min-width: 0; padding: 9px 12px; border-top: 1px solid var(--line); background: #fffefa; }
 .cockpit-drive-dock .train-controls { display: flex; flex: 1 1 400px; flex-wrap: nowrap; align-items: center; gap: 10px; min-width: 260px; min-height: 52px; padding: 0; }
 .cockpit-drive-dock .play-button { width: 50px; height: 50px; }
@@ -830,6 +832,27 @@ kbd { display: inline-block; padding: 1px 5px; min-width: 20px; border: 1px soli
 .cockpit-add-row .fleet-add-count { flex: 0 0 95px; }
 .cockpit-add-row .button { min-height: 40px; padding: 0 12px; font-size: 11px; }
 .cockpit-panel { min-width: 0; }
+
+/* Give the railway more height while keeping its controls inside the viewport. */
+@media (min-width: 761px) {
+  .app-header { min-height: 44px; }
+  .railway-card { height: calc(100dvh - 60px); min-height: min(540px, calc(100dvh - 60px)); }
+  .board-header { min-height: 48px; padding: 4px 13px; }
+  .cockpit-fleet { padding: 5px 12px; }
+  .cockpit-fleet--single .cockpit-fleet-strip { display: none; }
+  .cockpit-fleet--single .cockpit-solo-status { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 5px; color: #627956; font-size: 10px; white-space: nowrap; }
+  .cockpit-solo-status .status-dot { width: 6px; height: 6px; }
+}
+
+@media (min-width: 1000px) {
+  .cockpit-bottom--simple { flex-direction: row; align-items: stretch; border-top: 1px solid var(--line); }
+  .cockpit-bottom--simple .cockpit-drive-dock { flex: 1 1 0; min-width: 280px; padding: 7px 12px; border-top: 0; }
+  .cockpit-bottom--simple .cockpit-drive-dock .train-controls { flex: 1 1 0; min-width: 280px; }
+  .cockpit-bottom--simple .cockpit-add-row.fleet-add-row { flex: 0 1 435px; min-width: 380px; padding: 5px 12px; border-top: 0; border-left: 1px solid var(--line); }
+  .cockpit-bottom--simple .cockpit-add-row label { flex: 1 1 0; }
+  .cockpit-bottom--simple .cockpit-add-row .fleet-add-count { flex: 0 0 80px; }
+  .cockpit-bottom--simple .cockpit-add-row .button { padding: 0 10px; white-space: nowrap; }
+}
 
 @media (max-width: 1100px) {
   .workspace { grid-template-columns: minmax(0, 1fr); }
