@@ -52,15 +52,23 @@ export default function RailwayCockpit({
   children,
 }: {
   h: Railway;
-  children: ReactNode;
+  children: (selectTrain: (id: string) => void) => ReactNode;
 }) {
   const screen = useRef<HTMLDivElement>(null);
   const fleetStrip = useRef<HTMLDivElement>(null);
+  const [adding, setAdding] = useState(false);
   const [newTrainType, setNewTrainType] = useState<TrainType>("e5");
   const [newTrainCarCount, setNewTrainCarCount] = useState(3);
   const [partnerId, setPartnerId] = useState("");
   const [switchesOpen, setSwitchesOpen] = useState(true);
   const selected = h.fleet.find((train) => train.id === h.selectedTrainId);
+  const creating = (adding || !selected) && !h.couplingBusy && !h.placingTrain;
+  const createLocked =
+    h.couplingBusy || !!h.placingTrain || h.fleet.length >= MAX_TRAINSETS;
+  const selectTrain = (id: string) => {
+    setAdding(false);
+    h.selectTrain(id);
+  };
   const placed = !!selected?.position;
   const moving = !!selected && (selected.running || selected.actualSpeed > 0);
   const movingCount = h.fleet.filter(
@@ -80,13 +88,14 @@ export default function RailwayCockpit({
     h.couplingPartners[0];
   const phase = PHASE[h.couplingPhase ?? ""] ?? "Preparing trains";
   const showCoupling =
-    (selected && selected.type !== "e235") || h.couplingBusy || coupled;
+    !creating &&
+    ((selected && selected.type !== "e235") || h.couplingBusy || coupled);
   const couplingReason = h.couplingBusy
     ? null
     : coupled
       ? h.couplingReason
       : partner?.reason;
-  const notice = selected?.stopReason ?? couplingReason;
+  const notice = creating ? null : (selected?.stopReason ?? couplingReason);
 
   const revealScreen = () => {
     const element = screen.current;
@@ -102,21 +111,77 @@ export default function RailwayCockpit({
   }, [operationId, operationPaused]);
 
   useEffect(() => {
+    setAdding(false);
+  }, [
+    h.selectedTrainId,
+    h.layoutRevision,
+    h.fleet.length,
+    h.placingTrain?.id,
+    h.couplingBusy,
+  ]);
+
+  useEffect(() => {
+    if (!creating) return;
+    const protectDraft = (event: KeyboardEvent) => {
+      if (h.modal || event.defaultPrevented) return;
+      const target = event.target;
+      if (
+        target instanceof HTMLElement &&
+        (["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName) ||
+          target.isContentEditable)
+      )
+        return;
+      if (event.key === "Escape") {
+        setAdding(false);
+        return;
+      }
+      // Space still activates focused buttons; global train shortcuts do not
+      // operate the previous train while the shared editor shows a new draft.
+      const button =
+        target instanceof Element && target.closest('button, [role="button"]');
+      if (
+        (event.code === "Space" && !button) ||
+        (event.key.toLowerCase() === "r" && !event.metaKey && !event.ctrlKey)
+      )
+        event.preventDefault();
+    };
+    window.addEventListener("keydown", protectDraft, true);
+    return () => window.removeEventListener("keydown", protectDraft, true);
+  }, [creating, h.modal]);
+
+  useEffect(() => {
     const strip = fleetStrip.current;
-    const active =
-      strip &&
-      Array.from(strip.querySelectorAll<HTMLButtonElement>("button")).find(
-        (button) => button.dataset.trainId === h.selectedTrainId,
+    if (!strip) return;
+    const revealActive = () => {
+      const active = Array.from(
+        strip.querySelectorAll<HTMLButtonElement>("button"),
+      ).find(
+        (button) =>
+          button.dataset.trainId ===
+          (creating ? "__new-train__" : h.selectedTrainId),
       );
-    if (!strip || !active) return;
-    const viewport = strip.getBoundingClientRect(),
-      chip = active.getBoundingClientRect();
-    // Only the fleet strip moves; selecting a train never scrolls the page.
-    if (chip.left < viewport.left)
-      strip.scrollLeft += chip.left - viewport.left;
-    else if (chip.right > viewport.right)
-      strip.scrollLeft += chip.right - viewport.right;
-  }, [h.selectedTrainId, h.fleet.length, h.carCount, h.trainType]);
+      if (!active) return;
+      const viewport = strip.getBoundingClientRect(),
+        chip = active.getBoundingClientRect();
+      // Only the fleet strip moves; selecting a train never scrolls the page.
+      if (chip.left < viewport.left)
+        strip.scrollLeft += chip.left - viewport.left;
+      else if (chip.right > viewport.right)
+        strip.scrollLeft += chip.right - viewport.right;
+    };
+    revealActive();
+    const observer = new ResizeObserver(revealActive);
+    observer.observe(strip);
+    return () => observer.disconnect();
+  }, [
+    creating,
+    h.selectedTrainId,
+    h.fleet.length,
+    h.carCount,
+    h.trainType,
+    newTrainType,
+    newTrainCarCount,
+  ]);
 
   return (
     <div
@@ -126,59 +191,112 @@ export default function RailwayCockpit({
       aria-label="Railway control screen"
       data-testid="railway-main-screen"
     >
-      <section
-        className={`cockpit-fleet ${h.fleet.length === 1 ? "cockpit-fleet--single" : ""}`}
-        aria-label="Your trains"
-      >
+      <section className="cockpit-fleet" aria-label="Your trains">
         <div className="cockpit-train-bar">
           <span className="cockpit-fleet-count" aria-label="Train count">
             <TrainFront size={18} />
             {h.fleet.length} {h.fleet.length === 1 ? "train" : "trains"}
           </span>
-          <label className="driving-select">
-            <span className="visually-hidden">Driving</span>
-            <select
-              aria-label="Train to drive"
-              value={h.selectedTrainId ?? ""}
-              disabled={!h.fleet.length || !!h.placingTrain}
-              onChange={(event) => h.selectTrain(event.target.value)}
-            >
-              {!h.fleet.length && (
-                <option value="">Add your first train</option>
-              )}
-              {h.fleet.map((train) => (
-                <option key={train.id} value={train.id}>
-                  {train.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          {h.fleet.length === 1 && selected && (
-            <span
-              className="cockpit-solo-status"
-              aria-label="Selected train status"
-              title={`${selected.name} · ${STATUS[selected.status]}`}
-            >
-              <span
-                className={`status-dot ${selected.running && selected.status !== "blocked" ? "running" : ""}`}
-              />
-              {STATUS[selected.status]}
-            </span>
-          )}
+          <div
+            ref={fleetStrip}
+            className="cockpit-fleet-strip"
+            role="group"
+            aria-label="Select a train to drive"
+          >
+            {h.fleet.map((train) => {
+              const group = h.couplings.find(
+                (pair) => pair.e6Id === train.id || pair.e5Id === train.id,
+              );
+              const total = group
+                ? h.fleet
+                    .filter(
+                      (member) =>
+                        member.id === group.e6Id || member.id === group.e5Id,
+                    )
+                    .reduce((sum, member) => sum + member.carCount, 0)
+                : 0;
+              return (
+                <button
+                  key={train.id}
+                  className={`fleet-train ${!creating && train.id === h.selectedTrainId ? "selected" : ""}`}
+                  aria-label={`Drive ${train.name}`}
+                  aria-pressed={!creating && train.id === h.selectedTrainId}
+                  title={
+                    train.stopReason ??
+                    `${train.name} · ${train.carCount} cars · ${STATUS[train.status]}`
+                  }
+                  disabled={!!h.placingTrain && train.id !== h.placementTrainId}
+                  data-train-id={train.id}
+                  data-status={train.status}
+                  data-train-type={train.type}
+                  data-train-speed={train.actualSpeed}
+                  onClick={() => selectTrain(train.id)}
+                >
+                  <span
+                    className="fleet-swatch"
+                    style={{
+                      background: getTrainSpec(train.type).colors.primary,
+                    }}
+                  />
+                  <div>
+                    <strong>{train.name}</strong>
+                    <span className={`fleet-status ${train.status}`}>
+                      <span
+                        className={`status-dot ${train.running && train.status !== "blocked" ? "running" : ""}`}
+                      />
+                      {train.carCount} cars · {STATUS[train.status]}
+                      {train.actualSpeed > 0 &&
+                        ` · ${Math.round(train.actualSpeed)} km/h`}
+                      {group && (
+                        <span
+                          className="fleet-connected-badge"
+                          title={`${total} cars connected`}
+                        >
+                          <Link2 size={12} />
+                          {total}
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                </button>
+              );
+            })}
+            {creating && (
+              <button
+                className="fleet-train fleet-draft selected"
+                aria-label="Edit new train"
+                aria-pressed="true"
+                data-train-id="__new-train__"
+                onClick={() => setAdding(true)}
+              >
+                <Plus size={18} />
+                <div>
+                  <strong>New train</strong>
+                  <span>
+                    {newTrainCarCount} cars · {getTrainSpec(newTrainType).name}
+                  </span>
+                </div>
+              </button>
+            )}
+          </div>
           <label className="cockpit-model-select">
             <span className="visually-hidden">Train model</span>
             <select
-              aria-label="Train"
-              value={h.trainType}
+              aria-label={creating ? "New train model" : "Train"}
+              value={creating ? newTrainType : h.trainType}
               disabled={
-                !selected ||
-                moving ||
-                !!h.placingTrain ||
-                h.couplingBusy ||
-                coupled
+                creating
+                  ? createLocked
+                  : !selected ||
+                    moving ||
+                    !!h.placingTrain ||
+                    h.couplingBusy ||
+                    coupled
               }
               onChange={(event) =>
-                h.chooseTrain(event.target.value as TrainType)
+                creating
+                  ? setNewTrainType(event.target.value as TrainType)
+                  : h.chooseTrain(event.target.value as TrainType)
               }
             >
               {TRAIN_TYPES.map((type) => (
@@ -191,13 +309,17 @@ export default function RailwayCockpit({
           <label className="car-select">
             Cars
             <select
-              aria-label="Train car count"
-              value={h.carCount}
+              aria-label={creating ? "New train car count" : "Train car count"}
+              value={creating ? newTrainCarCount : h.carCount}
               disabled={
-                !selected || moving || !!h.placingTrain || h.couplingBusy
+                creating
+                  ? createLocked
+                  : !selected || moving || !!h.placingTrain || h.couplingBusy
               }
               onChange={(event) =>
-                h.changeTrainCarCount(Number(event.target.value))
+                creating
+                  ? setNewTrainCarCount(Number(event.target.value))
+                  : h.changeTrainCarCount(Number(event.target.value))
               }
             >
               {CAR_COUNTS.map((count) => (
@@ -213,6 +335,7 @@ export default function RailwayCockpit({
               aria-label="Place selected train"
               title={placed ? "Move train" : "Place train"}
               disabled={
+                creating ||
                 !selected ||
                 moving ||
                 !h.tracks.length ||
@@ -229,7 +352,11 @@ export default function RailwayCockpit({
               aria-label="Remove selected train"
               title="Remove selected train"
               disabled={
-                !selected || !!h.placingTrain || h.couplingBusy || coupled
+                creating ||
+                !selected ||
+                !!h.placingTrain ||
+                h.couplingBusy ||
+                coupled
               }
               onClick={() => selected && h.removeTrain(selected.id)}
             >
@@ -248,79 +375,11 @@ export default function RailwayCockpit({
             </button>
           </div>
         </div>
-        <div
-          ref={fleetStrip}
-          className="cockpit-fleet-strip"
-          role="group"
-          aria-label="Select a train to drive"
-        >
-          {h.fleet.map((train) => {
-            const group = h.couplings.find(
-              (pair) => pair.e6Id === train.id || pair.e5Id === train.id,
-            );
-            const total = group
-              ? h.fleet
-                  .filter(
-                    (member) =>
-                      member.id === group.e6Id || member.id === group.e5Id,
-                  )
-                  .reduce((sum, member) => sum + member.carCount, 0)
-              : 0;
-            return (
-              <button
-                key={train.id}
-                className={`fleet-train ${train.id === h.selectedTrainId ? "selected" : ""}`}
-                aria-label={`Drive ${train.name}`}
-                aria-pressed={train.id === h.selectedTrainId}
-                title={
-                  train.stopReason ??
-                  `${train.name} · ${train.carCount} cars · ${STATUS[train.status]}`
-                }
-                disabled={!!h.placingTrain && train.id !== h.placementTrainId}
-                data-train-id={train.id}
-                data-status={train.status}
-                data-train-type={train.type}
-                data-train-speed={train.actualSpeed}
-                onClick={() => h.selectTrain(train.id)}
-              >
-                <span
-                  className="fleet-swatch"
-                  style={{
-                    background: getTrainSpec(train.type).colors.primary,
-                  }}
-                />
-                <div>
-                  <strong>{train.name}</strong>
-                  <span className={`fleet-status ${train.status}`}>
-                    <span
-                      className={`status-dot ${train.running && train.status !== "blocked" ? "running" : ""}`}
-                    />
-                    {train.carCount} cars · {STATUS[train.status]}
-                    {train.actualSpeed > 0 &&
-                      ` · ${Math.round(train.actualSpeed)} km/h`}
-                    {group && (
-                      <span
-                        className="fleet-connected-badge"
-                        title={`${total} cars connected`}
-                      >
-                        <Link2 size={12} />
-                        {total}
-                      </span>
-                    )}
-                  </span>
-                </div>
-              </button>
-            );
-          })}
-          {!h.fleet.length && (
-            <span className="cockpit-empty">No trains yet</span>
-          )}
-        </div>
       </section>
 
       <div className="cockpit-main">
         <div className="cockpit-stage" data-testid="railway-canvas-stage">
-          {children}
+          {children(selectTrain)}
           {!h.ready && (
             <div className="scene-loading">
               <Layers3 size={32} />
@@ -455,7 +514,9 @@ export default function RailwayCockpit({
               className={`play-button ${h.running ? "playing" : ""}`}
               aria-label={h.running ? "Pause train" : "Run train"}
               title={h.running ? "Pause train" : "Run train"}
-              disabled={!placed || !!h.placingTrain || h.couplingBusy}
+              disabled={
+                creating || !placed || !!h.placingTrain || h.couplingBusy
+              }
               onClick={h.toggleRunning}
             >
               {h.running ? (
@@ -481,7 +542,9 @@ export default function RailwayCockpit({
                 max={h.trainSpec.maxServiceSpeed}
                 step="5"
                 value={h.speed}
-                disabled={!selected || !!h.placingTrain || h.couplingBusy}
+                disabled={
+                  creating || !selected || !!h.placingTrain || h.couplingBusy
+                }
                 onChange={(event) => h.setSpeed(Number(event.target.value))}
               />
               <div className="speed-labels">
@@ -492,7 +555,9 @@ export default function RailwayCockpit({
               className="icon-button direction-button"
               aria-label="Reverse train direction"
               title="Reverse train direction"
-              disabled={!placed || !!h.placingTrain || h.couplingBusy}
+              disabled={
+                creating || !placed || !!h.placingTrain || h.couplingBusy
+              }
               onClick={h.reverse}
             >
               <ArrowLeftRight size={21} />
@@ -501,7 +566,7 @@ export default function RailwayCockpit({
               className="icon-button direction-button"
               aria-label="Sound train horn"
               title="Sound train horn"
-              disabled={!selected}
+              disabled={creating || !selected}
               onClick={() => void h.horn()}
             >
               <Volume2 size={21} />
@@ -525,7 +590,8 @@ export default function RailwayCockpit({
                     {formation
                       .map((train) => train.type.toUpperCase())
                       .join(" + ")}{" "}
-                    · {formation.reduce((sum, train) => sum + train.carCount, 0)}{" "}
+                    ·{" "}
+                    {formation.reduce((sum, train) => sum + train.carCount, 0)}{" "}
                     cars
                   </span>
                 ) : (
@@ -557,7 +623,9 @@ export default function RailwayCockpit({
                     title={
                       operationPaused ? "Continue coupling" : "Pause coupling"
                     }
-                    onClick={operationPaused ? h.resumeCoupling : h.pauseCoupling}
+                    onClick={
+                      operationPaused ? h.resumeCoupling : h.pauseCoupling
+                    }
                   >
                     {operationPaused ? <Play size={18} /> : <Pause size={18} />}
                   </button>
@@ -606,65 +674,61 @@ export default function RailwayCockpit({
             </section>
           )}
           {notice && (
-            <div className="cockpit-notice" id="coupling-guidance" title={notice}>
+            <div
+              className="cockpit-notice"
+              id="coupling-guidance"
+              title={notice}
+            >
               {notice}
             </div>
           )}
         </div>
 
-        <div className="cockpit-add-row fleet-add-row">
-          <label>
-            <span>Add a train</span>
-            <select
-              aria-label="New train model"
-              value={newTrainType}
-              disabled={h.couplingBusy}
-              onChange={(event) =>
-                setNewTrainType(event.target.value as TrainType)
+        <div
+          className={`cockpit-add-row fleet-add-row ${creating ? "cockpit-add-row--draft" : ""}`}
+        >
+          {creating ? (
+            <>
+              {selected && (
+                <button
+                  className="button secondary"
+                  aria-label="Cancel new train"
+                  onClick={() => setAdding(false)}
+                >
+                  <X size={17} /> Cancel
+                </button>
+              )}
+              <button
+                className="button primary"
+                aria-label="Add train"
+                title={
+                  h.fleet.length >= MAX_TRAINSETS
+                    ? "All train spaces are filled"
+                    : "Add this new train"
+                }
+                disabled={createLocked}
+                onClick={() => {
+                  if (!createLocked) h.addTrain(newTrainType, newTrainCarCount);
+                }}
+              >
+                <Plus size={17} /> Add train
+              </button>
+            </>
+          ) : (
+            <button
+              className="button primary"
+              aria-label="Prepare a new train"
+              title={
+                h.fleet.length >= MAX_TRAINSETS
+                  ? "All train spaces are filled"
+                  : "Choose a new train in the shared editor"
               }
+              disabled={createLocked}
+              onClick={() => setAdding(true)}
             >
-              {TRAIN_TYPES.map((type) => (
-                <option key={type} value={type}>
-                  {getTrainSpec(type).name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="fleet-add-count">
-            Cars
-            <select
-              aria-label="New train car count"
-              value={newTrainCarCount}
-              disabled={h.couplingBusy}
-              onChange={(event) =>
-                setNewTrainCarCount(Number(event.target.value))
-              }
-            >
-              {CAR_COUNTS.map((count) => (
-                <option key={count} value={count}>
-                  {count}
-                </option>
-              ))}
-            </select>
-          </label>
-          <button
-            className="button primary"
-            aria-label="Add train"
-            title={
-              h.fleet.length >= MAX_TRAINSETS
-                ? "All train spaces are filled"
-                : "Add train"
-            }
-            disabled={
-              h.fleet.length >= MAX_TRAINSETS ||
-              !!h.placingTrain ||
-              h.couplingBusy
-            }
-            onClick={() => h.addTrain(newTrainType, newTrainCarCount)}
-          >
-            <Plus size={17} />
-            Add train
-          </button>
+              <Plus size={17} /> New train
+            </button>
+          )}
         </div>
       </div>
     </div>

@@ -14,7 +14,7 @@ import { NOSE_COUPLER_PROFILES } from '../src/couplingTypes';
 test.setTimeout(600_000);
 const STORAGE_KEY = 'little-railways-layout-v5';
 const scene = (page: Page) => page.getByRole('img', { name: '3D railway layout: rotate, zoom, select trains, and move Kato track pieces' });
-const driving = (page: Page) => page.getByRole('combobox', { name: 'Train to drive', exact: true });
+const trainCard = (page: Page, id: string) => page.getByRole('group', { name: 'Select a train to drive', exact: true }).locator(`button[data-train-id="${id}"]`);
 type Point = { x: number; y: number; z: number };
 type Nose = {
   type: 'e5' | 'e6' | 'e7'; end: 'front' | 'rear'; state: NoseCouplingState; pivot: Point; matingFace: Point;
@@ -235,7 +235,7 @@ test('the practice railway opens rigid nose covers, joins E5 and E6, drives curv
   const locked = await expectLocked(page);
   milestone('nose mechanisms locked');
   expect(locked.every(value => value.selected), 'Selecting either connected member highlights the complete formation').toBe(true);
-  await driving(page).selectOption('coupling-demo-e5');
+  await trainCard(page, 'coupling-demo-e5').click();
   await advance(page, 100);
   await page.getByRole('button', { name: 'Nose view', exact: true }).click();
   await advance(page, 300);

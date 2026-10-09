@@ -13,10 +13,10 @@ test.setTimeout(120_000);
 const STORAGE_KEY = 'little-railways-layout-v5';
 const scene = (page: Page) => page.getByRole('img', { name: '3D railway layout: rotate, zoom, select trains, and move Kato track pieces' });
 const screen = (page: Page) => page.getByRole('region', { name: 'Railway control screen', exact: true });
-const driving = (page: Page) => page.getByRole('combobox', { name: 'Train to drive', exact: true });
+const trainCard = (page: Page, id: string) => page.getByRole('group', { name: 'Select a train to drive', exact: true }).locator(`button[data-train-id="${id}"]`);
 const speed = (page: Page) => page.getByRole('slider', { name: 'Train speed', exact: true });
 type Runtime = TrainSnapshot & {
-  actualSpeed: number; running: boolean; status: string;
+  actualSpeed: number; running: boolean; status: string; selected: boolean;
   cars: { noseCoupler?: { state: { open: number } } }[];
 };
 
@@ -34,7 +34,7 @@ function independentLayout(count = 2): LayoutData {
     position: index < 2 ? { trackId: `${index ? 'second' : 'main'}-4`, distance: 208, direction: 1, route: 0, laps: 0 } : null,
     cabForward: true, requestedSpeed: index ? 40 : 20,
   }));
-  return { version: 5, name: 'Everything at your fingertips', tracks, accessories: [], trains, couplings: [], selectedTrainId: trains[0].id, trainType: 'e235', carCount: 3 };
+  return { version: 5, name: 'Everything at your fingertips', tracks, accessories: [], trains, couplings: [], selectedTrainId: trains[0]?.id, trainType: 'e235', carCount: 3 };
 }
 
 function clearTurnout(): Track {
@@ -89,23 +89,22 @@ async function visibleInside(page: Page, locator: Locator) {
   expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(viewport.height + 1);
 }
 
-async function expectCockpitFits(page: Page, includeSwitch = false) {
+async function expectCockpitFits(page: Page, includeSwitch = false, drafting = false) {
   // Bounding boxes do not auto-scroll, unlike clicks or screenshots. These
   // assertions therefore catch controls drifting outside the usable screen.
   await visibleInside(page, screen(page));
-  for (const locator of [driving(page), speed(page),
-    page.getByRole('combobox', { name: 'Train', exact: true }),
-    page.getByRole('combobox', { name: 'Train car count', exact: true }),
+  for (const locator of [speed(page),
+    page.getByRole('combobox', { name: drafting ? 'New train model' : 'Train', exact: true }),
+    page.getByRole('combobox', { name: drafting ? 'New train car count' : 'Train car count', exact: true }),
     page.getByRole('button', { name: /^(Run|Pause) train$/ }),
     page.getByRole('button', { name: 'Reverse train direction', exact: true }),
     page.getByRole('button', { name: 'Sound train horn', exact: true }),
     page.getByRole('button', { name: 'Pause all trains', exact: true }),
     page.getByRole('button', { name: 'Place selected train', exact: true }),
     page.getByRole('button', { name: 'Remove selected train', exact: true }),
-    page.getByRole('combobox', { name: 'New train model', exact: true }),
-    page.getByRole('combobox', { name: 'New train car count', exact: true }),
-    page.getByRole('button', { name: 'Add train', exact: true }),
+    page.getByRole('button', { name: drafting ? 'Add train' : 'Prepare a new train', exact: true }),
   ]) await visibleInside(page, locator);
+  if (drafting && await page.getByRole('button', { name: 'Cancel new train', exact: true }).count()) await visibleInside(page, page.getByRole('button', { name: 'Cancel new train', exact: true }));
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   const stage = (await page.getByTestId('railway-canvas-stage').boundingBox())!;
   const dock = (await page.getByTestId('railway-driving-dock').boundingBox())!;
@@ -148,12 +147,75 @@ test('Mac-sized screens keep driving and active-train controls in view without p
   for (const name of ['Reverse train direction', 'Sound train horn']) {
     expect((await page.getByRole('button', { name, exact: true }).innerText()).trim(), 'Familiar icons have no explanation underneath').toBe('');
   }
+  // The single editor changes the active set, or prepares a separate draft.
+  // Drafting must never mutate a real train until Add train is confirmed.
+  await expect(page.getByRole('combobox', { name: 'Train to drive', exact: true })).toHaveCount(0);
   const initial = await fleet(page);
+  await page.getByRole('button', { name: 'Prepare a new train', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Edit new train', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('combobox', { name: 'Train', exact: true })).toHaveCount(0);
+  await page.getByRole('combobox', { name: 'New train model', exact: true }).selectOption('e7');
+  await page.getByRole('combobox', { name: 'New train car count', exact: true }).selectOption('7');
+  await advance(page, 100);
+  await scene(page).press('Space');
+  await scene(page).press('r');
+  await advance(page, 100);
+  expect(await fleet(page), 'A draft cannot drive or reverse the previously selected train through shortcuts').toEqual(initial);
+  await expectCockpitFits(page, false, true);
+  await page.screenshot({ path: info.outputPath('main-screen-shared-new-train-editor.png') });
+  for (const name of ['Run train', 'Reverse train direction', 'Sound train horn', 'Place selected train', 'Remove selected train']) {
+    await expect(page.getByRole('button', { name, exact: true })).toBeDisabled();
+  }
+  await expect(speed(page)).toBeDisabled();
+  await page.getByRole('button', { name: 'Cancel new train', exact: true }).click();
+  await advance(page, 100);
+  await expect(trainCard(page, 'cockpit-train-1')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('combobox', { name: 'Train', exact: true })).toHaveValue('e235');
+  expect(await fleet(page)).toEqual(initial);
+  await page.getByRole('button', { name: 'Prepare a new train', exact: true }).click();
+  await expect(page.getByRole('combobox', { name: 'New train model', exact: true })).toHaveValue('e7');
+  await expect(page.getByRole('combobox', { name: 'New train car count', exact: true })).toHaveValue('7');
+  await trainCard(page, 'cockpit-train-2').click();
+  await advance(page, 100);
+  await expect(page.getByRole('button', { name: 'Edit new train', exact: true })).toHaveCount(0);
+  await expect(trainCard(page, 'cockpit-train-2')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('combobox', { name: 'Train car count', exact: true })).toHaveValue('3');
+  expect((await fleet(page)).map(({ selected: _selected, ...train }) => train)).toEqual(initial.map(({ selected: _selected, ...train }) => train));
+  await page.getByRole('button', { name: 'Prepare a new train', exact: true }).click();
+  const body = await scene(page).evaluate(element => {
+    const point = JSON.parse((element as HTMLCanvasElement).dataset.trainPickPoints!)["cockpit-train-2"];
+    const bounds = element.getBoundingClientRect();
+    return { x: bounds.x + point.x, y: bounds.y + point.y };
+  });
+  await page.mouse.click(body.x, body.y);
+  await advance(page, 100);
+  await expect(page.getByRole('button', { name: 'Edit new train', exact: true })).toHaveCount(0);
+  await expect(trainCard(page, 'cockpit-train-2')).toHaveAttribute('aria-pressed', 'true');
+  await trainCard(page, 'cockpit-train-1').click();
+  await page.getByRole('combobox', { name: 'Train', exact: true }).selectOption('e6');
+  await page.getByRole('combobox', { name: 'Train car count', exact: true }).selectOption('4');
+  await advance(page, 100);
+  expect((await fleet(page))[0]).toMatchObject({ type: 'e6', carCount: 4 });
+  expect((await fleet(page))[1]).toEqual(initial[1]);
+  await page.getByRole('combobox', { name: 'Train car count', exact: true }).selectOption('3');
+  await page.getByRole('combobox', { name: 'Train', exact: true }).selectOption('e235');
+  await advance(page, 100);
   await page.getByRole('button', { name: 'Run train', exact: true }).click();
   await advance(page, 600);
   const moving = await fleet(page);
   expect(moving[0].actualSpeed).toBeGreaterThan(0);
   expect(moving[1].actualSpeed).toBe(0);
+  await expect(page.getByRole('combobox', { name: 'Train', exact: true })).toBeDisabled();
+  await expect(page.getByRole('combobox', { name: 'Train car count', exact: true })).toBeDisabled();
+  await page.getByRole('button', { name: 'Prepare a new train', exact: true }).click();
+  await expect(page.getByRole('button', { name: /^(Run|Pause) train$/ })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Pause all trains', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: 'Pause all trains', exact: true }).click();
+  await advance(page, 100);
+  expect((await fleet(page)).every(train => !train.running && train.actualSpeed === 0), 'Global safety pause remains available while preparing another train').toBe(true);
+  await page.getByRole('button', { name: 'Cancel new train', exact: true }).click();
+  await page.getByRole('button', { name: 'Run train', exact: true }).click();
+  await advance(page, 100);
   await speed(page).focus();
   await speed(page).press('End');
   await expect(speed(page)).toHaveValue('90');
@@ -164,7 +226,7 @@ test('Mac-sized screens keep driving and active-train controls in view without p
   expect((await fleet(page))[0].cabForward).toBe(!initial[0].cabForward);
   await page.getByRole('button', { name: 'Sound train horn', exact: true }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Toot toot!' })).toBeVisible();
-  await driving(page).selectOption('cockpit-train-2');
+  await trainCard(page, 'cockpit-train-2').click();
   await advance(page, 100);
   await expect(speed(page)).toHaveValue('40');
   await expect(page.getByRole('button', { name: 'Drive Green train 2', exact: true })).toHaveAttribute('aria-pressed', 'true');
@@ -211,6 +273,9 @@ test('numbered switches, joining, nose view and separation operate from the same
   expect((await operation(page))?.paused).toBe(true);
   await expect(speed(page)).toBeDisabled();
   await expect(branch).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Prepare a new train', exact: true })).toBeDisabled();
+  await expect(page.getByRole('combobox', { name: 'Train', exact: true })).toBeDisabled();
+  await expect(page.getByRole('combobox', { name: 'Train car count', exact: true })).toBeDisabled();
   const partiallyOpen = Math.max(...(await fleet(page))[0].cars.map(car => car.noseCoupler?.state.open ?? 0));
   expect(partiallyOpen).toBeGreaterThan(0);
   expect(partiallyOpen).toBeLessThan(1);
@@ -240,6 +305,16 @@ test('numbered switches, joining, nose view and separation operate from the same
   await expect(scene(page)).toHaveAttribute('data-ready', 'true');
   await advance(page, 100);
   await expect(speed(page)).toHaveAttribute('max', '275');
+  await expect(page.getByRole('combobox', { name: 'Train', exact: true })).toBeDisabled();
+  await expect(page.getByRole('combobox', { name: 'Train car count', exact: true })).toBeEnabled();
+  await page.getByRole('combobox', { name: 'Train car count', exact: true }).selectOption('4');
+  await advance(page, 100);
+  expect((await fleet(page)).find(train => train.id === reference.id)?.carCount).toBe(4);
+  expect((await fleet(page)).find(train => train.id === partner.id)?.carCount).toBe(3);
+  await expect(page.getByRole('region', { name: 'Nose coupling', exact: true })).toContainText('7 cars');
+  const resized = await scene(page).evaluate(element => JSON.parse((element as HTMLCanvasElement).dataset.couplingGroups ?? '[]'));
+  expect(resized).toHaveLength(1);
+  expect(resized[0].complete, 'Changing a stopped member length keeps the articulated formation intact').toBe(true);
   await visibleInside(page, page.getByRole('button', { name: 'Decouple trains', exact: true }));
   await page.getByRole('button', { name: 'Nose view', exact: true }).click();
   await page.getByRole('button', { name: 'Decouple trains', exact: true }).click();
@@ -253,31 +328,66 @@ test('numbered switches, joining, nose view and separation operate from the same
   expect(errors).toEqual([]);
 });
 
-test('a full fleet and Add train stay usable without stretching the main screen', async ({ page }, info) => {
+test('one editor adds the first train and supports a full scrolling fleet without duplication', async ({ page }, info) => {
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.setViewportSize({ width: 1280, height: 720 });
   await freeze(page);
-  await seed(page, independentLayout(12));
+  await seed(page, independentLayout(0));
+  await expect(screen(page).getByLabel('Train count', { exact: true })).toHaveText('0 trains');
+  await expect(page.getByRole('button', { name: 'Cancel new train', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('combobox', { name: 'Train', exact: true })).toHaveCount(0);
+  await expectCockpitFits(page, false, true);
+  await page.getByRole('combobox', { name: 'New train model', exact: true }).selectOption('e5');
+  await page.getByRole('combobox', { name: 'New train car count', exact: true }).selectOption('4');
+  await expectCockpitFits(page, false, true);
+  expect(await fleet(page)).toHaveLength(0);
+  await page.getByRole('button', { name: 'Add train', exact: true }).click();
+  await advance(page, 100);
+  const first = (await fleet(page))[0];
+  expect(first).toMatchObject({ type: 'e5', carCount: 4 });
+  await expect(trainCard(page, first.id)).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('combobox', { name: 'Train', exact: true })).toHaveValue('e5');
+  await expect(page.getByRole('combobox', { name: 'Train car count', exact: true })).toHaveValue('4');
+  await expect(page.getByRole('button', { name: 'Add train', exact: true })).toHaveCount(0);
+
+  // Seed twelve sets in the next document, after the outgoing autosave.
+  await page.addInitScript(({ key, value, marker }) => {
+    if (!sessionStorage.getItem(marker)) {
+      localStorage.setItem(key, JSON.stringify(value));
+      sessionStorage.setItem(marker, 'installed');
+    }
+  }, { key: STORAGE_KEY, value: independentLayout(12), marker: 'unified-full-fleet-fixture' });
+  await page.reload();
+  await expect(scene(page)).toHaveAttribute('data-ready', 'true');
+  await advance(page, 100);
   await expectCockpitFits(page);
   await expect(screen(page).getByLabel('Train count', { exact: true })).toHaveText('12 trains');
-  await expect(page.getByRole('button', { name: 'Add train', exact: true })).toBeDisabled();
-  await driving(page).selectOption('cockpit-train-12');
+  await expect(page.getByRole('button', { name: 'Prepare a new train', exact: true })).toBeDisabled();
+  await trainCard(page, 'cockpit-train-12').click();
   await advance(page, 100);
-  await expect(page.getByRole('button', { name: 'Drive Green train 12', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(trainCard(page, 'cockpit-train-12')).toHaveAttribute('aria-pressed', 'true');
   await expectActiveChipVisible(page, 'cockpit-train-12');
   await expect(page.getByRole('button', { name: 'Run train', exact: true })).toBeDisabled();
   expect(await scrollPosition(page)).toEqual({ x: 0, y: 0 });
   await page.getByRole('button', { name: 'Remove selected train', exact: true }).click();
   await advance(page, 100);
+  const survivors = await fleet(page);
+  await page.getByRole('button', { name: 'Prepare a new train', exact: true }).click();
+  await page.getByRole('combobox', { name: 'New train model', exact: true }).selectOption('e235');
+  await page.getByRole('combobox', { name: 'New train car count', exact: true }).selectOption('11');
+  await advance(page, 100);
+  await expectActiveChipVisible(page, '__new-train__');
   await page.getByRole('combobox', { name: 'New train model', exact: true }).selectOption('e7');
   await page.getByRole('combobox', { name: 'New train car count', exact: true }).selectOption('7');
+  await advance(page, 100);
+  expect(await fleet(page)).toEqual(survivors);
   await page.getByRole('button', { name: 'Add train', exact: true }).click();
   await advance(page, 100);
   const trains = await fleet(page);
   expect(trains).toHaveLength(12);
   expect(trains.at(-1)).toMatchObject({ type: 'e7', carCount: 7 });
-  await expect(driving(page)).toHaveValue(trains.at(-1)!.id);
+  await expect(trainCard(page, trains.at(-1)!.id)).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByRole('combobox', { name: 'Train car count', exact: true })).toHaveValue('7');
   await expectActiveChipVisible(page, trains.at(-1)!.id);
   expect(await scrollPosition(page)).toEqual({ x: 0, y: 0 });
@@ -289,7 +399,8 @@ test('a full fleet and Add train stay usable without stretching the main screen'
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await expect(screen(page)).toBeVisible();
     await expect(page.getByRole('button', { name: 'Sound train horn', exact: true })).toBeVisible();
-    await expect(driving(page)).toHaveValue(trains.at(-1)!.id);
+    await expect(trainCard(page, trains.at(-1)!.id)).toHaveAttribute('aria-pressed', 'true');
+    await expectActiveChipVisible(page, trains.at(-1)!.id);
   }
   await page.screenshot({ path: info.outputPath('main-screen-mobile.png') });
   expect(errors).toEqual([]);

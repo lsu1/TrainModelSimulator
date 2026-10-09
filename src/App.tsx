@@ -268,42 +268,44 @@ export default function App() {
               </div>
             )}
             <RailwayCockpit h={h}>
-              <Scene3D
-                tracks={tracks}
-                accessories={accessories}
-                trainPosition={h.position}
-                cabForward={h.cabForward}
-                carCount={h.carCount}
-                trainType={h.trainType}
-                fleet={h.fleet}
-                couplings={h.couplings}
-                couplingOperation={h.couplingOperation}
-                selectedTrainId={h.selectedTrainId}
-                onSelectTrain={h.selectTrain}
-                placingTrain={h.placingTrain}
-                placementDirection={h.placementDirection}
-                onPlaceTrain={h.placeTrain}
-                selectedId={h.selectedId}
-                activeAnchor={h.anchor}
-                mode={h.couplingBusy ? "orbit" : h.mode}
-                cameraPreset={h.cameraPreset}
-                viewRevision={h.viewRevision}
-                layoutRevision={h.layoutRevision}
-                placementHeight={h.buildHeight}
-                onDropItem={(kind, x, y) => h.addPiece(kind, { x, y })}
-                onSelect={(id) => {
-                  h.setSelectedId(id);
-                }}
-                onMove={h.movePiece}
-                onAnchor={(value) => {
-                  h.setAnchor(value);
-                  h.setSelectedId(null);
-                  h.setBuildHeight(value.position.z ?? 0);
-                  h.notify("Connector selected. Choose the next track piece.");
-                }}
-                onReady={() => h.setReady(true)}
-                issues={h.issues}
-              />
+              {(selectTrain) => (
+                <Scene3D
+                  tracks={tracks}
+                  accessories={accessories}
+                  trainPosition={h.position}
+                  cabForward={h.cabForward}
+                  carCount={h.carCount}
+                  trainType={h.trainType}
+                  fleet={h.fleet}
+                  couplings={h.couplings}
+                  couplingOperation={h.couplingOperation}
+                  selectedTrainId={h.selectedTrainId}
+                  onSelectTrain={selectTrain}
+                  placingTrain={h.placingTrain}
+                  placementDirection={h.placementDirection}
+                  onPlaceTrain={h.placeTrain}
+                  selectedId={h.selectedId}
+                  activeAnchor={h.anchor}
+                  mode={h.couplingBusy ? "orbit" : h.mode}
+                  cameraPreset={h.cameraPreset}
+                  viewRevision={h.viewRevision}
+                  layoutRevision={h.layoutRevision}
+                  placementHeight={h.buildHeight}
+                  onDropItem={(kind, x, y) => h.addPiece(kind, { x, y })}
+                  onSelect={(id) => {
+                    h.setSelectedId(id);
+                  }}
+                  onMove={h.movePiece}
+                  onAnchor={(value) => {
+                    h.setAnchor(value);
+                    h.setSelectedId(null);
+                    h.setBuildHeight(value.position.z ?? 0);
+                    h.notify("Connector selected. Choose the next track piece.");
+                  }}
+                  onReady={() => h.setReady(true)}
+                  issues={h.issues}
+                />
+              )}
             </RailwayCockpit>
           </section>
         </div>

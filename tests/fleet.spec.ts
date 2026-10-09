@@ -10,7 +10,7 @@ import type { TrainSnapshot } from '../src/fleet';
 test.setTimeout(120_000);
 const STORAGE_KEY = 'little-railways-layout-v5';
 const scene = (page: Page) => page.getByRole('img', { name: '3D railway layout: rotate, zoom, select trains, and move Kato track pieces' });
-const driving = (page: Page) => page.getByRole('combobox', { name: 'Train to drive', exact: true });
+const trainCard = (page: Page, id: string) => page.getByRole('group', { name: 'Select a train to drive', exact: true }).locator(`button[data-train-id="${id}"]`);
 
 type Point = { x: number; y: number; z: number };
 type Car = {
@@ -78,7 +78,7 @@ async function saved(page: Page) {
 }
 
 async function select(page: Page, id: string) {
-  await driving(page).selectOption(id);
+  await trainCard(page, id).click();
   await advance(page, 16);
   await expect(scene(page)).toHaveAttribute('data-selected-train-id', id);
 }
@@ -136,7 +136,7 @@ test('all four preserved train models and a second E5 retain distinct identities
   const trains = types.map((type, index) => train(`set-${index}`, type, `lane-${index}`));
   await seed(page, layout(types.flatMap((_, index) => line(`lane-${index}`, index * 90)), trains));
   await advance(page, 100);
-  await expect(driving(page).locator('option')).toHaveCount(5);
+  await expect(page.getByRole('group', { name: 'Select a train to drive', exact: true }).getByRole('button')).toHaveCount(5);
   expect((await fleet(page)).map(value => value.id)).toEqual(trains.map(value => value.id));
   for (const value of await fleet(page)) expectGeometry(value);
   const initial = await fleet(page);
@@ -195,7 +195,7 @@ test('independent controls, scene selection and removal leave the other journey 
   const target = await pick(page, 'trainPickPoints', 'red-set');
   await page.mouse.click(target.x, target.y);
   await advance(page, 100);
-  await expect(driving(page)).toHaveValue('red-set');
+  await expect(trainCard(page, 'red-set')).toHaveAttribute('aria-pressed', 'true');
   const greenBeforeRemoval = (await fleet(page))[0];
   await page.getByRole('button', { name: 'Remove selected train', exact: true }).click();
   await advance(page, 100);
@@ -207,6 +207,7 @@ test('independent controls, scene selection and removal leave the other journey 
 test('Add train supports repeated models while an overlapping manual placement is rejected', async ({ page }) => {
   await freeze(page);
   await seed(page, layout([...line('main', 0), ...line('other', 90)], [train('first', 'e5', 'main', 1000)]));
+  await page.getByRole('button', { name: 'Prepare a new train', exact: true }).click();
   await page.getByRole('combobox', { name: 'New train model', exact: true }).selectOption('e5');
   await page.getByRole('combobox', { name: 'New train car count', exact: true }).selectOption('3');
   await page.getByRole('button', { name: 'Add train', exact: true }).click();
@@ -354,6 +355,7 @@ test('Undo restores train identities and poses after adding, removing and changi
   await seed(page, layout([...line('main', 0), ...line('other', 90)], [train('first', 'e5', 'main'), train('second', 'e6', 'other')]));
   await advance(page, 100);
   const original = await fleet(page);
+  await page.getByRole('button', { name: 'Prepare a new train', exact: true }).click();
   await page.getByRole('combobox', { name: 'New train model', exact: true }).selectOption('e7');
   await page.getByRole('button', { name: 'Add train', exact: true }).click();
   await advance(page, 100);
@@ -456,6 +458,7 @@ test('version 2 layouts migrate to one independent E235 and a long fleet remains
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.getByRole('region', { name: 'Your trains' })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.getByRole('button', { name: 'Prepare a new train', exact: true }).click();
   await page.getByRole('combobox', { name: 'New train model', exact: true }).selectOption('e7');
   await page.getByRole('combobox', { name: 'New train car count', exact: true }).selectOption('11');
   await page.getByRole('button', { name: 'Add train', exact: true }).click();
