@@ -21,8 +21,7 @@ import type { TrainRuntime } from "./fleet";
 import { occupiedFleetTrackIds } from "./fleetMotion";
 import { findTrainPlacement, validateTrainPlacement } from "./trainPlacement";
 import { solveConsistPoses } from "./consistPose";
-import type { CouplingGroup, CouplingOperation, CouplingTrainType } from "./couplingTypes";
-import { makeCouplingDemo } from "./couplingDemo";
+import type { CouplingGroup, CouplingOperation } from "./couplingTypes";
 import { couplingEligibility, decouplingEligibility, stepCouplingSystem, synchronizeCoupledFleet, validateCoupledFleet } from "./couplingMotion";
 import { auditClearances, checkPlacement } from "./clearance";
 import { auditEngineering, planRamp, trackGradePercent } from "./engineering";
@@ -1102,19 +1101,6 @@ export function useRailway() {
         : "Your 3D railway is ready. All aboard!",
     );
   };
-  const loadCouplingPractice = (firstType: CouplingTrainType, firstCars: number, secondType: CouplingTrainType, secondCars: number) => {
-    if (![firstType, secondType].every(type => type === "e5" || type === "e6" || type === "e7")
-      || ![firstCars, secondCars].every(count => Number.isInteger(count) && count >= 3 && count <= 11)) return;
-    const next = makeCouplingDemo({ firstType, firstCars, secondType, secondCars });
-    if (!changeLayout(next, false, true)) return;
-    setActiveSavedDesignId(null);
-    setLayoutRevision(value => value + 1);
-    setBuildHeight(0);
-    setCameraPreset("perspective");
-    setViewRevision(value => value + 1);
-    setModal(null);
-    notify(`${firstCars} + ${secondCars} cars are ready to join. Either nose can connect!`);
-  };
   const changeTrainConfiguration = (type: TrainType, count: number) => {
     const train = fleetRef.current.find((entry) => entry.id === selectedTrainIdRef.current);
     if (!train || (train.type === type && train.carCount === count) || !Number.isInteger(count) || count < 3 || count > 11) return;
@@ -1288,7 +1274,6 @@ export function useRailway() {
     cancelTrainPlacement,
     placeTrain,
     changeTrainCarCount,
-    loadCouplingPractice,
     tracks,
     accessories,
     history,

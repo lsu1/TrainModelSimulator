@@ -158,16 +158,13 @@ async function completeOperation(page: Page, expectedGroups: number, maxMillisec
   throw new Error(`Coupling operation did not finish: ${JSON.stringify(await operation(page))}`);
 }
 
-test('the practice railway opens rigid nose covers, joins E5 and E6, drives curves, reverses, and separates', async ({ page }, info) => {
+test('two Shinkansen trains open rigid nose covers, join E5 and E6, drive curves, reverse, and separate', async ({ page }, info) => {
   const milestone = (stage: string) => console.info(`Coupling browser journey: ${stage}`);
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
   await freeze(page);
   await seed(page, makeCouplingDemo());
-  await page.getByRole('button', { name: 'Layouts', exact: true }).click();
-  await page.getByRole('button', { name: /Coupling station/ }).click();
-  await advance(page, 100);
-  milestone('practice layout opened');
+  milestone('coupling fixture opened');
   const initial = await fleet(page);
   for (const value of initial) {
     expectRigid(value);

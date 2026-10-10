@@ -16,6 +16,7 @@ import { getCouplingLinkLength, getTrainCarSpec } from '../src/trains';
 // so a screenshot or final pose cannot hide a skipped docking transition.
 test.setTimeout(360_000);
 const STORAGE_KEY = 'little-railways-layout-v5';
+let savedFixtureSequence = 0;
 const scene = (page: Page) => page.getByRole('img', { name: '3D railway layout: rotate, zoom, select trains, and move Kato track pieces' });
 type Point = { x: number; y: number; z: number };
 type Nose = {
@@ -57,13 +58,14 @@ async function seed(page: Page, value: LayoutData) {
 }
 async function replaceSavedLayout(page: Page, value: LayoutData) {
   // Install after the previous document's pagehide autosave has completed.
-  // The one-shot marker leaves subsequent reloads testing real persisted edits.
+  // Each replacement gets its own one-shot marker, even when the fixture name
+  // and selected train stay the same. Later reloads test real persisted edits.
   await page.addInitScript(({ key, value, marker }) => {
     if (!sessionStorage.getItem(marker)) {
       localStorage.setItem(key, JSON.stringify(value));
       sessionStorage.setItem(marker, 'installed');
     }
-  }, { key: STORAGE_KEY, value, marker: `fixture-${value.name}-${value.selectedTrainId}` });
+  }, { key: STORAGE_KEY, value, marker: `fixture-${++savedFixtureSequence}` });
   await page.reload();
   await expect(scene(page)).toHaveAttribute('data-ready', 'true');
   await advance(page, 100);
@@ -197,25 +199,16 @@ function curvedFixture(radius: 315 | 381, leaderType: CouplingTrainType, followe
   };
 }
 
-test('coupling practice supports selected models, 11 + 11 cars, the 17-car shortcut, and saved stopped resizing', async ({ page }) => {
+test('coupling supports mixed models, 11 + 11 cars, seventeen-car formations, and saved stopped resizing', async ({ page }) => {
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
   await freeze(page);
-  await seed(page, makeCouplingDemo());
-  await page.getByRole('button', { name: 'Layouts', exact: true }).click();
-  await page.getByRole('combobox', { name: 'First coupling train model', exact: true }).selectOption('e7');
-  await page.getByRole('combobox', { name: 'Second coupling train model', exact: true }).selectOption('e5');
-  await page.getByRole('combobox', { name: 'First coupling train car count', exact: true }).selectOption('11');
-  await page.getByRole('combobox', { name: 'Second coupling train car count', exact: true }).selectOption('11');
-  await page.getByRole('button', { name: 'Start coupling practice in Coupling station', exact: true }).click();
-  await advance(page, 100);
+  await seed(page, makeCouplingDemo({ firstType: 'e7', firstCars: 11, secondType: 'e5', secondCars: 11 }));
   const maximum = await fleet(page);
   expect(maximum.map(train => [train.type, train.carCount])).toEqual([['e7', 11], ['e5', 11]]);
   maximum.forEach(expectRigid);
   await expect(page.getByRole('button', { name: 'Couple trains', exact: true })).toBeEnabled();
-  await page.getByRole('button', { name: 'Layouts', exact: true }).click();
-  await page.getByRole('button', { name: /Try 17 cars/ }).click();
-  await advance(page, 100);
+  await replaceSavedLayout(page, makeCouplingDemo({ firstCars: 7, secondCars: 10 }));
   const authentic = await fleet(page);
   expect(authentic.map(train => [train.type, train.carCount])).toEqual([['e6', 7], ['e5', 10]]);
   authentic.forEach(expectRigid);
