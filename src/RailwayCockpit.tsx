@@ -5,7 +5,6 @@ import {
   Layers3,
   Link2,
   Maximize2,
-  MousePointer2,
   Move,
   Pause,
   Play,
@@ -380,23 +379,6 @@ export default function RailwayCockpit({
             </select>
           </label>
           <div className="cockpit-train-actions">
-            <button
-              className="icon-button"
-              aria-label="Place selected train"
-              title={placed ? "Move train" : "Place train"}
-              disabled={
-                creating ||
-                !selected ||
-                moving ||
-                !h.tracks.length ||
-                !!h.placingTrain ||
-                h.couplingBusy ||
-                coupled
-              }
-              onClick={() => selected && h.beginTrainPlacement(selected.id)}
-            >
-              <MousePointer2 size={18} />
-            </button>
             <button
               className="icon-button remove-train-button"
               aria-label="Remove selected train"

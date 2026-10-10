@@ -205,7 +205,7 @@ test('independent controls, scene selection and removal leave the other journey 
   expect((await fleet(page))[0].requestedSpeed).toBe(30);
 });
 
-test('Add train supports repeated models while an overlapping manual placement is rejected', async ({ page }) => {
+test('Add train supports repeated models with automatic placement', async ({ page }) => {
   await freeze(page);
   await seed(page, layout([...line('main', 0), ...line('other', 90)], [train('first', 'e5', 'main', 1000)]));
   await page.getByRole('button', { name: 'Prepare a new train', exact: true }).click();
@@ -218,20 +218,6 @@ test('Add train supports repeated models while an overlapping manual placement i
   expect(added.position).not.toBeNull();
   expectGeometry(added);
   expect(added.id).not.toBe('first');
-  const before = await fleet(page);
-  await page.getByRole('button', { name: 'Top view', exact: true }).click();
-  await advance(page, 500);
-  await page.getByRole('button', { name: 'Place selected train', exact: true }).click();
-  // This piece's center is within the first formation's occupied body span.
-  const occupied = await pick(page, 'pickPoints', 'main-3');
-  await expect.poll(async () => scene(page).evaluate(element => JSON.parse((element as HTMLCanvasElement).dataset.trainPlacement ?? 'null')?.allowed)).toBe(false);
-  await page.mouse.click(occupied.x, occupied.y);
-  await advance(page, 100);
-  expect((await fleet(page)).map(value => value.position), 'Rejected placement retains both track references').toEqual(before.map(value => value.position));
-  await expect(page.getByRole('button', { name: 'Cancel train placement', exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Cancel train placement', exact: true }).click();
-  await advance(page, 100);
-  expect((await fleet(page)).map(value => value.cars)).toEqual(before.map(value => value.cars));
 });
 
 test('two opposing high-speed trains stop without passing through one another across track boundaries', async ({ page }) => {

@@ -99,12 +99,12 @@ async function expectCockpitFits(page: Page, includeSwitch = false, drafting = f
     page.getByRole('button', { name: /^(Run|Pause) train$/ }),
     page.getByRole('button', { name: 'Reverse train direction', exact: true }),
     page.getByRole('button', { name: 'Sound train horn', exact: true }),
-    page.getByRole('button', { name: 'Place selected train', exact: true }),
     page.getByRole('button', { name: 'Remove selected train', exact: true }),
     page.getByRole('button', { name: drafting ? 'Add train' : 'Prepare a new train', exact: true }),
   ]) await visibleInside(page, locator);
   if (drafting && await page.getByRole('button', { name: 'Cancel new train', exact: true }).count()) await visibleInside(page, page.getByRole('button', { name: 'Cancel new train', exact: true }));
   await expect(page.getByRole('button', { name: 'Pause all trains', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Place selected train', exact: true })).toHaveCount(0);
   await expect(screen(page).locator('.cockpit-add-row')).toHaveCount(0);
   const trainBar = page.getByRole('region', { name: 'Your trains', exact: true });
   const createActions = trainBar.locator('.cockpit-create-actions');
@@ -175,7 +175,7 @@ test('Mac-sized screens keep driving and active-train controls in view without p
   expect(await fleet(page), 'A draft cannot drive or reverse the previously selected train through shortcuts').toEqual(initial);
   await expectCockpitFits(page, false, true);
   await page.screenshot({ path: info.outputPath('main-screen-shared-new-train-editor.png') });
-  for (const name of ['Run train', 'Reverse train direction', 'Sound train horn', 'Place selected train', 'Remove selected train']) {
+  for (const name of ['Run train', 'Reverse train direction', 'Sound train horn', 'Remove selected train']) {
     await expect(page.getByRole('button', { name, exact: true })).toBeDisabled();
   }
   await expect(speed(page)).toBeDisabled();
