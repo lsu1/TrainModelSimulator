@@ -20,6 +20,7 @@ import { getNoseCouplerDiagnostics, orientNoseCoupler, updateNoseCoupler } from 
 import { TurnoutPoints, staticRailRanges } from './turnoutPoints';
 import type { TrainRuntime, TrainSnapshot } from './fleet';
 import { closestTrainPlacement, validateTrainPlacement } from './trainPlacement';
+import { defaultStationName, normalizeStationName } from './stationName';
 
 interface Scene3DProps {
   tracks: Track[];
@@ -417,12 +418,40 @@ function sign(group: THREE.Group, width: number, height: number, x: number, y: n
   const ctx = canvas.getContext('2d')!;
   ctx.fillStyle = background; ctx.fillRect(0, 0, 512, 128);
   ctx.fillStyle = '#80bc45'; ctx.fillRect(0, 82, 512, 16);
-  ctx.fillStyle = '#263734'; ctx.font = 'bold 39px sans-serif'; ctx.textAlign = 'center'; ctx.fillText(label, 256, 61);
+  ctx.fillStyle = '#263734'; ctx.font = 'bold 39px sans-serif'; ctx.textAlign = 'center';
+  const textWidth = canvas.width - 32;
+  if (ctx.measureText(label).width <= textWidth) ctx.fillText(label, 256, 61);
+  else {
+    // Fit long Latin/Japanese names within the original board, retaining its
+    // stripe and line label. Break at spaces when possible, or between glyphs.
+    let lines: string[] = [], fontSize = 32;
+    for (; fontSize >= 8; fontSize--) {
+      ctx.font = `bold ${fontSize}px sans-serif`;
+      lines = [];
+      let line = '';
+      for (const character of Array.from(label)) {
+        if (line && ctx.measureText(line + character).width > textWidth) {
+          const space = line.lastIndexOf(' ');
+          if (space > 0) {
+            lines.push(line.slice(0, space).trimEnd());
+            line = line.slice(space + 1) + character;
+          } else { lines.push(line); line = character; }
+        } else line += character;
+      }
+      if (line) lines.push(line.trimEnd());
+      if (lines.length * fontSize * 1.12 <= 72) break;
+    }
+    const lineHeight = fontSize * 1.12;
+    ctx.textBaseline = 'middle';
+    lines.forEach((line, index) => ctx.fillText(line, 256, 42 + (index - (lines.length - 1) / 2) * lineHeight));
+    ctx.textBaseline = 'alphabetic';
+  }
   ctx.font = '16px sans-serif'; ctx.fillText('JY  山手線 / Yamanote Line', 256, 120);
   const texture = new THREE.CanvasTexture(canvas); texture.colorSpace = THREE.SRGBColorSpace;
   const material = new THREE.MeshStandardMaterial({ map: texture, roughness: .65, side: THREE.DoubleSide });
   material.userData.temporary = true;
   const mesh = new THREE.Mesh(new THREE.PlaneGeometry(width, height), material); mesh.position.set(x, y, z); group.add(mesh);
+  return mesh;
 }
 function supportLabel(group: THREE.Group, label: string, width: number, height: number, x: number, y: number, z: number) {
   const canvas = document.createElement('canvas'); canvas.width = 256; canvas.height = 64;
@@ -468,6 +497,8 @@ function makeAccessory(accessory: PlacedAccessory, library: ModelLibrary): THREE
       }
     }
   } else if (kind === 'platform' || kind === 'station') {
+    const customStationName = normalizeStationName(accessory.stationName);
+    const stationName = customStationName ?? defaultStationName(kind);
     box(group, library, length, 12, width, 0, 6, 0, concrete);
     box(group, library, length, .7, width - 2, 0, 12.3, 0, '#d9d8c9');
     for (const side of [-1, 1]) {
@@ -492,7 +523,15 @@ function makeAccessory(accessory: PlacedAccessory, library: ModelLibrary): THREE
       const right = box(group, library, roofLength + 5, 1.5, roofWidth / 2 + 2, 0, 35, roofWidth / 4, roof, .15); right.rotation.x = .08;
       for (let x = -roofLength / 2; x < roofLength / 2; x += 6) box(group, library, .7, .3, roofWidth + 3, x, 35.7, 0, '#8a9a8b', .15);
       box(group, library, 28, .8, 1.3, 0, 32, 0, '#e8e7d4');
-      sign(group, Math.min(35, length / 3), 8, 0, 26, -1, kind === 'station' ? '東京 Tokyo' : '原宿 Harajuku');
+      sign(group, Math.min(35, length / 3), 8, 0, 26, -1, stationName).name = 'station-name-sign';
+      group.userData.stationName = stationName;
+    } else if (customStationName) {
+      // Unroofed/end platforms keep their original appearance until named.
+      // A small board on two posts then gives them the same visible label.
+      const signWidth = Math.min(35, length / 3);
+      for (const side of [-1, 1]) box(group, library, 1.2, 11, 1.2, side * signWidth * .38, 18.5, 0, dark, .2);
+      sign(group, signWidth, 8, 0, 26, -1, stationName).name = 'station-name-sign';
+      group.userData.stationName = stationName;
     }
     // Benches and ticket-machine details make the platform readable close up.
     for (const x of [-length / 4, length / 4]) {
@@ -1233,6 +1272,11 @@ export default function Scene3D(props: Scene3DProps) {
       sizeSwitchBadges(); updateAnchors(); updateSelection(); pickDirty = true;
       pointDiagnosticsDirty = true;
       renderer.domElement.dataset.switchNumbers = JSON.stringify(latest.current.tracks.filter(track => track.switchNumber !== undefined).map(track => ({ id: track.id, number: track.switchNumber, state: track.switchState ?? 'straight' })));
+      const stationSigns = pieces.children.flatMap(piece => typeof piece.userData.stationName === 'string'
+        ? [{ id: piece.userData.pieceId as string, name: piece.userData.stationName as string }] : []);
+      renderer.domElement.dataset.stationSigns = JSON.stringify(stationSigns);
+      if (stationSigns.length) renderer.domElement.setAttribute('aria-description', `Station signs: ${stationSigns.map(sign => sign.name).join('; ')}`);
+      else renderer.domElement.removeAttribute('aria-description');
     };
     const onDown = (event: PointerEvent) => {
       if (event.button !== 0) return;

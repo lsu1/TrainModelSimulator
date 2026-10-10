@@ -27,6 +27,8 @@ import {
 import { useEffect, useRef, useState } from "react";
 import Scene3D from "./Scene3D";
 import RailwayCockpit from "./RailwayCockpit";
+import StationNameEditor from "./StationNameEditor";
+import { supportsStationName } from "./stationName";
 import { KATO_CATALOG, CATALOG_SOURCES } from "./catalog";
 import type { CatalogCategory, CatalogItem } from "./catalogTypes";
 import { CATALOG, useRailway } from "./useRailway";
@@ -156,6 +158,7 @@ export default function App() {
     selectedSpec,
     selection,
     selectedTrack,
+    selectedAccessory,
   } = h;
   const [saveName, setSaveName] = useState(layout.name);
   const [deleteDesignId, setDeleteDesignId] = useState<string | null>(null);
@@ -520,6 +523,14 @@ export default function App() {
                   </label>
                 )}
               </div>
+              {selectedAccessory && supportsStationName(selectedSpec.accessoryType) && (
+                <StationNameEditor
+                  key={selectedAccessory.id}
+                  accessory={selectedAccessory}
+                  accessoryType={selectedSpec.accessoryType}
+                  onApply={h.updateStationName}
+                />
+              )}
               <div className="height-presets">
                 {[0, 40, 80, 120].map((height) => (
                   <button

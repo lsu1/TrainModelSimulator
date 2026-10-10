@@ -31,6 +31,32 @@ function library() {
 }
 
 describe('named design snapshots', () => {
+  it('keeps custom station names independent through saving, reopening, and save-as copies', () => {
+    const working = createLayout('city');
+    working.accessories.find((item) => item.kind === 'a-platform')!.stationName = '品川 Shinagawa';
+    working.accessories.find((item) => item.kind === 'a-station')!.stationName = '新宿';
+    const first = saveDesignSnapshot(empty(), working, 'Tokyo stations', null, false,
+      { id: 'stations', updatedAt: timestamp });
+    working.accessories.find((item) => item.kind === 'a-platform')!.stationName = '京都 Kyoto';
+    expect(first.design.layout.accessories.find((item) => item.kind === 'a-platform')!.stationName).toBe('品川 Shinagawa');
+    const copied = saveDesignSnapshot(first.library, first.design.layout, 'Copied stations', 'stations', true,
+      { id: 'station-copy', updatedAt: timestamp });
+    copied.design.layout.accessories.find((item) => item.kind === 'a-platform')!.stationName = '大阪 Osaka';
+    expect(copied.library.designs[0].layout.accessories.find((item) => item.kind === 'a-platform')!.stationName).toBe('品川 Shinagawa');
+    const stored = storage();
+    persistSavedDesigns(copied.library, null, stored);
+    const reopened = readSavedDesigns(stored);
+    expect(reopened.error).toBeNull();
+    expect(reopened.library.designs.map((design) => design.layout.accessories.find((item) => item.kind === 'a-platform')!.stationName))
+      .toEqual(['品川 Shinagawa', '大阪 Osaka']);
+    expect(reopened.library.designs.map((design) => design.layout.accessories.find((item) => item.kind === 'a-station')!.stationName))
+      .toEqual(['新宿', '新宿']);
+    const opened = parseLayout(reopened.library.designs[0].layout);
+    opened.accessories.find((item) => item.kind === 'a-station')!.stationName = '東京 Tokyo';
+    expect(reopened.library.designs[0].layout.accessories.find((item) => item.kind === 'a-station')!.stationName).toBe('新宿');
+    expect(first.design.layout.accessories.find((item) => item.kind === 'a-station')!.stationName).toBe('新宿');
+  });
+
   it('saves the entire 3D layout independently of the working layout and restores it after reload', () => {
     const working = createLayout('kato-plan02');
     working.carCount = 5;

@@ -359,6 +359,13 @@ h1 { margin: 7px 0 7px; color: #2d4538; font-size: clamp(29px, 3vw, 38px); line-
 .selection-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; margin-top: 10px; }
 .selection-grid label { display: flex; flex-direction: column; gap: 5px; color: #597347; font-size: 11px; min-width: 0; }
 .selection-grid input, .selection-grid select { width: 100%; min-width: 0; min-height: 35px; padding: 5px 7px; border: 1px solid #d3dfc7; border-radius: 6px; background: var(--surface); font-size: 12px; }
+.station-name-editor { margin-top: 14px; padding-top: 12px; border-top: 1px solid #dfe7d6; }
+.station-name-editor label { display: flex; flex-direction: column; gap: 6px; color: #597347; font-size: 12px; }
+.station-name-editor input { width: 100%; min-width: 0; min-height: 39px; padding: 7px 9px; border: 1px solid #d3dfc7; border-radius: 6px; background: var(--surface); font-size: 13px; }
+.station-name-editor p { margin: 6px 0 10px; color: #667b56; font-size: 11px; line-height: 1.5; }
+.station-name-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+.station-name-actions .button { flex: 1; min-height: 35px; padding: 6px 9px; font-size: 11px; white-space: nowrap; }
+.station-name-editor [role="alert"] { color: #9b4d32; }
 .height-presets { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 5px; margin-top: 9px; }
 .height-presets button { min-height: 33px; padding: 4px 2px; font-size: 11px; color: #52723e; border: 1px solid #d4e0c7; border-radius: 5px; background: #fafdf6; }
 .height-presets button:hover, .height-presets button.active { background: #dfeccd; border-color: #9dbd79; }

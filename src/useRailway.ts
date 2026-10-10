@@ -13,6 +13,7 @@ import {
 import type { Endpoint, Track, TrainPosition } from "./track";
 import { STORAGE_KEY, createLayout, loadLayout, parseLayout } from "./layout";
 import type { LayoutData, LayoutPreset, PlacedAccessory } from "./layout";
+import { normalizeStationName, supportsStationName } from "./stationName";
 import { clampTrainSpeed, getTrainCarSpec, getTrainSpec } from "./trains";
 import type { TrainType } from "./trains";
 import { DEFAULT_TRAIN_SPEED, MAX_TRAINSETS, initialTrainPosition, restoreFleet, snapshotFleetLayout, trainSnapshot } from "./fleet";
@@ -712,6 +713,27 @@ export function useRailway() {
       );
     }
   };
+  const updateStationName = (value: string): boolean => {
+    if (!selectedAccessory || !supportsStationName(selectedSpec?.accessoryType)) return false;
+    let stationName: string | undefined;
+    try { stationName = normalizeStationName(value); }
+    catch (error) {
+      notify(error instanceof Error ? error.message : "Choose a valid station name.", true);
+      return false;
+    }
+    if (selectedAccessory.stationName === stationName) return true;
+    const snapshot = currentLayoutSnapshot();
+    rememberCurrentLayout();
+    // A sign edit changes only display metadata. Keep train movement, placement
+    // previews and coupling animations independent of the station name.
+    setLayout({ ...snapshot, accessories: snapshot.accessories.map(accessory => {
+      if (accessory.id !== selectedAccessory.id) return accessory;
+      const { stationName: _oldName, ...piece } = accessory;
+      return stationName === undefined ? piece : { ...piece, stationName };
+    }) });
+    notify(stationName ? `Station name changed to ${stationName}.` : "Station name reset to its default.");
+    return true;
+  };
   const setSwitchState = (id: string, state: "straight" | "branch") => {
     if (!operationAllowsEdit()) return;
     const track = tracks.find((piece) => piece.id === id);
@@ -1318,6 +1340,7 @@ export function useRailway() {
     fileInput,
     selection,
     selectedTrack,
+    selectedAccessory,
     selectedSpec,
     routeLength,
     ends,
@@ -1331,6 +1354,7 @@ export function useRailway() {
     addPiece,
     movePiece,
     updateSelection,
+    updateStationName,
     setSwitchState,
     buildRamp,
     addMatchingPiers,

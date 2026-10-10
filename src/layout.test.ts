@@ -4,6 +4,7 @@ import { LEGACY_STORAGE_KEY, PREVIOUS_STORAGE_KEY, STORAGE_KEY, V3_STORAGE_KEY, 
 import { endpoints, makeStarterLayout, openEndpoints } from './track'
 import { getTrainSpec, TRAIN_TYPES } from './trains'
 import { MAX_TRAINSETS, restoreFleet, snapshotFleetLayout } from './fleet'
+import { MAX_STATION_NAME_LENGTH } from './stationName'
 
 const layout = (): LayoutData => createLayout('compact')
 const accessory = (): PlacedAccessory => ({
@@ -27,6 +28,75 @@ describe('layout file validation', () => {
     expect(original.accessories.length).toBeGreaterThan(0)
     expect(original.tracks.some((track) => track.elevation === 60)).toBe(true)
     expect(parseLayout(JSON.parse(JSON.stringify(original)))).toEqual(original)
+  })
+
+  it('retains custom Japanese and bilingual platform and station names in a version 5 export', () => {
+    const starter = createLayout('city')
+    const current = snapshotFleetLayout(starter, restoreFleet(starter), 'train-1')
+    const original = { ...current, accessories: current.accessories.map((item) => ({
+      ...item,
+      ...(item.kind === 'a-platform' ? { stationName: '品川 Shinagawa' }
+        : item.kind === 'a-station' ? { stationName: '新宿' } : {}),
+    })) }
+    const restored = parseLayout(JSON.parse(JSON.stringify(original)))
+    expect(restored).toEqual(original)
+    expect(restored.version).toBe(5)
+    expect(restored.accessories.find((item) => item.kind === 'a-platform')?.stationName).toBe('品川 Shinagawa')
+    expect(restored.accessories.find((item) => item.kind === 'a-station')?.stationName).toBe('新宿')
+  })
+
+  it('normalizes custom names without changing older accessories or storing blank defaults', () => {
+    const original = createLayout('city')
+    expect(parseLayout(original)).toEqual(original)
+    expect(original.accessories.every((item) => !Object.hasOwn(item, 'stationName'))).toBe(true)
+    const parsed = parseLayout({ ...original, accessories: [
+      { ...original.accessories[0], stationName: '  横浜\n\tYokohama　中央  ' },
+      { ...original.accessories[1], stationName: ' \n　 ' },
+      { ...original.accessories[2], stationName: '  ' },
+    ] })
+    expect(parsed.accessories[0].stationName).toBe('横浜 Yokohama 中央')
+    expect(parsed.accessories[1]).not.toHaveProperty('stationName')
+    expect(parsed.accessories[2]).not.toHaveProperty('stationName')
+    expect(original.accessories[0]).not.toHaveProperty('stationName')
+  })
+
+  it('accepts the station name limit after normalizing whitespace and rejects names beyond it', () => {
+    const original = createLayout('city')
+    const platform = original.accessories[0]
+    const accepted = '駅'.repeat(MAX_STATION_NAME_LENGTH)
+    expect(parseLayout({ ...original, accessories: [{ ...platform, stationName: `  ${accepted}  ` }] })
+      .accessories[0].stationName).toBe(accepted)
+    for (const stationName of ['駅'.repeat(MAX_STATION_NAME_LENGTH + 1), '🚉'.repeat(31)]) {
+      expect(() => parseLayout({ ...original, accessories: [{ ...platform, stationName }] }))
+        .toThrow(/station name.*60 characters/)
+    }
+  })
+
+  it.each([null, 42, true, {}, ['Tokyo']])('rejects malformed imported station names: %j', (stationName) => {
+    const original = createLayout('city')
+    expect(() => parseLayout({ ...original, accessories: [{ ...original.accessories[0], stationName }] }))
+      .toThrow(/station name.*text/)
+  })
+
+  it('rejects nonblank names on accessories that cannot display station signs', () => {
+    const original = createLayout('city')
+    for (const item of KATO_CATALOG.filter((item) => item.category === 'accessory'
+      && item.accessoryType !== 'platform' && item.accessoryType !== 'station')) {
+      expect(() => parseLayout({ ...original, accessories: [{ ...accessory(), kind: item.kind, stationName: '新宿' }] }))
+        .toThrow(/station name.*platform or station/)
+    }
+  })
+
+  it('restores custom station names from the existing autosave key without rewriting storage', () => {
+    const original = createLayout('city')
+    const saved = snapshotFleetLayout({ ...original,
+      accessories: original.accessories.map((item) => item.kind === 'a-platform' ? { ...item, stationName: '京都 Kyoto' } : item),
+    }, restoreFleet(original), 'train-1')
+    const raw = JSON.stringify(saved)
+    const storage = { getItem: vi.fn((key: string) => key === STORAGE_KEY ? raw : null), setItem: vi.fn() }
+    vi.stubGlobal('localStorage', storage)
+    expect(loadLayout()).toEqual(saved)
+    expect(storage.setItem).not.toHaveBeenCalled()
   })
 
   it('normalizes display names and permits an empty railway', () => {

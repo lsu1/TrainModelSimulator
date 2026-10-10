@@ -8,6 +8,7 @@ import { MAX_TRAINSETS } from './fleet';
 import type { TrainSnapshot } from './fleet';
 import type { CouplingGroup } from './couplingTypes';
 import { makeCouplingDemo } from './couplingDemo';
+import { normalizeStationName, supportsStationName } from './stationName';
 
 export interface PlacedAccessory {
   id: string;
@@ -16,6 +17,8 @@ export interface PlacedAccessory {
   y: number;
   angle: number;
   elevation: number;
+  /** Omitted names keep the original platform or station sign. */
+  stationName?: string;
 }
 
 export interface LayoutData {
@@ -155,6 +158,10 @@ export function parseLayout(value: unknown): LayoutData {
     const spec = typeof item.kind === 'string' ? CATALOG.get(item.kind) : undefined;
     const elevation = item.elevation === undefined ? 0 : item.elevation;
     if (!spec || spec.category !== 'accessory' || !validElevation(elevation)) throw new Error(error);
+    const stationName = normalizeStationName(item.stationName);
+    if (stationName !== undefined && !supportsStationName(spec.accessoryType)) {
+      throw new Error('This station name belongs on a platform or station building.');
+    }
     return {
       id: item.id as string,
       kind: spec.kind,
@@ -162,6 +169,7 @@ export function parseLayout(value: unknown): LayoutData {
       y: item.y as number,
       angle: item.angle as number,
       elevation,
+      ...(stationName === undefined ? {} : { stationName }),
     };
   });
 
