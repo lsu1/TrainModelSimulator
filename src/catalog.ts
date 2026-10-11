@@ -9,6 +9,8 @@ const ELEVATED = 'https://unitrack.katomodels.com/products/line_single/elevated_
 const INCLINE_PLAN = 'https://www.katomodels.com/unitrackplan/plan/plan02-1a.pdf'
 const INCLINE_PARTS = 'https://www.katomodels.com/unitrackplan/plan/plan02-1a_partslist.pdf'
 const INCLINE_KEY = 'https://www.katomodels.com/unitrackplan/common_parts_namelist.pdf'
+const PLAN06 = 'https://www.katomodels.com/unitrackplan/plan/plan06-15.pdf'
+const PLAN06_PARTS = 'https://www.katomodels.com/unitrackplan/plan/plan06-15_partslist.pdf'
 const page = (n: number) => `${PDF}#page=${n}`
 const radians = (degrees: number) => degrees * Math.PI / 180
 
@@ -197,6 +199,55 @@ export const KATO_CATALOG: CatalogItem[] = [
   accessory('a-buffer', '20-046', 'Buffer stop', 'Type A buffer from 62 mm bumper track', 'buffer', { length: 14, width: 22, height: 12 }, page(12)),
   accessory('a-crossingGate', '20-027-1', 'Crossing gates', 'Crossing gate and 124 mm rerailer scenery', 'crossingGate', { length: 70, width: 90, height: 30 }, page(10)),
   accessory('a-building', '23-240', 'Roundhouse', 'Three-stall roundhouse kit', 'building', { length: 200, width: 130, height: 70 }, page(17)),
+  // Additional historical components used by plan 06-15. Existing product templates stay unchanged.
+  ...(['L', 'R'] as const).map(hand => straight(`s60${hand.toLowerCase()}`, '20-220/221', 60, `60 mm ${hand.toLowerCase()} turnout auxiliary straight`, {
+    label: `S60${hand}`, sourceUrl: INCLINE_KEY, verification: 'nominal',
+    notes: 'The plan and common parts key identify the handed 60 mm auxiliary pieces supplied with No. 4 turnouts. The rail centerline is straight; the handed roadbed notch is simplified.',
+  })),
+  straight('s62-buffer-a', '20-046', 62, '62 mm type A bumper track', { label: 'S62B-A', sourceUrl: INCLINE_KEY }),
+  straight('s50-buffer-c', '20-048', 50, '50 mm type C bumper track', { label: 'S50B-C', sourceUrl: INCLINE_KEY }),
+  straight('s124-signal', '20-605', 124, '124 mm Japanese three-aspect signal track', { label: 'S124SGL', sourceUrl: INCLINE_KEY }),
+  straight('s124-crossing-s', '20-652/653', 124, '124 mm automatic crossing rail section', { label: 'S124EC-II-S', sourceUrl: PLAN06_PARTS }),
+  straight('s62-sensor', '20-652/653', 62, '62 mm automatic crossing sensor track', { label: 'S62EC-II-S', sourceUrl: PLAN06_PARTS }),
+  straight('x15r-plan06-15', '20-301', 186, 'Plan 06-15 nominal 15° right diamond crossing', {
+    label: 'X15R', category: 'crossing', shape: 'crossing', crossingAngle: radians(15), branchLength: 186 / Math.cos(radians(15)),
+    sourceUrl: PLAN06, verification: 'nominal',
+    notes: 'The plan drawing places the diagonal connectors at the same longitudinal boundaries as the 186 mm main route. This preset-specific nominal secondary route is 186/cos(15°) mm; it does not replace or certify the existing crossing product template.',
+  }),
+  accessory('a-platform-suburban-island', '23-107/120', 'POI-A', 'Suburban island platform A · 248 mm', 'platform', { length: 248, width: 42, height: 49 }, INCLINE_KEY),
+  accessory('a-platform-suburban-island-stairs', '23-108', 'POI-B', 'Suburban island platform B with stairs · 248 mm', 'platform', { length: 248, width: 42, height: 49 }, INCLINE_KEY),
+  accessory('a-platform-suburban-island-end', '23-120', 'POIE-A', 'Short suburban island platform end A · nominal 72 mm', 'platform', { length: 72, width: 42, height: 9 }, INCLINE_KEY),
+  accessory('a-platform-suburban-side', '23-114/121', 'POF-A', 'Suburban side platform A · 248 mm', 'platform', { length: 248, width: 42, height: 49 }, INCLINE_KEY),
+  accessory('a-platform-suburban-side-stairs-left', '23-115', 'POF-BL', 'Suburban side platform B with left stairs · 248 mm', 'platform', { length: 248, width: 42, height: 49 }, INCLINE_KEY),
+  accessory('a-platform-suburban-side-stairs-right', '23-116', 'POF-BR', 'Suburban side platform B with right stairs · 248 mm', 'platform', { length: 248, width: 42, height: 49 }, INCLINE_KEY),
+  accessory('a-platform-suburban-side-end-left', '23-121', 'POFE-AL', 'Short suburban side platform end A left · nominal 72 mm', 'platform', { length: 72, width: 42, height: 9 }, INCLINE_KEY),
+  accessory('a-platform-suburban-side-end-right', '23-121', 'POFE-AR', 'Short suburban side platform end A right · nominal 72 mm', 'platform', { length: 72, width: 42, height: 9 }, INCLINE_KEY),
+  accessory('a-platform-local-p06', '23-130/131', 'PLIF', 'Local open platform · 124 mm', 'platform', { length: 124, width: 24, height: 9 }, INCLINE_KEY),
+  accessory('a-platform-local-p06-slope', '23-130', 'PLIF-S', 'Local platform slope · 40 mm', 'platform', { length: 40, width: 24, height: 9 }, PLAN06_PARTS),
+  accessory('a-platform-local-p06-end-af', '23-130', 'PLIF-AF', 'Local side platform end with crossing board', 'platform', { length: 22, width: 24, height: 9 }, PLAN06_PARTS),
+  accessory('a-platform-local-p06-end-bf', '23-130', 'PLIF-BF', 'Local side platform end without crossing board', 'platform', { length: 22, width: 24, height: 9 }, PLAN06_PARTS),
+  { ...accessory('a-pier-frame-p06', '23-020', '5W', 'Plan 06-15 double-track viaduct frame pier', 'pier', { length: 57, width: 95, height: 60 }, PLAN06_PARTS),
+    supportComponentHeight: 50, supportDeckHeight: 60,
+    notes: 'Plan 06-15 identifies the fixed 5W pier; its 57 × 95 mm footprint is nominally traced from the drawing. The 50 mm component and 60 mm roadbed-bottom datums are nominal visual assumptions, including the attachment structure; the supplied drawing does not dimension assembled heights.' },
+  { ...accessory('a-pier-double-p06', '23-019', 'PIER5', 'Plan 06-15 double-track bridge pier No. 5', 'pier', { length: 24, width: 87, height: 60 }, PLAN06_PARTS),
+    supportComponentHeight: 50, supportDeckHeight: 60,
+    notes: 'Plan 06-15 identifies double-track No. 5 bridge piers; the nominal 24 × 87 mm capsule footprint is traced from its drawing. The 50 mm component height is catalog sourced, but its 60 mm roadbed-bottom datum is a nominal visual assumption including the attachment structure.' },
+  accessory('a-station-deck-248', '23-125/232', 'PLT248-99', 'Elevated station extension deck · 248 × 99 mm', 'building', { length: 248, width: 99, height: 4 }, INCLINE_KEY),
+  accessory('a-station-wall-high-window', '23-125/230', 'PLTW-HA', 'Elevated station sidewall HA · large windows', 'building', { length: 248, width: 3, height: 50 }, INCLINE_KEY),
+  accessory('a-station-wall-high', '23-125/230/231', 'PLTW-HB', 'Elevated station sidewall HB · small windows', 'building', { length: 248, width: 3, height: 50 }, INCLINE_KEY),
+  accessory('a-station-wall-low', '23-125/232', 'PLTW-L', 'Elevated station low sidewall', 'building', { length: 248, width: 3, height: 10 }, INCLINE_KEY),
+  accessory('a-station-wall-end-left', '23-125/232', 'PLTWE1W', 'Elevated station wide left endwall', 'building', { length: 3, width: 66, height: 50 }, INCLINE_KEY),
+  accessory('a-station-wall-end-right', '23-125/232', 'PLTWE2W', 'Elevated station wide right endwall', 'building', { length: 3, width: 66, height: 50 }, INCLINE_KEY),
+  accessory('a-station-p06', '23-125/230', 'SV-T', 'Plan 06-15 elevated station building · 248 mm', 'station', { length: 248, width: 99, height: 50 }, INCLINE_KEY),
+  accessory('a-station-shops-p06', '23-125/231', 'SV-S', 'Plan 06-15 elevated station shops · 124 mm', 'building', { length: 124, width: 99, height: 50 }, INCLINE_KEY),
+  accessory('a-station-local-p06', '23-220', 'SL', 'Local station kit building · 248 × 124 mm', 'station', { length: 248, width: 124, height: 45 }, INCLINE_KEY),
+  accessory('a-station-overtrack', '23-122', 'SOV', 'Suburban overtrack station concourse', 'station', { length: 149, width: 124, height: 70 }, INCLINE_KEY),
+  accessory('a-station-overtrack-extension', '23-123', 'SOV-EX', 'Suburban overtrack station extension and platform stairs', 'building', { length: 149, width: 66, height: 70 }, INCLINE_KEY),
+  accessory('a-station-overtrack-stairs-right', '23-123', 'SOV-SR', 'Suburban overtrack station right stairs', 'building', { length: 186, width: 40, height: 70 }, INCLINE_KEY),
+  accessory('a-train-shed', '23-300', 'TW', 'Double-track train shed · 186 mm', 'building', { length: 186, width: 96, height: 55 }, INCLINE_KEY),
+  accessory('a-auto-crossing-main', '20-652', 'S124EC-II-M', 'Automatic crossing main gate assembly', 'crossingGate', { length: 70, width: 35, height: 30 }, PLAN06_PARTS),
+  accessory('a-auto-crossing-opposite', '20-652', 'S124EC-II-O', 'Automatic crossing opposite gate assembly', 'crossingGate', { length: 70, width: 35, height: 30 }, PLAN06_PARTS),
+  accessory('a-auto-crossing-slope', '20-652', 'S124EC-II-SL', 'Automatic crossing road approach slope', 'building', { length: 70, width: 30, height: 5 }, PLAN06_PARTS),
 ]
 
 export const CATALOG_SOURCES: { title: string; url: string; note?: string }[] = [
@@ -212,6 +263,9 @@ export const CATALOG_SOURCES: { title: string; url: string; note?: string }[] = 
   { title: 'KATO M1/M2 starter sets', url: 'https://www.katomodels.com/product/n/m1_m2', note: 'Current starter-set contents and track identity for the official M1 + V2 incline plan.' },
   { title: 'KATO V2 single-track viaduct set', url: 'https://www.katomodels.com/product/n/v2_set', note: 'Current incline and elevated-track set contents. Modeling an individual support height does not verify its assembled roadbed datum.' },
   { title: 'KATO USA UNITRACK', url: 'https://katousa.com/unitrack/', note: 'Official track system introduction and current catalog links.' },
+  { title: 'KATO official interwoven Shinkansen and conventional-line plan 06-15', url: PLAN06, note: 'Track arrangement for 新干线与在来线交错运行; the upper-right surplus-parts block is excluded from the preset.' },
+  { title: 'KATO plan 06-15 parts list', url: PLAN06_PARTS, note: 'Retail-package contents and historical component identities. Platform-set rows print 20-120/121; the common key identifies their correct 23-120/121 codes.' },
+  { title: 'KATO plan 06-15 component key', url: INCLINE_KEY, note: 'Drawing labels, historical station/platform codes and handed turnout auxiliaries. The supplied plan and key disagree on HA/HB wall descriptions; this catalog follows the key.' },
 ]
 
 /** Only trackElevation is a confirmed support datum; pier height alone is insufficient. */
@@ -234,6 +288,10 @@ export const KATO_SUPPORT_DATA: CatalogSupport[] = [
   ...KATO_CATALOG.filter(item => item.kind.startsWith('a-pier-incline-') || item.kind === 'a-incline-spacer').map(item => ({
     kind: item.kind, pierHeight: item.supportComponentHeight!, trackElevation: item.supportDeckHeight,
     verified: false, sourceUrl: ELEVATED, notes: item.notes,
+  })),
+  ...KATO_CATALOG.filter(item => item.kind === 'a-pier-frame-p06' || item.kind === 'a-pier-double-p06').map(item => ({
+    kind: item.kind, pierHeight: item.supportComponentHeight!, trackElevation: item.supportDeckHeight,
+    verified: false, sourceUrl: PLAN06_PARTS, notes: item.notes,
   })),
 ]
 

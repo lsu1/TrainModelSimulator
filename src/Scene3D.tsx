@@ -287,6 +287,38 @@ function makeTrack(track: Track, library: ModelLibrary): THREE.Group {
     box(feeder, library, 7, 2.2, 3, 0, 2.4, -17, '#eceadf');
     box(feeder, library, 3.5, .6, 3.5, 0, 4.6, 0, '#5b645a'); group.add(feeder);
   }
+  if (track.kind === 's124-signal') {
+    const p = paths[0].pointAt(paths[0].length / 2);
+    const signal = new THREE.Group(); signal.position.copy(pose(p, track, 0)); setTangent(signal, p.angle, p.slope);
+    // Straight rail geometry is unchanged by bend; it records which side of
+    // this handed factory signal faces the outside of the adjacent running line.
+    signal.position.x += Math.sin(p.angle) * 21 * track.bend; signal.position.z -= Math.cos(p.angle) * 21 * track.bend;
+    box(signal, library, 7, 2, 7, 0, 1, 0, '#bfc4b8');
+    cylinder(signal, library, 1, 36, 0, 18, 0, '#78867c');
+    box(signal, library, 2.5, 10, 4, 0, 37, 0, '#252e2b');
+    for (let index = 0; index < 3; index++) {
+      const light = new THREE.Mesh(library.sphere, library.material(index === 2 ? '#7eaf4a' : index === 0 ? '#793e37' : '#b6923f'));
+      light.position.set(-1.6, 39.5 - index * 2.5, 0); light.scale.set(.4, 1, 1); signal.add(light);
+      box(signal, library, 1.2, .4, 2.5, -2, 40.7 - index * 2.5, 0, '#303a32');
+    }
+    box(signal, library, 3, 5, 3, 0, 4.5, 3, '#59675c'); group.add(signal);
+  } else if (track.kind === 's62-buffer-a' || track.kind === 's50-buffer-c') {
+    const p = paths[0].pointAt(paths[0].length - 1);
+    const stop = new THREE.Group(); stop.position.copy(pose(p, track, 0)); setTangent(stop, p.angle, p.slope);
+    if (track.kind === 's62-buffer-a') {
+      for (const side of [-1, 1]) {
+        beam(stop, library, new THREE.Vector3(-4, 1, side * 5), new THREE.Vector3(1, 10, side * 5), 1.5, '#4a5650');
+        beam(stop, library, new THREE.Vector3(5, 1, side * 5), new THREE.Vector3(1, 10, side * 5), 1.5, '#4a5650');
+      }
+      box(stop, library, 2.2, 4, 14, 1, 10, 0, '#9e5147');
+    } else {
+      // The type C stopper is an earth-colored mound, not a metal A-frame.
+      box(stop, library, 8, 3, 17, 0, 4.5, 0, '#827761');
+      box(stop, library, 6, 3, 14, 1, 7.5, 0, '#95856c');
+      box(stop, library, 4, 2, 10, 2, 10, 0, '#a09175');
+    }
+    group.add(stop);
+  }
 
   // The 33 mm double-track formation has a continuous slab between its lanes.
   if ((item.lanes ?? 1) > 1 && paths.length > 1 && item.shape !== 'scissors') {
@@ -474,7 +506,171 @@ function makeAccessory(accessory: PlacedAccessory, library: ModelLibrary): THREE
   const height = item.footprint?.height ?? 50;
   const kind = item.accessoryType ?? 'building';
   const concrete = '#c4c6ba', dark = '#56675c', roof = '#748677';
-  if (accessory.kind === 'a-footbridge') {
+  // Plan 06-15 adds fixed scenery components. Their datums and open spaces
+  // mirror the dedicated clearance solids; existing accessories keep their
+  // original models below.
+  if (accessory.kind === 'a-station-deck-248') {
+    // Accessory elevation is the rail-bed datum, not the bottom of this plate.
+    box(group, library, length, 4, width, 0, -2, 0, '#c9ccbf');
+    for (const z of [-width / 3, 0, width / 3]) box(group, library, length - 4, .6, 2, 0, -3.7, z, '#aeb7a6');
+  } else if (accessory.kind.startsWith('a-station-wall-')) {
+    const end = /-end-/.test(accessory.kind);
+    const paneWidth = end ? length : width;
+    box(group, library, length, height, width, 0, height / 2, 0, '#c6cbc2');
+    if (!/-low$/.test(accessory.kind)) {
+      if (end) {
+        box(group, library, paneWidth + .2, 2, width, 0, height - 1, 0, '#89968a');
+      } else {
+        const largeWindow = accessory.kind === 'a-station-wall-high-window';
+        const windowHeight = largeWindow ? height * .62 : height * .34;
+        for (let x = -length / 2 + 13; x < length / 2 - 8; x += 31) {
+          for (const side of [-1, 1]) box(group, library, 25, windowHeight, .2, x, height * .57, side * (width / 2 + .05), '#73958d', .3);
+        }
+        box(group, library, length, 2, width + .5, 0, height - 1, 0, '#89968a');
+      }
+    }
+  } else if (accessory.kind === 'a-pier-frame-p06' || accessory.kind === 'a-pier-double-p06') {
+    const component = item.supportComponentHeight ?? 50, deck = item.supportDeckHeight ?? 60;
+    const columnOffset = width / 2 - 7;
+    for (const z of [-columnOffset, columnOffset]) {
+      box(group, library, length, 4, 13, 0, 2, z, '#b7bbb0');
+      box(group, library, Math.max(8, length * .46), component - 7, 9, 0, 4 + (component - 7) / 2, z, '#bfc3b8');
+    }
+    box(group, library, length, 3, width, 0, component - 1.5, 0, '#c9ccbf');
+    box(group, library, length - 4, deck - component - 2, width - 4, 0, component + (deck - component - 2) / 2, 0, '#969e92');
+    box(group, library, length, 2, width, 0, deck - 1, 0, '#c9ccbf');
+  } else if (accessory.kind === 'a-train-shed') {
+    // Both rail entrances stay open; each side wall and the roof is still a
+    // real obstruction if the shed is moved across another route.
+    for (const side of [-1, 1]) {
+      box(group, library, length, 50, 2, 0, 25, side * (width / 2 - 1), '#c2c8be');
+      for (let x = -length / 2 + 16; x < length / 2 - 8; x += 31) box(group, library, 23, 13, .25, x, 29, side * (width / 2 + .05), '#718f89', .3);
+      const roofPanel = box(group, library, length + 2, 2, width / 2, 0, 53, side * width / 4, '#6d8175', .15);
+      roofPanel.rotation.x = side * .08;
+    }
+    box(group, library, length + 2, 1.5, 2, 0, 54.5, 0, '#89968a');
+    for (const x of [-length / 2 + 1, length / 2 - 1]) box(group, library, 2, 2, width - 4, x, 51, 0, '#687d6e');
+  } else if (accessory.kind === 'a-station-overtrack' || accessory.kind === 'a-station-overtrack-extension') {
+    const deck = 52, top = Math.max(deck + 12, height);
+    box(group, library, length, 4, width, 0, deck, 0, '#c1c9bf');
+    // The concourse is supported from the island platform. Corner columns
+    // would stand in the very routes this station is designed to cross.
+    const platformZ = accessory.kind === 'a-station-overtrack' ? 0 : -width / 3;
+    for (const x of [-length / 2 + 2, length / 2 - 2]) box(group, library, 3, 50, 3, x, 25, platformZ, '#aebbb0');
+    if (accessory.kind === 'a-station-overtrack-extension') {
+      const steps = 12, run = length / 2;
+      for (const side of [-1, 1]) for (let index = 0; index < steps; index++) {
+        const stepHeight = 9 + 45 * (index + 1) / steps;
+        box(group, library, run / steps + .1, stepHeight, 20, side * (length / 2 - (index + .5) * run / steps), stepHeight / 2, platformZ, '#c1c9bf');
+      }
+    }
+    for (const side of [-1, 1]) {
+      box(group, library, length, top - 54, 1.5, 0, (top + 54) / 2, side * (width / 2 - .75), '#b8c4bc');
+      for (let x = -length / 2 + 12; x < length / 2 - 8; x += 24) box(group, library, 18, 9, .25, x, top - 7, side * (width / 2 + .05), '#759b95', .3);
+    }
+    for (const side of [-1, 1]) box(group, library, 1.5, top - 54, width, side * (length / 2 - .75), (top + 54) / 2, 0, '#b8c4bc');
+    box(group, library, length + 2, 2, width + 2, 0, top + 1, 0, '#70877d', .2);
+    if (accessory.kind === 'a-station-overtrack') {
+      const name = normalizeStationName(accessory.stationName) ?? defaultStationName('station');
+      sign(group, Math.min(length - 12, 45), 8, 0, top - 7, -width / 2 - .3, name).name = 'station-name-sign';
+      group.userData.stationName = name;
+    }
+  } else if (accessory.kind === 'a-station-overtrack-stairs-right') {
+    const run = length - 30, steps = 16, deck = 54;
+    for (let index = 0; index < steps; index++) {
+      const stepHeight = 9 + (deck - 9) * (index + 1) / steps;
+      box(group, library, run / steps + .1, stepHeight, width - 4, -length / 2 + (index + .5) * run / steps, stepHeight / 2, 0, '#c1c9bf');
+    }
+    box(group, library, 30, deck, width, length / 2 - 15, deck / 2, 0, '#c1c9bf');
+    for (const side of [-1, 1]) {
+      beam(group, library, new THREE.Vector3(-length / 2, 17, side * (width / 2 - 1)), new THREE.Vector3(length / 2 - 30, deck + 8, side * (width / 2 - 1)), .8, '#718779');
+      box(group, library, 30, 1, 1, length / 2 - 15, deck + 8, side * (width / 2 - 1), '#718779');
+    }
+    box(group, library, 33, 2, width + 2, length / 2 - 15, height - 1, 0, '#70877d', .2);
+  } else if (accessory.kind === 'a-platform-suburban-island-end') {
+    // The short end uses its own nine-millimetre datum and a nominal tapered
+    // nose. Local negative X points outward, away from the adjoining platform.
+    const taperedSlab = (wide: number, tip: number, bottom: number, top: number, color: string) => {
+      const outline = new THREE.Shape();
+      outline.moveTo(-length / 2, -tip / 2);
+      outline.lineTo(length / 2, -wide / 2);
+      outline.lineTo(length / 2, wide / 2);
+      outline.lineTo(-length / 2, tip / 2);
+      outline.closePath();
+      const geometry = new THREE.ExtrudeGeometry(outline, { depth: top - bottom, bevelEnabled: false, steps: 1 });
+      geometry.rotateX(Math.PI / 2);
+      const mesh = new THREE.Mesh(geometry, library.material(color));
+      mesh.position.y = top;
+      mesh.castShadow = mesh.receiveShadow = true;
+      group.add(mesh);
+    };
+    taperedSlab(width - 2, 6, 0, height - .7, concrete);
+    taperedSlab(width, 8, height - .7, height, '#d9d8c9');
+    for (const side of [-1, 1]) beam(group, library,
+      new THREE.Vector3(-length / 2 + 1, height + .1, side * 2.5),
+      new THREE.Vector3(length / 2 - 1, height + .1, side * (width / 2 - 1.5)), 1, '#d8c873', .2);
+    const name = normalizeStationName(accessory.stationName);
+    if (name) {
+      const signWidth = Math.min(24, length / 3), signX = length / 4;
+      for (const side of [-1, 1]) box(group, library, 1.2, 11, 1.2, signX + side * signWidth * .38, height + 5.5, 0, dark, .2);
+      sign(group, signWidth, 8, signX, height + 13, -1, name).name = 'station-name-sign';
+      group.userData.stationName = name;
+    }
+  } else if (accessory.kind.startsWith('a-platform-local-p06')) {
+    const slope = accessory.kind === 'a-platform-local-p06-slope';
+    if (slope) {
+      for (let index = 0; index < 8; index++) {
+        const stepHeight = height * (index + 1) / 8;
+        box(group, library, length / 8 + .1, stepHeight, width, -length / 2 + (index + .5) * length / 8, stepHeight / 2, 0, concrete);
+      }
+    } else {
+      box(group, library, length, height, width, 0, height / 2, 0, concrete);
+      for (const side of [-1, 1]) box(group, library, length - 1, .2, 1.5, 0, height + .1, side * (width / 2 - 1.2), '#d8c873');
+      if (accessory.kind === 'a-platform-local-p06') {
+        for (const x of [-length / 4, length / 4]) {
+          box(group, library, 14, 1.4, 4, x, height + 4.5, 0, '#788467');
+          for (const dx of [-4, 4]) box(group, library, 1, 4, 3, x + dx, height + 2, 0, '#56675c');
+        }
+      }
+    }
+    const name = normalizeStationName(accessory.stationName);
+    if (name) {
+      const signWidth = Math.min(35, length - 2), signBase = slope ? height / 2 : height;
+      for (const side of [-1, 1]) box(group, library, 1.2, 11, 1.2, side * signWidth * .38, signBase + 5.5, 0, dark, .2);
+      sign(group, signWidth, 8, 0, signBase + 13, -1, name).name = 'station-name-sign';
+      group.userData.stationName = name;
+    }
+  } else if (accessory.kind === 'a-station-p06' || accessory.kind === 'a-station-local-p06') {
+    const bodyHeight = height - 6;
+    box(group, library, length, bodyHeight, width, 0, bodyHeight / 2, 0, '#d5d3c4');
+    for (const side of [-1, 1]) for (let x = -length / 2 + 14; x < length / 2 - 9; x += 31) box(group, library, 22, 14, .25, x, bodyHeight * .6, side * (width / 2 + .05), '#78998f', .3);
+    box(group, library, length + 2, 3, width + 2, 0, height - 1.5, 0, accessory.kind === 'a-station-local-p06' ? '#796d59' : '#76857b');
+    const name = normalizeStationName(accessory.stationName) ?? defaultStationName('station');
+    sign(group, Math.min(length - 12, 45), 8, 0, bodyHeight - 8, -width / 2 - .3, name).name = 'station-name-sign';
+    group.userData.stationName = name;
+  } else if (accessory.kind === 'a-auto-crossing-main' || accessory.kind === 'a-auto-crossing-opposite') {
+    const side = accessory.kind === 'a-auto-crossing-main' ? 1 : -1;
+    const x = side * length * .34, z = side * (width / 2 - 3);
+    box(group, library, length, 2, width, 0, 1, 0, '#a7aaa1');
+    for (const edge of [-1, 1]) box(group, library, .6, .2, width, edge * (length / 2 - 6), 2.1, 0, '#e3dfc7');
+    cylinder(group, library, 1.2, 23, x, 13, z, '#ddba42');
+    for (let h = 5; h < 24; h += 5) cylinder(group, library, 1.26, 2.6, x, h, z, '#343b31');
+    box(group, library, 8, 3.5, 2, x, 22, z, '#3f4437');
+    for (const dx of [-2.4, 2.4]) {
+      const lamp = new THREE.Mesh(library.sphere, library.material('#b13f3a'));
+      lamp.position.set(x + dx, 22, z - side * 1.3); lamp.scale.set(1.1, 1.1, .5); group.add(lamp);
+    }
+    const barrierLength = width - 6;
+    box(group, library, 1.3, 1.5, barrierLength, x, 7, z - side * barrierLength / 2, '#d7b244');
+    for (let step = 0; step < barrierLength; step += 5) box(group, library, 1.35, 1.6, 2.3, x, 7, z - side * step, '#353b31');
+    beam(group, library, new THREE.Vector3(x - 3.5, 28, z), new THREE.Vector3(x + 3.5, 32, z), .9, '#e4e0bc');
+    beam(group, library, new THREE.Vector3(x - 3.5, 32, z), new THREE.Vector3(x + 3.5, 28, z), .9, '#e4e0bc');
+  } else if (accessory.kind === 'a-auto-crossing-slope') {
+    for (let index = 0; index < 6; index++) {
+      const stepHeight = height * (index + 1) / 6;
+      box(group, library, length, stepHeight, width / 6 + .1, 0, stepHeight / 2, -width / 2 + (index + .5) * width / 6, '#a4a99f');
+    }
+  } else if (accessory.kind === 'a-footbridge') {
     const span = width, deck = Math.min(37, height - 13);
     box(group, library, 21, 3, span, 0, deck, 0, '#bfc5b7');
     box(group, library, 23, 2, span + 5, 0, height, 0, '#637e70', .25);
@@ -499,8 +695,11 @@ function makeAccessory(accessory: PlacedAccessory, library: ModelLibrary): THREE
   } else if (kind === 'platform' || kind === 'station') {
     const customStationName = normalizeStationName(accessory.stationName);
     const stationName = customStationName ?? defaultStationName(kind);
-    box(group, library, length, 12, width, 0, 6, 0, concrete);
-    box(group, library, length, .7, width - 2, 0, 12.3, 0, '#d9d8c9');
+    const suburban = accessory.kind.startsWith('a-platform-suburban-');
+    // The suburban platform cap overhangs its inset foundation, leaving the
+    // neighboring KATO ballast flanges clear at the normal 66 mm rail spacing.
+    box(group, library, length, 12, suburban ? width - 2 : width, 0, 6, 0, concrete);
+    box(group, library, length, .7, suburban ? width : width - 2, 0, 12.3, 0, '#d9d8c9');
     for (const side of [-1, 1]) {
       box(group, library, length - 2, .3, 2.5, 0, 12.9, side * (width / 2 - 2), '#d8c873');
       box(group, library, length - 3, .15, .55, 0, 13.2, side * (width / 2 - 4), '#e9ece1');
@@ -515,15 +714,16 @@ function makeAccessory(accessory: PlacedAccessory, library: ModelLibrary): THREE
     }
     if (!/end|open|unroofed|extension/i.test(item.name) || kind === 'station') {
       const roofWidth = Math.max(22, width - 8), roofLength = length - 12;
+      const roofRise = suburban ? Math.max(0, height - 37) : 0;
       for (let x = -roofLength / 2 + 15; x <= roofLength / 2; x += 62) {
-        for (const side of [-1, 1]) box(group, library, 1.7, 21, 1.7, x, 23, side * roofWidth / 3, dark, .2);
-        box(group, library, 2, 2.1, roofWidth, x, 33.5, 0, dark, .25);
+        for (const side of [-1, 1]) box(group, library, 1.7, 21 + roofRise, 1.7, x, 23 + roofRise / 2, side * roofWidth / 3, dark, .2);
+        box(group, library, 2, 2.1, roofWidth, x, 33.5 + roofRise, 0, dark, .25);
       }
-      const left = box(group, library, roofLength + 5, 1.5, roofWidth / 2 + 2, 0, 35, -roofWidth / 4, roof, .15); left.rotation.x = -.08;
-      const right = box(group, library, roofLength + 5, 1.5, roofWidth / 2 + 2, 0, 35, roofWidth / 4, roof, .15); right.rotation.x = .08;
-      for (let x = -roofLength / 2; x < roofLength / 2; x += 6) box(group, library, .7, .3, roofWidth + 3, x, 35.7, 0, '#8a9a8b', .15);
-      box(group, library, 28, .8, 1.3, 0, 32, 0, '#e8e7d4');
-      sign(group, Math.min(35, length / 3), 8, 0, 26, -1, stationName).name = 'station-name-sign';
+      const left = box(group, library, roofLength + 5, 1.5, roofWidth / 2 + 2, 0, 35 + roofRise, -roofWidth / 4, roof, .15); left.rotation.x = -.08;
+      const right = box(group, library, roofLength + 5, 1.5, roofWidth / 2 + 2, 0, 35 + roofRise, roofWidth / 4, roof, .15); right.rotation.x = .08;
+      for (let x = -roofLength / 2; x < roofLength / 2; x += 6) box(group, library, .7, .3, roofWidth + 3, x, 35.7 + roofRise, 0, '#8a9a8b', .15);
+      box(group, library, 28, .8, 1.3, 0, 32 + roofRise, 0, '#e8e7d4');
+      sign(group, Math.min(35, length / 3), 8, 0, 26 + roofRise, -1, stationName).name = 'station-name-sign';
       group.userData.stationName = stationName;
     } else if (customStationName) {
       // Unroofed/end platforms keep their original appearance until named.

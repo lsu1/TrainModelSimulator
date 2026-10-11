@@ -11,7 +11,7 @@ import {
   trackLength,
 } from "./track";
 import type { Endpoint, Track, TrainPosition } from "./track";
-import { STORAGE_KEY, createLayout, loadLayout, parseLayout } from "./layout";
+import { STORAGE_KEY, createLayout, getLayoutPieceLimit, loadLayout, parseLayout } from "./layout";
 import type { LayoutData, LayoutPreset, PlacedAccessory } from "./layout";
 import { normalizeStationName, supportsStationName } from "./stationName";
 import { clampTrainSpeed, getTrainCarSpec, getTrainSpec } from "./trains";
@@ -185,6 +185,7 @@ export function useRailway() {
     0,
   );
   const pieceCount = tracks.length + accessories.length;
+  const pieceLimit = getLayoutPieceLimit(layout.sourcePlan);
   const filtered = useMemo(
     () =>
       KATO_CATALOG.filter((piece) =>
@@ -581,8 +582,8 @@ export function useRailway() {
     if (!operationAllowsEdit()) return;
     const spec = CATALOG.get(kind);
     if (!spec) return;
-    if (pieceCount >= 300) {
-      notify("Your railway has reached 300 pieces. Remove one to make room.");
+    if (pieceCount >= pieceLimit) {
+      notify(`Your railway has reached ${pieceLimit} pieces. Remove one to make room.`);
       return;
     }
     const id = crypto.randomUUID();
@@ -771,9 +772,9 @@ export function useRailway() {
       notify(invalid.message, true);
       return;
     }
-    if (pieceCount + plan.tracks.length + plan.accessories.length > 300) {
+    if (pieceCount + plan.tracks.length + plan.accessories.length > pieceLimit) {
       notify(
-        "There is not enough room in the 300-piece limit for this ramp.",
+        `There is not enough room in the ${pieceLimit}-piece limit for this ramp.`,
         true,
       );
       return;
@@ -845,7 +846,7 @@ export function useRailway() {
       );
       return;
     }
-    if (pieceCount + additions.length > 300) {
+    if (pieceCount + additions.length > pieceLimit) {
       notify("Remove a piece before adding more piers.", true);
       return;
     }

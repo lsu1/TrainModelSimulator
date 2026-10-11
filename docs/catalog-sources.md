@@ -1,6 +1,6 @@
 # KATO N scale library: sources and geometry
 
-Research checked on 7 October 2026. The library contains **143 placeable entries**: 17 single-track straights, 19 single-track curves, 5 turnout/crossover entries, 3 diamond crossings, 16 double-track or slab pieces, 15 viaduct pieces, 29 bridge color/shape variants, and 39 scenery accessories. The physical-planning audit retains 91 entries with verified principal catalog dimensions and marks 52 entries nominal where a footprint, support datum, connector template, or banking transition remains uncertain.
+Research checked on 11 October 2026. The library contains **181 placeable entries**, including the original 143 entries and 38 historical track/scenery templates added for [KATO plan 06-15](kato-plan06-15.md). The physical-planning audit retains 96 entries with verified principal catalog dimensions and marks 85 entries nominal where a footprint, support datum, connector template, or banking transition remains uncertain.
 
 Every entry identifies its KATO product code and links to the product page or the exact catalog page used. These are individual placeable pieces or scenery models, rather than complete retail packs. For example, both a 29 mm and a 45.5 mm adjustment straight belong to assortment **20-091**; selecting either entry places one piece. Retail stock and pack quantities are not tracked.
 
@@ -19,6 +19,8 @@ Every entry identifies its KATO product code and links to the product page or th
 11. [KATO USA FAQ](https://katousa.com/faq/), “Minimum Turning Radii (HO and N) for Kato”: its general N scale factory-coupler design reference is R249 **ground-level** track. Smaller curves and viaduct track require individual evaluation. This is not an E235-specific minimum-radius statement.
 
 During the initial network restriction, a [public mirror of the track PDF](https://raw.githubusercontent.com/hrefcl/kato-unitrack/main/data/source/us_unitrack_1-40_20251028.pdf) was useful for research. After access became available, the PDF was downloaded directly from KATO USA. Its SHA-256 hash matched the mirrored document exactly. The mirror repository's AI-extracted JSON was used to locate candidate pages only; catalog identity and dimensions were checked against the actual PDF and official product pages.
+
+The historical plan 06-15 additions use its [official drawing](https://www.katomodels.com/unitrackplan/plan/plan06-15.pdf), [parts list](https://www.katomodels.com/unitrackplan/plan/plan06-15_partslist.pdf), and [common component-name key](https://www.katomodels.com/unitrackplan/common_parts_namelist.pdf). These separate templates retain the older platform ends, station parts, shed, signals, bumpers, and crossing components without replacing the current catalog entries.
 
 ## Measurements and simplified models
 

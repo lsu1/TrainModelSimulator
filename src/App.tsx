@@ -262,6 +262,34 @@ export default function App() {
                 </a>
               </div>
             )}
+            {layout.sourcePlan === "kato-plan06-15" && (
+              <div className="layout-plan-info">
+                <div>
+                  <p>KATO plan 06-15 · elevated and ground-level railway routes.</p>
+                </div>
+                <a
+                  href="https://www.katomodels.com/unitrackplan/plan/plan06-15.pdf"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  View KATO plan <ChevronRight size={14} />
+                </a>
+                <a
+                  href="https://www.katomodels.com/unitrackplan/plan/plan06-15_partslist.pdf"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Parts list <ChevronRight size={14} />
+                </a>
+                <a
+                  href="https://www.katomodels.com/unitrackplan/common_parts_namelist.pdf"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Parts key <ChevronRight size={14} />
+                </a>
+              </div>
+            )}
             <RailwayCockpit h={h}>
               {(selectTrain) => (
                 <Scene3D
@@ -912,6 +940,12 @@ export default function App() {
                         text: "An empty world. Drag, connect, and build it your way.",
                         icon: Plus,
                       },
+                      {
+                        kind: "kato-plan06-15",
+                        title: "新干线与在来线交错运行",
+                        text: "KATO plan 06-15 · an elevated double-track line, local routes, stations and a yard.",
+                        icon: Layers3,
+                      },
                     ] as const
                   ).map((preset) => (
                     <button
@@ -952,7 +986,7 @@ export default function App() {
                 <div className="reference-list">
                   {CATALOG_SOURCES.map((source) => (
                     <a
-                      key={source.url}
+                      key={`${source.title}:${source.url}`}
                       href={source.url}
                       target="_blank"
                       rel="noreferrer"

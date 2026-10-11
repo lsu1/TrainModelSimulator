@@ -195,8 +195,9 @@ function localRoutes(track: Track): LocalRoute[] {
     ]
     case 'crossing': {
       const angle = (spec.crossingAngle ?? Math.PI / 2) * track.bend
-      return [line(0, 0, 1, spec.length), line(1, 2, 3, spec.length,
-        spec.length / 2 * (1 - Math.cos(angle)), -spec.length / 2 * Math.sin(angle), angle)]
+      const branchLength = spec.branchLength ?? spec.length
+      return [line(0, 0, 1, spec.length), line(1, 2, 3, branchLength,
+        spec.length / 2 - branchLength / 2 * Math.cos(angle), -branchLength / 2 * Math.sin(angle), angle)]
     }
     case 'doubleStraight': return [line(0, 0, 1, spec.length, 0, -spacing / 2), line(1, 2, 3, spec.length, 0, spacing / 2)]
     case 'doubleCurve': {

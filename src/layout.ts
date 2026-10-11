@@ -2,6 +2,7 @@ import { KATO_CATALOG } from './catalog';
 import { endpoints, makeCityLayout, makeStarterLayout, makeViaductLayout, pathsFor } from './track';
 import type { Track, TrainPosition } from './track';
 import { makeKatoPlan02 } from './katoPlan';
+import { makeKatoPlan06 } from './katoPlan06';
 import { clampTrainSpeed, getTrainSpec, TRAIN_TYPES } from './trains';
 import type { TrainType } from './trains';
 import { MAX_TRAINSETS } from './fleet';
@@ -36,7 +37,7 @@ export interface LayoutData {
   /** Stable compatible partnerships; animations and running commands are never saved. */
   couplings?: CouplingGroup[];
   /** Source drawing retained when a preset is saved, edited, or exported. */
-  sourcePlan?: 'kato-plan02-1a';
+  sourcePlan?: 'kato-plan02-1a' | 'kato-plan06-15';
 }
 
 export const STORAGE_KEY = 'little-railways-layout-v5';
@@ -48,6 +49,11 @@ export const LAYOUT_STORAGE_KEYS = [STORAGE_KEY, PREVIOUS_STORAGE_KEY, V3_STORAG
 const MAX_PIECES = 300;
 const MAX_SUPPORTED_SPEED = Math.max(...TRAIN_TYPES.map(type => getTrainSpec(type).maxServiceSpeed));
 const CATALOG = new Map(KATO_CATALOG.map((item) => [item.kind, item]));
+
+/** The large plan 06-15 needs room for its tracks and individually placed scenery. */
+export function getLayoutPieceLimit(sourcePlan?: LayoutData['sourcePlan']): number {
+  return sourcePlan === 'kato-plan06-15' ? 600 : MAX_PIECES;
+}
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -75,7 +81,8 @@ export function parseLayout(value: unknown): LayoutData {
   if (typeof carCount !== 'number' || !Number.isInteger(carCount) || carCount < 3 || carCount > 11) {
     throw new Error('Choose a train with 3 to 11 cars.');
   }
-  if (candidate.sourcePlan !== undefined && candidate.sourcePlan !== 'kato-plan02-1a') {
+  if (candidate.sourcePlan !== undefined
+    && candidate.sourcePlan !== 'kato-plan02-1a' && candidate.sourcePlan !== 'kato-plan06-15') {
     throw new Error('This layout has an unrecognized source plan.');
   }
   if (candidate.trainType !== undefined
@@ -83,8 +90,9 @@ export function parseLayout(value: unknown): LayoutData {
       || !(TRAIN_TYPES as readonly string[]).includes(candidate.trainType))) {
     throw new Error('This layout has an unrecognized train. Choose E235, E5, E6, or E7.');
   }
-  if (candidate.tracks.length + accessoriesData.length > MAX_PIECES) {
-    throw new Error(`This railway has more than ${MAX_PIECES} pieces.`);
+  const pieceLimit = getLayoutPieceLimit(candidate.sourcePlan);
+  if (candidate.tracks.length + accessoriesData.length > pieceLimit) {
+    throw new Error(`This railway has more than ${pieceLimit} pieces.`);
   }
 
   const ids = new Set<string>();
@@ -280,15 +288,17 @@ export function parseLayout(value: unknown): LayoutData {
     ...(trains === undefined ? {} : { trains }),
     ...(candidate.version >= 3 && candidate.selectedTrainId !== undefined ? { selectedTrainId: candidate.selectedTrainId as string } : {}),
     ...(couplings === undefined ? {} : { couplings }),
-    ...(candidate.sourcePlan === 'kato-plan02-1a' ? { sourcePlan: candidate.sourcePlan } : {}),
+    ...(candidate.sourcePlan === 'kato-plan02-1a' || candidate.sourcePlan === 'kato-plan06-15'
+      ? { sourcePlan: candidate.sourcePlan } : {}),
   };
 }
 
-export type LayoutPreset = 'city' | 'viaduct' | 'empty' | 'compact' | 'kato-plan02' | 'coupling-demo';
+export type LayoutPreset = 'city' | 'viaduct' | 'empty' | 'compact' | 'kato-plan02' | 'kato-plan06-15' | 'coupling-demo';
 
 /** Ready-to-play scenery keeps its catalog identity when saved or exported. */
 export function createLayout(kind: LayoutPreset = 'city'): LayoutData {
   if (kind === 'kato-plan02') return parseLayout(makeKatoPlan02());
+  if (kind === 'kato-plan06-15') return parseLayout(makeKatoPlan06());
   if (kind === 'coupling-demo') return parseLayout(makeCouplingDemo());
   const tracks = kind === 'city' ? makeCityLayout()
     : kind === 'viaduct' ? makeViaductLayout()

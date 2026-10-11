@@ -33,7 +33,7 @@ export const CLEARANCE_ASSUMPTIONS = {
 } as const
 
 const ITEM_BY_KIND = new Map(KATO_CATALOG.map(item => [item.kind, item]))
-type ClearanceLayout = Pick<LayoutData, 'tracks' | 'accessories'> & Partial<Pick<LayoutData, 'trainType' | 'trains'>>
+type ClearanceLayout = Pick<LayoutData, 'tracks' | 'accessories'> & Partial<Pick<LayoutData, 'trainType' | 'trains' | 'sourcePlan'>>
 /** Keep the conservative vertical allowance while following each longer cab. */
 export function getClearanceAssumptions(trainType: TrainType = 'e235') {
   const train = getTrainSpec(trainType)
@@ -130,7 +130,81 @@ function accessoryGeometry(accessory: PlacedAccessory): SceneryGeometry {
   const solids: Solid[] = [], base = accessory.elevation
   const box = (x: number, y: number, dx: number, dy: number, bottom: number, top: number, role: Solid['role'] = 'solid') =>
     solids.push({ x, y, halfLength: dx / 2, halfWidth: dy / 2, bottom: base + bottom, top: base + top, role })
-  if (accessory.kind === 'a-footbridge') {
+  if (accessory.kind === 'a-station-deck-248') {
+    // The station plate's top is the saved rail-bed datum. Only its modeled
+    // underside occupies space: neither lower routes nor a wrongly raised
+    // plate are exempted from the ordinary solids check.
+    box(0, 0, length, width, -4, 0)
+  } else if (accessory.kind.startsWith('a-station-wall-')) {
+    box(0, 0, length, width + .5, 0, height)
+  } else if (accessory.kind === 'a-pier-frame-p06' || accessory.kind === 'a-pier-double-p06') {
+    const component = item.supportComponentHeight ?? 50, deck = item.supportDeckHeight ?? 60
+    const columnOffset = width / 2 - 7
+    for (const y of [-columnOffset, columnOffset]) {
+      box(0, y, length, 13, 0, 4, 'support')
+      box(0, y, Math.max(8, length * .46), 9, 4, component - 3, 'support')
+    }
+    box(0, 0, length, width, component - 3, component, 'support')
+    box(0, 0, length - 4, width - 4, component, deck - 2, 'support')
+    box(0, 0, length, width, deck - 2, deck, 'support')
+  } else if (accessory.kind === 'a-train-shed') {
+    for (const side of [-1, 1]) box(0, side * (width / 2 - 1), length, 2.5, 0, 50)
+    box(0, 0, length + 2, width, 50, 56)
+  } else if (accessory.kind === 'a-station-overtrack' || accessory.kind === 'a-station-overtrack-extension') {
+    box(0, 0, length + 2, width + 2, 50, Math.max(64, height) + 2)
+    const platformY = accessory.kind === 'a-station-overtrack' ? 0 : -width / 3
+    for (const x of [-length / 2 + 2, length / 2 - 2]) box(x, platformY, 3, 3, 0, 50, 'post')
+    if (accessory.kind === 'a-station-overtrack-extension') {
+      const steps = 12, run = length / 2
+      for (const side of [-1, 1]) for (let index = 0; index < steps; index++)
+        box(side * (length / 2 - (index + .5) * run / steps), platformY, run / steps + .1, 20, 0, 9 + 45 * (index + 1) / steps)
+    }
+  } else if (accessory.kind === 'a-station-overtrack-stairs-right') {
+    const run = length - 30, steps = 16, deck = 54
+    for (let index = 0; index < steps; index++)
+      box(-length / 2 + (index + .5) * run / steps, 0, run / steps + .1, width - 4, 0, 9 + (deck - 9) * (index + 1) / steps)
+    box(length / 2 - 15, 0, 30, width, 0, deck)
+    for (const side of [-1, 1]) box(length / 2 - 15, side * (width / 2 - 1), 30, 1, deck + 7.5, deck + 8.5)
+    box(length / 2 - 15, 0, 33, width + 2, height - 2, height)
+    // Handrails follow the incline rather than filling the air over its lower
+    // steps. Their narrow side strips are included separately.
+    for (let index = 0; index < steps; index++) for (const side of [-1, 1])
+      box(-length / 2 + (index + .5) * run / steps, side * (width / 2 - 1), run / steps + .1, 1,
+        16.5 + (deck - 9) * index / steps, 17.5 + (deck - 9) * (index + 1) / steps)
+  } else if (accessory.kind === 'a-platform-suburban-island-end') {
+    // Conservative outer-width slices bound the nominal tapered end mesh.
+    const slices = 8
+    for (let index = 0; index < slices; index++) {
+      const x = -length / 2 + (index + .5) * length / slices
+      box(x, 0, length / slices, 6 + (width - 8) * (index + 1) / slices, 0, height - .7)
+      box(x, 0, length / slices, 8 + (width - 8) * (index + 1) / slices, height - .7, height + .2)
+    }
+    if (accessory.stationName) box(length / 4, 0, Math.min(24, length / 3), 1.5, height, height + 17)
+  } else if (accessory.kind.startsWith('a-platform-local-p06')) {
+    if (accessory.kind === 'a-platform-local-p06-slope') {
+      for (let index = 0; index < 8; index++) box(-length / 2 + (index + .5) * length / 8, 0, length / 8 + .1, width, 0, height * (index + 1) / 8)
+    } else {
+      box(0, 0, length, width, 0, height + .2)
+      if (accessory.kind === 'a-platform-local-p06')
+        for (const x of [-length / 4, length / 4]) box(x, 0, 14, 4, height, height + 5.2)
+    }
+    if (accessory.stationName) {
+      const signBase = accessory.kind === 'a-platform-local-p06-slope' ? height / 2 : height
+      box(0, 0, Math.min(35, length - 2), 1.5, signBase, signBase + 17)
+    }
+  } else if (accessory.kind === 'a-station-p06' || accessory.kind === 'a-station-local-p06') {
+    box(0, 0, length, width, 0, height - 6)
+    box(0, 0, length + 2, width + 2, height - 3, height)
+  } else if (accessory.kind === 'a-auto-crossing-main' || accessory.kind === 'a-auto-crossing-opposite') {
+    const side = accessory.kind === 'a-auto-crossing-main' ? 1 : -1
+    const x = side * length * .34, y = side * (width / 2 - 3)
+    box(0, 0, length, width, 0, 2.2, 'roadway')
+    box(x, y, 8, 4, 2, 33, 'post')
+    box(x, 0, 1.4, width - 3, 6.2, 7.8)
+  } else if (accessory.kind === 'a-auto-crossing-slope') {
+    for (let index = 0; index < 6; index++)
+      box(0, -width / 2 + (index + .5) * width / 6, length, width / 6 + .1, 0, height * (index + 1) / 6, 'roadway')
+  } else if (accessory.kind === 'a-footbridge') {
     const deck = Math.min(37, height - 13), run = Math.min(length / 2, 36)
     box(0, 0, 21, width, deck - 1.5, height + 1)
     for (const side of [-1, 1]) {
@@ -198,12 +272,16 @@ function accessoryGeometry(accessory: PlacedAccessory): SceneryGeometry {
   } else if (item.accessoryType === 'buffer') {
     box(0, 0, 14, 15, 0, 12)
   } else if (item.accessoryType === 'platform' || item.accessoryType === 'station') {
-    box(0, 0, length, width, 0, 13.4)
+    if (accessory.kind.startsWith('a-platform-suburban-')) {
+      box(0, 0, length, width - 2, 0, 12)
+      box(0, 0, length, width, 12, 13.4)
+    } else box(0, 0, length, width, 0, 13.4)
     const roofWidth = Math.max(22, width - 8)
     if (!/end|open|unroofed|extension/i.test(item.name) || item.accessoryType === 'station') {
-      box(0, 0, length - 7, roofWidth + 4, 34, 37)
+      const roofRise = accessory.kind.startsWith('a-platform-suburban-') ? Math.max(0, height - 37) : 0
+      box(0, 0, length - 7, roofWidth + 4, 34 + roofRise, 37 + roofRise)
       for (let x = -(length - 12) / 2 + 15; x <= (length - 12) / 2; x += 62)
-        for (const side of [-1, 1]) box(x, side * roofWidth / 3, 1.7, 1.7, 12.5, 33.5, 'post')
+        for (const side of [-1, 1]) box(x, side * roofWidth / 3, 1.7, 1.7, 12.5, 33.5 + roofRise, 'post')
     }
     if (/platform-dx/.test(accessory.kind) && !/end/.test(accessory.kind))
       for (const side of [-1, 1]) box(0, side * (width / 2 - 1.2), length - 14, .9, 13, 21.2)
@@ -213,6 +291,33 @@ function accessoryGeometry(accessory: PlacedAccessory): SceneryGeometry {
     box(length / 4, width / 4, 10, 10, height + 1.5, height + 6.5)
   }
   const scenery = { id: accessory.id, name: item.label, x: accessory.x, y: accessory.y, angle: accessory.angle, solids, accessory }
+  return { ...scenery, bounds: sceneryBounds(scenery) }
+}
+/** Factory-fitted scenery belongs to its manufactured straight, while still
+ * obstructing any independent route placed through the mast or closed bumper.
+ * The parent track ID deliberately skips checking its own intended stop face.
+ */
+function integratedTrackScenery(track: Track): SceneryGeometry | undefined {
+  if (!['s124-signal', 's62-buffer-a', 's50-buffer-c'].includes(track.kind)) return undefined
+  const route = pathsFor(track)[0], signal = track.kind === 's124-signal'
+  const point = route.pointAt(signal ? route.length / 2 : route.length - 1)
+  const solids: Solid[] = []
+  const add = (x: number, y: number, dx: number, dy: number, bottom: number, top: number, role: Solid['role'] = 'solid') =>
+    solids.push({ x, y, halfLength: dx / 2, halfWidth: dy / 2, bottom: point.z + bottom, top: point.z + top, role })
+  if (signal) {
+    const offset = -21 * track.bend
+    add(0, offset, 7, 7, 0, 2)
+    add(0, offset, 2, 2, 0, 36, 'post')
+    add(0, offset, 6, 4, 32, 42)
+    add(0, offset + 3, 3, 3, 2, 7)
+  } else if (track.kind === 's62-buffer-a') {
+    add(.5, 0, 11, 14, 0, 12)
+  } else {
+    add(0, 0, 8, 17, 3, 6)
+    add(1, 0, 6, 14, 6, 9)
+    add(2, 0, 4, 10, 9, 11)
+  }
+  const scenery = { id: track.id, name: ITEM_BY_KIND.get(track.kind)!.label, x: point.x, y: point.y, angle: point.angle, solids }
   return { ...scenery, bounds: sceneryBounds(scenery) }
 }
 function pointSegmentDistance(point: Point2, a: Point2, b: Point2): { distance: number; t: number } {
@@ -298,6 +403,62 @@ function connectedPortPositions(a: TrackGeometry, b: TrackGeometry): { position:
   return result
 }
 interface TurnoutExitPort { trackId: string; position: Point2; routes: number[] }
+interface Plan06JunctionApproaches {
+  first: TurnoutExitPort; second: TurnoutExitPort
+  kind: 'auxiliary' | 'crossing' | 'curve'
+  reach: number
+}
+/** The new plan uses S60 handed auxiliary pieces and connected compound
+ * junctions. Recognize their immediate, reciprocal physical links, never IDs
+ * or mere proximity. Source identity alone does not waive a collision. */
+function connectedPlan06JunctionApproaches(tracks: Track[]): Plan06JunctionApproaches[] {
+  const result: Plan06JunctionApproaches[] = []
+  for (const junction of tracks) {
+    const pairs = junction.kind === 'x15r-plan06-15' ? [[0, 2], [1, 3]]
+      : ['t4l', 't4r', 't6l', 't6r'].includes(junction.kind) ? [[1, 2]] : []
+    for (const [firstEnd, secondEnd] of pairs) {
+      const first = connectedEndpoint(tracks, junction.id, firstEnd), second = connectedEndpoint(tracks, junction.id, secondEnd)
+      if (!first || !second || first.track.id === second.track.id) continue
+      const firstBack = connectedEndpoint(tracks, first.track.id, first.end), secondBack = connectedEndpoint(tracks, second.track.id, second.end)
+      if (firstBack?.track.id !== junction.id || firstBack.end !== firstEnd
+        || secondBack?.track.id !== junction.id || secondBack.end !== secondEnd) continue
+      const kinds = [first.track.kind, second.track.kind]
+      let kind: Plan06JunctionApproaches['kind']
+      let reach: number
+      if (junction.kind === 'x15r-plan06-15') {
+        kind = 'crossing'; reach = 10
+      } else if (junction.kind === 't4l' || junction.kind === 't4r') {
+        const auxiliary = kinds.findIndex(value => value === 's60l' || value === 's60r')
+        if (auxiliary < 0 || !['c481', 't4l', 't4r', 't6l', 't6r', 's124-pc'].includes(kinds[1 - auxiliary])) continue
+        // The local allowance ends with the 60 mm manufactured auxiliary.
+        kind = 'auxiliary'; reach = 60
+      } else {
+        if (!kinds.includes('c718') || !kinds.includes('s186')) continue
+        kind = 'curve'; reach = 10
+      }
+      const port = (connection: NonNullable<typeof first>): TurnoutExitPort => ({
+        trackId: connection.track.id, position: endpoints(connection.track)[connection.end].position,
+        routes: pathsFor(connection.track).filter(route => route.startPort === connection.end || route.endPort === connection.end).map(route => route.route),
+      })
+      result.push({ first: port(first), second: port(second), kind, reach })
+    }
+  }
+  return result
+}
+/** A curve's bogie chord swings inward while its longest cab swings outward.
+ * Use the side facing the other route for this source plan's track pairs. The
+ * original symmetric reserve, scenery checks and all old layouts stay intact. */
+function directionalStockHalfWidth(segment: Segment, point: Point2, toward: Point2, profile: ClearanceProfile): number {
+  const heading = difference(segment.b.angle, segment.a.angle)
+  if (Math.abs(heading) < .00001) return profile.straightHalfWidth
+  const angle = segment.a.angle + heading / 2
+  const side = (-Math.sin(angle) * (toward.x - point.x) + Math.cos(angle) * (toward.y - point.y)) * heading
+  if (Math.abs(side) < 1e-10) return segment.halfWidth
+  const radius = Math.hypot(segment.b.x - segment.a.x, segment.b.y - segment.a.y) / (2 * Math.sin(Math.abs(heading) / 2))
+  const chord = Math.sqrt(Math.max(0, radius * radius - profile.halfBogieSpacing * profile.halfBogieSpacing))
+  const reserve = side > 0 ? radius - chord : Math.hypot(chord, profile.carHalfLength) - radius
+  return profile.straightHalfWidth + reserve
+}
 function connectedTurnoutExits(tracks: Track[]): [TurnoutExitPort, TurnoutExitPort][] {
   const result: [TurnoutExitPort, TurnoutExitPort][] = []
   for (const turnout of tracks) {
@@ -318,7 +479,7 @@ function connectedTurnoutExits(tracks: Track[]): [TurnoutExitPort, TurnoutExitPo
   }
   return result
 }
-function trackPairIssue(a: TrackGeometry, b: TrackGeometry, turnoutExits: [TurnoutExitPort, TurnoutExitPort][]): LayoutIssue | undefined {
+function trackPairIssue(a: TrackGeometry, b: TrackGeometry, turnoutExits: [TurnoutExitPort, TurnoutExitPort][], plan06?: { profile: ClearanceProfile; approaches: Plan06JunctionApproaches[] }): LayoutIssue | undefined {
   if (!intersects(a.bounds, b.bounds)) return undefined
   const joins = connectedPortPositions(a, b)
   const sharedTurnoutExits = turnoutExits.flatMap(pair => {
@@ -326,6 +487,12 @@ function trackPairIssue(a: TrackGeometry, b: TrackGeometry, turnoutExits: [Turno
     return first && second ? [{ first, second }] : []
   })
   const designedJunction = ['turnout', 'scissors', 'crossing'].includes(a.item.shape) || ['turnout', 'scissors', 'crossing'].includes(b.item.shape)
+  const sourceApproaches = plan06?.approaches.flatMap(pair => {
+    if (pair.first.trackId === a.track.id && pair.second.trackId === b.track.id) return [pair]
+    if (pair.second.trackId === a.track.id && pair.first.trackId === b.track.id) return [{ ...pair, first: pair.second, second: pair.first }]
+    return []
+  }) ?? []
+  let fouling: LayoutIssue | undefined
   for (const first of a.segments) for (const second of b.segments) {
     if (!intersects(first.bounds, second.bounds)) continue
     const closest = closestSegments(first.a, first.b, second.a, second.b)
@@ -339,6 +506,9 @@ function trackPairIssue(a: TrackGeometry, b: TrackGeometry, turnoutExits: [Turno
     if (height >= requiredSeparation - EPSILON) continue
     const firstPoint = { x: first.a.x + (first.b.x - first.a.x) * closest.t, y: first.a.y + (first.b.y - first.a.y) * closest.t }
     const secondPoint = { x: second.a.x + (second.b.x - second.a.x) * closest.u, y: second.a.y + (second.b.y - second.a.y) * closest.u }
+    const firstStockWidth = plan06 ? directionalStockHalfWidth(first, firstPoint, secondPoint, plan06.profile) : first.halfWidth
+    const secondStockWidth = plan06 ? directionalStockHalfWidth(second, secondPoint, firstPoint, plan06.profile) : second.halfWidth
+    if (closest.distance >= Math.max(12.5, firstStockWidth) + Math.max(12.5, secondStockWidth) - EPSILON) continue
     // Adjacent pieces necessarily share a swept corridor at their proper joint.
     // A turnout/crossing also owns its designed junction approaches; its own
     // diverging routes must not make a legitimate adjoining straight invalid.
@@ -356,6 +526,21 @@ function trackPairIssue(a: TrackGeometry, b: TrackGeometry, turnoutExits: [Turno
       && sharedTurnoutExits.some(join => join.first.routes.includes(first.route) && join.second.routes.includes(second.route)
         && Math.hypot(firstPoint.x - join.first.position.x, firstPoint.y - join.first.position.y) <= 50
         && Math.hypot(secondPoint.x - join.second.position.x, secondPoint.y - join.second.position.y) <= 50)) continue
+    const sourceJoin = height <= EPSILON && sourceApproaches.find(join => join.first.routes.includes(first.route) && join.second.routes.includes(second.route)
+      && Math.hypot(firstPoint.x - join.first.position.x, firstPoint.y - join.first.position.y) <= join.reach
+      && Math.hypot(secondPoint.x - join.second.position.x, secondPoint.y - join.second.position.y) <= join.reach)
+    if (sourceJoin) {
+      const stockGap = closest.distance - firstStockWidth - secondStockWidth
+      // Handed auxiliary notches and the new crossing's adjoining end planes
+      // permit local roadbed flange contact while the stock corridors clear.
+      if (stockGap >= -EPSILON) continue
+      if (sourceJoin.kind === 'auxiliary' || sourceJoin.kind === 'curve' && stockGap >= -1) {
+        fouling ??= issue('junction-fouling', 'warning', [a.track.id, b.track.id],
+          'These connected junction approaches share a fouling area. Keep conflicting routes clear.',
+          'This nominal KATO plan assembly uses strictly connected turnout exits. The stock corridors overlap only within the local auxiliary or curved approach. Train collision and turnout occupancy protection remain active; verify actual purchased junction templates before construction.')
+        continue
+      }
+    }
     if (height < 8) return issue('track-overlap', 'error', [a.track.id, b.track.id],
       'These tracks overlap. Use a crossing piece or move one track.',
       'Independent track beds and train corridors intersect at the same level. Proper end-to-end joints and routes inside one turnout or crossing are allowed.')
@@ -363,7 +548,7 @@ function trackPairIssue(a: TrackGeometry, b: TrackGeometry, turnoutExits: [Turno
       `The upper track is too low: leave at least ${requiredSeparation} mm between track levels.`,
       `Only ${height.toFixed(1)} mm separates these tracks here. The stock envelope reserves 45 mm above the track-bed datum; ${upper.item.label} extends approximately ${depth} mm below its roadbed. This is a conservative planning allowance, not a manufacturer-certified dimension.`)
   }
-  return undefined
+  return fouling
 }
 function sceneryTrackIssue(scenery: SceneryGeometry, geometry: TrackGeometry, tracks: Track[]): LayoutIssue | undefined {
   if (scenery.id === geometry.track.id || !intersects(scenery.bounds, geometry.bounds)) return undefined
@@ -405,13 +590,19 @@ function sceneryTrackIssue(scenery: SceneryGeometry, geometry: TrackGeometry, tr
 function auditSingleClearances(layout: ClearanceLayout): LayoutIssue[] {
   const profile = getClearanceAssumptions(layout.trainType), train = getTrainSpec(layout.trainType)
   const tracks = layout.tracks.map(track => trackGeometry(track, profile)), scenery = layout.accessories.map(accessoryGeometry)
+  for (const track of layout.tracks) {
+    const fitted = integratedTrackScenery(track)
+    if (fitted) scenery.push(fitted)
+  }
   const turnoutExits = connectedTurnoutExits(layout.tracks)
+  const plan06 = layout.sourcePlan === 'kato-plan06-15'
+    ? { profile, approaches: connectedPlan06JunctionApproaches(layout.tracks) } : undefined
   const issues: LayoutIssue[] = [], reported = new Set<string>()
   const add = (value: LayoutIssue | undefined) => {
     if (value && !reported.has(value.id)) { reported.add(value.id); issues.push(value) }
   }
   for (let first = 0; first < tracks.length; first++) for (let second = first + 1; second < tracks.length; second++)
-    add(trackPairIssue(tracks[first], tracks[second], turnoutExits))
+    add(trackPairIssue(tracks[first], tracks[second], turnoutExits, plan06))
   for (const piece of scenery) for (const track of tracks)
     add(sceneryTrackIssue(piece, track, layout.tracks))
   if (layout.accessories.length) add(issue('scenery-dimensions-nominal', 'warning', layout.accessories.map(piece => piece.id),
@@ -448,6 +639,7 @@ export function checkPlacement(
 ): { allowed: boolean; issues: LayoutIssue[] } {
   const accessory = ITEM_BY_KIND.get(candidate.kind)?.category === 'accessory'
   const proposed = {
+    ...(layout.sourcePlan === undefined ? {} : { sourcePlan: layout.sourcePlan }),
     ...(layout.trainType === undefined ? {} : { trainType: layout.trainType }),
     ...(layout.trains === undefined ? {} : { trains: layout.trains }),
     tracks: [...layout.tracks.filter(piece => piece.id !== replacingId), ...(!accessory ? [candidate as Track] : [])],

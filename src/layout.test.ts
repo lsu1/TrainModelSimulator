@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { KATO_CATALOG } from './catalog'
-import { LEGACY_STORAGE_KEY, PREVIOUS_STORAGE_KEY, STORAGE_KEY, V3_STORAGE_KEY, V2_STORAGE_KEY, createLayout, loadLayout, parseLayout, type LayoutData, type PlacedAccessory } from './layout'
+import { LEGACY_STORAGE_KEY, PREVIOUS_STORAGE_KEY, STORAGE_KEY, V3_STORAGE_KEY, V2_STORAGE_KEY, createLayout, getLayoutPieceLimit, loadLayout, parseLayout, type LayoutData, type PlacedAccessory } from './layout'
 import { endpoints, makeStarterLayout, openEndpoints } from './track'
 import { getTrainSpec, TRAIN_TYPES } from './trains'
 import { MAX_TRAINSETS, restoreFleet, snapshotFleetLayout } from './fleet'
@@ -117,6 +117,26 @@ describe('layout file validation', () => {
     }
   })
 
+  it('retains the plan 06-15 source through edited and version 5 layout files', () => {
+    const original = { ...layout(), name: '新干线与在来线交错运行', sourcePlan: 'kato-plan06-15' as const }
+    expect(parseLayout(JSON.parse(JSON.stringify(original)))).toEqual(original)
+    const edited = { ...original, name: '我和孩子的车站' }
+    const saved = snapshotFleetLayout(edited, restoreFleet(edited), 'train-1')
+    expect(parseLayout(JSON.parse(JSON.stringify(saved)))).toEqual(saved)
+    expect(saved.sourcePlan).toBe('kato-plan06-15')
+    expect(saved.version).toBe(5)
+  })
+
+  it('continues to start with the existing city layout and existing storage keys', () => {
+    expect(createLayout()).toEqual(createLayout('city'))
+    expect([
+      STORAGE_KEY, PREVIOUS_STORAGE_KEY, V3_STORAGE_KEY, V2_STORAGE_KEY, LEGACY_STORAGE_KEY,
+    ]).toEqual([
+      'little-railways-layout-v5', 'little-railways-layout-v4', 'little-railways-layout-v3',
+      'little-railways-layout-v2', 'little-railways-layout-v1',
+    ])
+  })
+
   it.each(TRAIN_TYPES)('retains the selected %s train through a layout file round trip', (trainType) => {
     const original = { ...createLayout('viaduct'), carCount: 5, trainType }
     expect(parseLayout(JSON.parse(JSON.stringify(original)))).toEqual(original)
@@ -223,6 +243,23 @@ describe('layout file validation', () => {
     const tracks = Array.from({ length: 299 }, (_, index) => ({ ...valid.tracks[0], id: `piece-${index}` }))
     expect(parseLayout({ ...valid, tracks, accessories: [accessory()] }).tracks).toHaveLength(299)
     expect(() => parseLayout({ ...valid, tracks, accessories: [accessory(), { ...accessory(), id: 'station-2' }] })).toThrow('300')
+  })
+
+  it('reserves the larger piece budget only for plan 06-15 and retains it through saving', () => {
+    const valid = layout()
+    const tracks = Array.from({ length: 300 }, (_, index) => ({ ...valid.tracks[0], id: `piece-${index}` }))
+    const accessories = Array.from({ length: 157 }, (_, index) => ({ ...accessory(), id: `scenery-${index}` }))
+    const original = { ...valid, sourcePlan: 'kato-plan06-15' as const, tracks, accessories }
+    expect(getLayoutPieceLimit()).toBe(300)
+    expect(getLayoutPieceLimit('kato-plan02-1a')).toBe(300)
+    expect(getLayoutPieceLimit('kato-plan06-15')).toBe(600)
+    expect(parseLayout(JSON.parse(JSON.stringify(original)))).toEqual(original)
+    expect(() => parseLayout({ ...valid, tracks, accessories: [accessory()] })).toThrow('300')
+    expect(() => parseLayout({ ...original, sourcePlan: 'kato-plan02-1a' })).toThrow('300')
+    expect(() => parseLayout({ ...original, sourcePlan: 'kato-plan06-other' })).toThrow('source plan')
+    const maximum = Array.from({ length: 300 }, (_, index) => ({ ...accessory(), id: `scenery-${index}` }))
+    expect(parseLayout({ ...original, accessories: maximum }).accessories).toHaveLength(300)
+    expect(() => parseLayout({ ...original, accessories: [...maximum, accessory()] })).toThrow('600')
   })
 
   it.each([3, 4, 5, 6, 7, 8, 9, 10, 11])('preserves the supported %i-car formation', (carCount) => {
