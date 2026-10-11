@@ -5,10 +5,11 @@ import { makeKatoPlan02 } from './katoPlan'
 import { restoreFleet } from './fleet'
 import { solveCoupledFormation } from './formationPose'
 import { synchronizeCoupledFleet } from './couplingMotion'
-import { combineTrainFootprints, physicalTrainFootprintsConflict, trainFootprintFromPoses, trainFootprintOverlapsItself, trainFootprintsConflict, trainSelfCollisionBounds } from './trainSafety'
+import { combineTrainFootprints, physicalTrainFootprintsConflict, trainFootprint, trainFootprintFromPoses, trainFootprintOverlapsItself, trainFootprintsConflict, trainSelfCollisionBounds } from './trainSafety'
 import { advanceTrain, attachTrack, endpoints } from './track'
 import type { Track } from './track'
 import type { CabEnd, CouplingTrainType } from './couplingTypes'
+import type { TrainType } from './trains'
 import { createShinkansenCar } from './shinkansenModel'
 import { disposeTrainModel } from './trainModel'
 import { solveConsistPoses } from './consistPose'
@@ -116,7 +117,7 @@ describe('actual moving nose-cover collision geometry', () => {
       const pose = poses.cars[index]!, footprint = trainFootprintFromPoses(train, poses)
       const solid = trainSelfCollisionBounds(footprint).find(volume => volume.carIndex === index)!
       const reserves = footprint.volumes.filter(volume => volume.carIndex === index)
-      const car = createShinkansenCar(index, train.carCount, train.type as CouplingTrainType, train.noseCoupling)
+      const car = createShinkansenCar(index, train.carCount, train.type as Exclude<TrainType, 'e235'>, train.noseCoupling)
       // Apply the renderer's world transform independently of the safety box.
       const forward = new THREE.Vector3(pose.direction.x, pose.direction.z, pose.direction.y)
       const sideways = forward.clone().cross(new THREE.Vector3(0, 1, 0)).normalize()
@@ -153,6 +154,53 @@ describe('actual moving nose-cover collision geometry', () => {
         expect(largestSolidExcess, `${train.type} actual mesh exceeds its self-contact box`).toBeLessThanOrEqual(1e-6)
         expect(largestReserveExcess, `${train.type} actual mesh exceeds every third-train reserve`).toBeLessThanOrEqual(1e-6)
       } finally { disposeTrainModel(car) }
+    }
+  })
+})
+
+describe('exposed Yamanote cab contact', () => {
+  it.each([381, 315])('keeps all four cab end pairs physically clear on R%s with only their head contact exempted', radius => {
+    const tracks: Track[] = []
+    let anchor = { position: { x: 0, y: 0, z: 0 }, angle: 0 }
+    for (let index = 0; index < (radius === 381 ? 12 : 8); index++) {
+      const track = attachTrack(`c${radius}`, 1, anchor, `yamanote-circle-${index}`)
+      tracks.push(track)
+      const end = endpoints(track)[1]
+      anchor = { position: { ...end.position, z: end.position.z ?? 0 }, angle: end.angle }
+    }
+    for (const e6End of ['front', 'rear'] as const) for (const e5End of ['front', 'rear'] as const) for (const direction of [1, -1] as const) {
+      const fleet = restoreFleet(makeCouplingDemo({ firstType: 'e235', secondType: 'e235' }))
+      fleet[0].position = { trackId: tracks[0].id, distance: 40, direction, laps: 0 }
+      const group = { id: 'yamanote-curved-pair', e6Id: fleet[0].id, e5Id: fleet[1].id, e6End, e5End }
+      const members = synchronizeCoupledFleet(tracks, fleet, [group])
+      const solved = solveCoupledFormation(tracks, members[0], members[1], group)
+      expect(solved.complete).toBe(true)
+      expect(members.every(train => train.noseCoupling?.open === 0 && train.noseCoupling.extension === 1 && train.noseCoupling.axis)).toBe(true)
+      const first = trainFootprintFromPoses(members[0], solved.e6), second = trainFootprintFromPoses(members[1], solved.e5)
+      const firstIndex = e6End === 'front' ? 0 : 2, secondIndex = e5End === 'front' ? 0 : 2
+      expect(physicalTrainFootprintsConflict(first, second, [firstIndex, secondIndex])).toBe(false)
+      expect(trainFootprintOverlapsItself(combineTrainFootprints(first, second, 3, [firstIndex, 3 + secondIndex]))).toBe(false)
+      expect(trainFootprintsConflict(first, second)).toBe(true)
+    }
+  }, 15000)
+
+  it('exempts only the designated little heads, while shank, skirt and body overlap still collide', () => {
+    const layout = makeCouplingDemo({ firstType: 'e235', secondType: 'e235' }), fleet = restoreFleet(layout)
+    const group = { id: 'yamanote-contact', e6Id: fleet[0].id, e5Id: fleet[1].id }
+    const members = synchronizeCoupledFleet(layout.tracks, fleet, [group])
+    const first = trainFootprint(layout.tracks, members[0])
+    const approach = (distance: number) => trainFootprint(layout.tracks, {
+      ...members[1], position: advanceTrain(layout.tracks, members[1].position!, distance).position,
+    })
+    const headContact = approach(.4)
+    expect(physicalTrainFootprintsConflict(first, headContact)).toBe(true)
+    expect(physicalTrainFootprintsConflict(first, headContact, [2, 0])).toBe(false)
+    expect(physicalTrainFootprintsConflict(first, headContact, [1, 0])).toBe(true)
+    expect(trainFootprintOverlapsItself(combineTrainFootprints(first, headContact, 3, [2, 3]))).toBe(false)
+    for (const distance of [1.5, 6]) {
+      const collision = approach(distance)
+      expect(physicalTrainFootprintsConflict(first, collision, [2, 0])).toBe(true)
+      expect(trainFootprintOverlapsItself(combineTrainFootprints(first, collision, 3, [2, 3]))).toBe(true)
     }
   })
 })

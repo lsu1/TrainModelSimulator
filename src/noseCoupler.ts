@@ -38,9 +38,9 @@ const SURFACE_NAMES = new Set([
   'curved-nose-bogie-upper-fairing',
 ])
 
-/** Play couplers are available on both outside cabs of every Shinkansen. */
+/** Couplers are available on both outside cabs; E235 uses an exposed head. */
 export function isNoseCouplingCar(type: TrainType, index: number, total: number): boolean {
-  return type !== 'e235' && (index === 0 || index === total - 1)
+  return index === 0 || index === total - 1
 }
 
 /** Old saves retain their E5-front/E6-rear choice; new pairs specify an end. */
@@ -234,6 +234,32 @@ export function attachNoseCoupler(
   updateNoseCoupler(car, initial)
 }
 
+/** A conventional, permanently exposed E235 cab fitting. Only the rigid head
+ * makes contact: the flat face, skirt and arm retain their collision checks.
+ * These small dimensions preserve the existing procedural under-cab fitting.
+ */
+export function attachExposedCabCoupler(car: THREE.Group, spec: TrainSpec, end: CabEnd) {
+  const profile = NOSE_COUPLER_PROFILES.e235
+  const exterior = new THREE.Group(); exterior.name = 'exposed-cab-coupler'
+  if (end === 'rear') exterior.rotation.y = Math.PI
+  car.add(exterior)
+  const metal = new THREE.MeshStandardMaterial({ color: '#263137', metalness: .3, roughness: .73 })
+  const pivot = new THREE.Object3D(); pivot.name = 'nose-coupler-pivot'
+  pivot.position.set(spec.length / 2 - profile.mountInset, profile.height, 0); exterior.add(pivot)
+  const gimbal = new THREE.Group(); gimbal.name = 'nose-coupler-gimbal'; gimbal.position.copy(pivot.position); exterior.add(gimbal)
+  const slide = new THREE.Group(); slide.name = 'exposed-cab-coupler-fixed-arm'; gimbal.add(slide)
+  const headLength = 1.2, shankLength = profile.extensionLength - headLength
+  box(slide, [shankLength, .75, .85], [shankLength / 2, 0, 0], metal, 'cab-mechanical-coupler-shank', 'shank')
+  const head = box(slide, [headLength, 1.25, 2.1], [profile.extensionLength - headLength / 2, 0, 0], metal, 'cab-mechanical-coupler-head', 'head')
+  head.userData.mechanicalCouplerContact = true
+  const face = new THREE.Object3D(); face.name = 'nose-coupler-mating-face'; face.position.x = profile.extensionLength; slide.add(face)
+  rigs.set(car, { profile, end, covers: [], pivot, face, head, gimbal, slide, state: { open: -1, extension: -1, locked: false } })
+  car.userData.noseCouplingEnd = end
+  car.userData.noseCouplingProfile = { ...profile }
+  car.userData.noseDirection = end === 'front' ? 1 : -1
+  updateNoseCoupler(car, CLOSED)
+}
+
 function unit(value: number): number { return Number.isFinite(value) ? THREE.MathUtils.clamp(value, 0, 1) : 0 }
 
 /** Covers translate as rigid pieces: clear the seam, move apart, then retract
@@ -243,7 +269,8 @@ export function updateNoseCoupler(car: THREE.Object3D, state: NoseCouplingState)
   const rig = rigs.get(car)
   if (!rig) return false
   const active = activeNoseCouplingEnd(rig.profile.type, state) === rig.end ? state : CLOSED
-  const next: NoseCouplingState = { open: unit(active.open), extension: unit(active.extension), locked: active.locked === true, end: rig.end }
+  const exposed = rig.profile.mechanism === 'exposed'
+  const next: NoseCouplingState = { open: exposed ? 0 : unit(active.open), extension: exposed ? 1 : unit(active.extension), locked: active.locked === true, end: rig.end }
   if (active.axis && [active.axis.x, active.axis.y, active.axis.z].every(Number.isFinite)) {
     const direction = new THREE.Vector3(active.axis.x, active.axis.y, active.axis.z)
     if (direction.lengthSq() > 1e-12) {
@@ -265,7 +292,7 @@ export function updateNoseCoupler(car: THREE.Object3D, state: NoseCouplingState)
       if (child.name === 'nose-fairing-stow-lift') child.position.set(0, 2.4 * retract, -side * 3.5 * retract)
     })
   }
-  rig.slide.position.x = (rig.profile.extensionLength - 2.6) * next.extension
+  rig.slide.position.x = exposed ? 0 : (rig.profile.extensionLength - 2.6) * next.extension
   rig.gimbal.quaternion.setFromUnitVectors(new THREE.Vector3(1, 0, 0), next.axis
     ? new THREE.Vector3(next.axis.x, next.axis.y, next.axis.z) : new THREE.Vector3(1, 0, 0))
   rig.head.userData.locked = next.locked
@@ -292,6 +319,7 @@ export function orientNoseCoupler(car: THREE.Object3D, target: THREE.Vector3): b
 
 export interface NoseCouplerDiagnostics {
   type: CouplingType
+  mechanism: 'exposed' | 'covered'
   end: CabEnd
   state: NoseCouplingState
   coverTransforms: { side: 'left' | 'right'; position: [number, number, number]; quaternion: [number, number, number, number]; scale: [number, number, number] }[]
@@ -307,7 +335,7 @@ export function getNoseCouplerDiagnostics(car: THREE.Object3D): NoseCouplerDiagn
   car.updateMatrixWorld(true)
   const localPosition = (object: THREE.Object3D) => car.worldToLocal(object.getWorldPosition(new THREE.Vector3()))
   return {
-    type: rig.profile.type, end: rig.end, state: { ...rig.state },
+    type: rig.profile.type, mechanism: rig.profile.mechanism === 'exposed' ? 'exposed' : 'covered', end: rig.end, state: { ...rig.state },
     coverTransforms: rig.covers.map(({ side, group }) => ({
       side: side === 1 ? 'left' : 'right', position: group.position.toArray() as [number, number, number],
       quaternion: group.quaternion.toArray() as [number, number, number, number], scale: group.scale.toArray() as [number, number, number],

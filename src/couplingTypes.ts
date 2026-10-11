@@ -1,11 +1,22 @@
 import type { TrainSnapshot } from './fleet'
 import type { TrainType } from './trains'
 
-export type CouplingTrainType = Exclude<TrainType, 'e235'>
+export type CouplingTrainType = TrainType
+
+/** Conventional Yamanote heads join each other; streamlined heads remain a
+ * separate compatible family in this playground. */
+export function supportsCouplingPair(first: TrainType, second: TrainType): boolean {
+  return (first === 'e235') === (second === 'e235')
+}
+
+export function hasCouplingCovers(type: TrainType): boolean {
+  return type !== 'e235'
+}
 export type CabEnd = 'front' | 'rear'
 
 /** Field names retain older saves: e6Id is the reference train and e5Id
- * its partner. Either may be any Shinkansen model, in either orientation. */
+ * its partner. A pair can be two Yamanote sets or two Shinkansen sets,
+ * in either orientation. */
 export interface CouplingGroup {
   id: string
   e6Id: string
@@ -42,6 +53,8 @@ export interface NoseCouplingState {
 
 export interface NoseCouplerProfile {
   type: CouplingTrainType
+  /** Omitted for the existing retractable Shinkansen nose mechanisms. */
+  mechanism?: 'exposed'
   /** Length of the removable cap, from the original streamlined tip. */
   cutBack: number
   /** Body-mounted pivot inset from the original tip. */
@@ -53,13 +66,14 @@ export interface NoseCouplerProfile {
 
 /** Procedural visual dimensions, not measurements of a KATO mechanism. */
 export const NOSE_COUPLER_PROFILES: Readonly<Record<CouplingTrainType, NoseCouplerProfile>> = {
+  e235: { type: 'e235', mechanism: 'exposed', cutBack: 0, mountInset: 1, extensionLength: 3.5, height: 3.45 },
   e5: { type: 'e5', cutBack: 15, mountInset: 18, extensionLength: 3.5, height: 9.5 },
   e6: { type: 'e6', cutBack: 14, mountInset: 17, extensionLength: 3.5, height: 9.5 },
   e7: { type: 'e7', cutBack: 12, mountInset: 15, extensionLength: 3.5, height: 9.5 },
 }
 
-export function noseCouplerProfile(type: TrainType): NoseCouplerProfile | null {
-  return type === 'e235' ? null : NOSE_COUPLER_PROFILES[type]
+export function noseCouplerProfile(type: TrainType): NoseCouplerProfile {
+  return NOSE_COUPLER_PROFILES[type]
 }
 
 export const NOSE_JOINT_LENGTH = NOSE_COUPLER_PROFILES.e5.extensionLength + NOSE_COUPLER_PROFILES.e6.extensionLength

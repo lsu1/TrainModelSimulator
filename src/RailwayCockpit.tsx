@@ -74,6 +74,10 @@ export default function RailwayCockpit({
     (train) => train.running || train.actualSpeed > 0,
   ).length;
   const coupled = !!h.selectedCoupling;
+  const couplingTrain = h.couplingOperation
+    ? h.fleet.find((train) => train.id === h.couplingOperation!.e6Id)
+    : selected;
+  const yamanoteCoupling = couplingTrain?.type === "e235";
   const formation = coupled
     ? h.fleet.filter(
         (train) =>
@@ -88,7 +92,7 @@ export default function RailwayCockpit({
   const phase = PHASE[h.couplingPhase ?? ""] ?? "Preparing trains";
   const showCoupling =
     !creating &&
-    ((selected && selected.type !== "e235") || h.couplingBusy || coupled);
+    (!!selected || h.couplingBusy || coupled);
   const couplingReason = h.couplingBusy
     ? null
     : coupled
@@ -587,7 +591,7 @@ export default function RailwayCockpit({
           </button>
         </div>
         {showCoupling && (
-          <section className="cockpit-coupling" aria-label="Nose coupling">
+          <section className="cockpit-coupling" aria-label={yamanoteCoupling ? "Cab coupling" : "Nose coupling"}>
             <div className="cockpit-coupling-actions">
               {h.couplingBusy ? (
                 <span
@@ -669,8 +673,8 @@ export default function RailwayCockpit({
               )}
               <button
                 className={`icon-button coupling-view-button ${h.cameraPreset === "coupling" ? "active" : ""}`}
-                aria-label="Nose view"
-                title="Nose view"
+                aria-label={yamanoteCoupling ? "Coupler view" : "Nose view"}
+                title={yamanoteCoupling ? "Coupler view" : "Nose view"}
                 aria-pressed={h.cameraPreset === "coupling"}
                 disabled={!h.couplingBusy && !coupled}
                 onClick={() => {
@@ -682,6 +686,7 @@ export default function RailwayCockpit({
                 <Eye size={20} />
               </button>
             </div>
+            {yamanoteCoupling && <span className="cockpit-coupling-note">Real Yamanote trains join only in emergencies.</span>}
           </section>
         )}
         {notice && (

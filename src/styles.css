@@ -806,6 +806,7 @@ kbd { display: inline-block; padding: 1px 5px; min-width: 20px; border: 1px soli
 .cockpit-drive-dock .control-divider { display: none; }
 .cockpit-coupling { display: flex; flex: 1 1 320px; flex-wrap: wrap; align-items: center; align-content: center; gap: 6px; min-width: 0; padding-left: 12px; border-left: 1px solid var(--line); }
 .cockpit-coupling-actions { display: flex; flex: 1; align-items: center; gap: 6px; min-width: 0; }
+.cockpit-coupling-note { flex-basis: 100%; color: #557345; font-size: 10px; line-height: 1.3; }
 .cockpit-coupling .coupling-partner-select { flex: 1 1 110px; gap: 0; }
 .cockpit-coupling .coupling-partner-select select { width: 100%; min-height: 40px; max-width: none; padding: 6px; font-size: 11px; }
 .cockpit-coupling .icon-button, .cockpit-coupling .button { flex: 0 0 40px; min-width: 40px; width: 40px; min-height: 40px; height: 40px; padding: 9px; border-radius: 8px; }

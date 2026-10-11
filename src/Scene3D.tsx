@@ -14,7 +14,7 @@ import { solveConsistPoses } from './consistPose';
 import type { ConsistPoses } from './consistPose';
 import { solveCoupledFormation } from './formationPose';
 import type { CoupledFormationPoses } from './formationPose';
-import { noseCouplerProfile } from './couplingTypes';
+import { noseCouplerProfile, supportsCouplingPair } from './couplingTypes';
 import type { CouplingGroup, CouplingOperation, NoseCouplingState } from './couplingTypes';
 import { getNoseCouplerDiagnostics, orientNoseCoupler, updateNoseCoupler } from './noseCoupler';
 import { TurnoutPoints, staticRailRanges } from './turnoutPoints';
@@ -786,7 +786,7 @@ export default function Scene3D(props: Scene3DProps) {
       pairing: string;
       poses: CoupledFormationPoses;
     }>();
-    const noseJoints = new THREE.Group(); noseJoints.name = 'shinkansen-mechanical-nose-joints'; world.add(noseJoints);
+    const noseJoints = new THREE.Group(); noseJoints.name = 'mechanical-cab-joints'; world.add(noseJoints);
     const renderedNoseJoints = new Map<string, THREE.Mesh>();
     let ghost: RenderedTrain | null = null;
     let ghostPosition: TrainPosition | null = null;
@@ -1410,7 +1410,7 @@ export default function Scene3D(props: Scene3DProps) {
       const selectedMembers = new Set(selectedId ? [selectedId] : []);
       for (const group of groups) {
         const e6 = fleet.find(train => train.id === group.e6Id), e5 = fleet.find(train => train.id === group.e5Id);
-        if (!e6 || !e5 || e6.type === 'e235' || e5.type === 'e235') continue;
+        if (!e6 || !e5 || !supportsCouplingPair(e6.type, e5.type)) continue;
         if (group.e6Id === selectedId || group.e5Id === selectedId) { selectedMembers.add(group.e6Id); selectedMembers.add(group.e5Id); }
         let cached = formationCache.get(group.id);
         const pairing = `${e6.type}:${e5.type}:${group.e6End ?? 'rear'}:${group.e5End ?? 'front'}`;
@@ -1430,8 +1430,10 @@ export default function Scene3D(props: Scene3DProps) {
         if (!joint) {
           // These cabs share a mechanical connector. They do not have a
           // passenger gangway or the bellows used between ordinary cars.
-          joint = box(noseJoints, library, 1.1, 2.5, 3.2, 0, 0, 0, '#52606a', .7);
+          const exposed = e6.type === 'e235';
+          joint = box(noseJoints, library, 1.1, exposed ? 1.15 : 2.5, exposed ? 2.1 : 3.2, 0, 0, 0, '#52606a', .7);
           joint.name = `locked-nose-joint-${group.id}`; joint.userData.trainId = group.e6Id;
+          joint.userData.mechanism = exposed ? 'exposed' : 'covered';
           renderedNoseJoints.set(group.id, joint); diagnosticsChanged = true;
         }
         joint.visible = formation.complete && !!formation.joint;
@@ -1486,7 +1488,7 @@ export default function Scene3D(props: Scene3DProps) {
           return {
             ...group, complete: formation?.complete ?? false,
             joint: joint?.visible ? {
-              head: layoutPoint(joint.position), quaternion: joint.quaternion.toArray(),
+              head: layoutPoint(joint.position), quaternion: joint.quaternion.toArray(), mechanism: joint.userData.mechanism,
               e6Mount: nosePoint(e6Car, 'pivot'), e5Mount: nosePoint(e5Car, 'pivot'),
               e6Face: nosePoint(e6Car, 'matingFace'), e5Face: nosePoint(e5Car, 'matingFace'),
             } : null,

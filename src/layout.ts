@@ -7,6 +7,7 @@ import type { TrainType } from './trains';
 import { MAX_TRAINSETS } from './fleet';
 import type { TrainSnapshot } from './fleet';
 import type { CouplingGroup } from './couplingTypes';
+import { supportsCouplingPair } from './couplingTypes';
 import { makeCouplingDemo } from './couplingDemo';
 import { normalizeStationName, supportsStationName } from './stationName';
 
@@ -32,7 +33,7 @@ export interface LayoutData {
   /** Versions 3 onward contain individual trainsets; version 2 keeps legacy semantics. */
   trains?: TrainSnapshot[];
   selectedTrainId?: string;
-  /** Stable Shinkansen partnerships; animations and running commands are never saved. */
+  /** Stable compatible partnerships; animations and running commands are never saved. */
   couplings?: CouplingGroup[];
   /** Source drawing retained when a preset is saved, edited, or exported. */
   sourcePlan?: 'kato-plan02-1a';
@@ -242,21 +243,21 @@ export function parseLayout(value: unknown): LayoutData {
         || value.id.length > 100 || groupIds.has(value.id)
         || typeof value.e6Id !== 'string' || typeof value.e5Id !== 'string'
         || value.e6Id === value.e5Id || members.has(value.e6Id) || members.has(value.e5Id)) {
-        throw new Error('This layout contains an invalid Shinkansen coupling.');
+        throw new Error('This layout contains an invalid train coupling.');
       }
       const reference = trainById.get(value.e6Id);
       const partner = trainById.get(value.e5Id);
       // Version 4 only described the original E6 rear / E5 front arrangement.
       // Keep that validation when importing old files instead of silently
       // interpreting malformed historical relations as playful combinations.
-      if (!reference || !partner || reference.type === 'e235' || partner.type === 'e235'
+      if (!reference || !partner || !supportsCouplingPair(reference.type, partner.type)
         || (candidate.version === 4 && (reference.type !== 'e6' || partner.type !== 'e5'))) {
-        throw new Error('This layout contains an invalid Shinkansen coupling.');
+        throw new Error('This layout contains an invalid train coupling.');
       }
       if (candidate.version === 5
         && ((value.e6End !== undefined && value.e6End !== 'front' && value.e6End !== 'rear')
           || (value.e5End !== undefined && value.e5End !== 'front' && value.e5End !== 'rear'))) {
-        throw new Error('This layout contains an invalid Shinkansen coupling end.');
+        throw new Error('This layout contains an invalid train coupling end.');
       }
       groupIds.add(value.id);
       members.add(value.e6Id);

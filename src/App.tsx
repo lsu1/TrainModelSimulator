@@ -312,7 +312,7 @@ export default function App() {
           <p className="catalog-summary">
             {KATO_CATALOG.length} catalog pieces to discover.
           </p>
-          {h.couplingBusy && <p className="coupling-build-note">Track building waits until the noses have finished connecting or separating.</p>}
+          {h.couplingBusy && <p className="coupling-build-note">Track building waits until the trains have finished connecting or separating.</p>}
           <fieldset className="coupling-build-lock" disabled={h.couplingBusy} aria-label="Track building">
           <div className="catalog-search">
             <Search size={17} />
@@ -1017,6 +1017,10 @@ export default function App() {
                     {
                       title: "Join two Shinkansen nose to nose",
                       text: "Add two E5, E6, or E7 trainsets to your railway with New train, then stop them with two noses nearby on connected track. Select either train, choose its partner in the lower dock, and press Couple trains. Either nose can join, including on curves; the simulator chooses the nearby ends. Nose view lets you watch the covers open and the couplers connect. Pause or Continue whenever you like. Once connected, either partner controls the whole formation. Stop to change a partner's car count, or stop with room to move apart and choose Decouple trains. Their noses close after separation. Separate partners before changing their models or places. These playful combinations do not all couple in real life.",
+                    },
+                    {
+                      title: "Connect two Yamanote trains",
+                      text: "Two real Yamanote E235 trains can connect cab to cab for emergency recovery. Add two Yamanote trains, stop them with two cab ends nearby on clear connected rails, select a partner, and press Couple trains. Coupler view shows the exposed couplers below the cabs joining without opening nose covers. Either front or rear cab can connect. Pause or Continue during joining, then use either train's driving controls for the pair. Stop with room to move apart and choose Decouple trains to separate them. Shared driving controls are simplified for play; real Yamanote trains do not run as a joined pair in normal passenger service.",
                     },
                     {
                       title: "Find a safe place and share the rails",

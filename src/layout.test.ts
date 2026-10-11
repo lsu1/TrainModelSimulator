@@ -5,6 +5,7 @@ import { endpoints, makeStarterLayout, openEndpoints } from './track'
 import { getTrainSpec, TRAIN_TYPES } from './trains'
 import { MAX_TRAINSETS, restoreFleet, snapshotFleetLayout } from './fleet'
 import { MAX_STATION_NAME_LENGTH } from './stationName'
+import { solveCoupledFormation } from './formationPose'
 
 const layout = (): LayoutData => createLayout('compact')
 const accessory = (): PlacedAccessory => ({
@@ -593,6 +594,8 @@ describe('version 4 stable nose-coupled partnerships', () => {
     for (const type of ['e7', 'e235'] as const) {
       expect(() => parseLayout({ ...original, trains: original.trains!.map(train => train.type === 'e5' ? { ...train, type } : train) })).toThrow(/coupling/)
     }
+    expect(() => parseLayout({ ...original, trains: original.trains!.map(train => ({ ...train, type: 'e235' })) }))
+      .toThrow(/coupling/)
   })
 
   it('supports several distinct pairs and rejects reused members or repeated group ids', () => {
@@ -606,7 +609,7 @@ describe('version 4 stable nose-coupled partnerships', () => {
   })
 })
 
-describe('version 5 playful Shinkansen partnerships', () => {
+describe('version 5 compatible train partnerships', () => {
   const types = ['e5', 'e6', 'e7'] as const
   const ends = ['front', 'rear'] as const
   const combinations = types.flatMap(referenceType => types.flatMap(partnerType =>
@@ -660,13 +663,43 @@ describe('version 5 playful Shinkansen partnerships', () => {
     expect(() => parseLayout({ ...original, couplings: [{ ...original.couplings[0], ...patch }] })).toThrow(/coupling/)
   })
 
-  it('rejects commuter members on either side while permitting the other Shinkansen combinations', () => {
+  it('rejects mixed Yamanote and Shinkansen members in either order', () => {
     const original = paired()
-    for (const commuterIndex of [0, 1]) {
-      expect(() => parseLayout({ ...original, trains: original.trains!.map((train, index) => ({
-        ...train, type: index === commuterIndex ? 'e235' : 'e7',
-      })) })).toThrow(/coupling/)
+    for (const shinkansenType of types) {
+      for (const commuterIndex of [0, 1]) {
+        expect(() => parseLayout({ ...original, trains: original.trains!.map((train, index) => ({
+          ...train, type: index === commuterIndex ? 'e235' : shinkansenType,
+        })) })).toThrow(/coupling/)
+      }
     }
+  })
+
+  it('exports and imports a settled front-to-front Yamanote pair with its exact positions and paused restoration', () => {
+    const original = paired()
+    const fleet = restoreFleet(original).map((train, index) => ({
+      ...train, type: 'e235' as const, name: `Yamanote ${index + 1}`, requestedSpeed: 90,
+    }))
+    fleet[0].position = { trackId: original.tracks[6].id, distance: 124, direction: 1, laps: 0 }
+    const group = { ...original.couplings[0], id: 'yamanote-pair', e6End: 'front' as const, e5End: 'front' as const }
+    const solved = solveCoupledFormation(original.tracks, fleet[0], fleet[1], group)
+    expect(solved.complete).toBe(true)
+    fleet[1] = { ...fleet[1], position: solved.e5Position, cabForward: solved.e5CabForward }
+    const saved = snapshotFleetLayout(original, fleet, fleet[1].id, [group])
+    const parsed = parseLayout(JSON.parse(JSON.stringify(saved)))
+    expect(parsed).toEqual(saved)
+    expect(parsed.version).toBe(5)
+    expect(parsed.couplings).toEqual([group])
+    expect(parsed.trains!.map(train => [train.id, train.type, train.carCount, train.name]))
+      .toEqual(fleet.map(train => [train.id, train.type, train.carCount, train.name]))
+    const restored = restoreFleet(parsed)
+    expect(restored.map(train => train.position)).toEqual(fleet.map(train => train.position))
+    expect(restored.map(train => train.cabForward)).toEqual([true, false])
+    expect(restored.every(train => !train.running && train.actualSpeed === 0 && train.requestedSpeed === 90)).toBe(true)
+    const reopened = solveCoupledFormation(parsed.tracks, restored[0], restored[1], parsed.couplings![0])
+    expect(reopened.complete).toBe(true)
+    expect(reopened.e5Position).toEqual(restored[1].position)
+    expect(reopened.joint).toEqual(solved.joint)
+    expect(original.trains!.map(train => train.type)).toEqual(['e6', 'e5'])
   })
 
   it('supports separate same-model pairs and prevents shared members or duplicate group IDs', () => {

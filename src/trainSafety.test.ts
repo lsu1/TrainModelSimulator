@@ -110,7 +110,9 @@ describe('moving rolling-stock envelopes', () => {
       const track = attachTrack('s248', 1, anchor, `line-${index}`); tracks.push(track)
       const end = endpoints(track)[1]; anchor = { ...end, position: { ...end.position, z: 0 } }
     }
-    const left = train(tracks[5].id, 100), right = train(tracks[5].id, 105, 'two', -1)
+    // Eight millimetres between cab faces leaves three between the exposed
+    // heads. Advancing each train by two makes those heads overlap by one.
+    const left = train(tracks[5].id, 100), right = train(tracks[5].id, 108, 'two', -1)
     const next = (value: TrainSnapshot, distance: number) => ({ ...value, position: advanceTrain(tracks, value.position!, distance).position })
     expect(trainFootprintsConflict(trainFootprint(tracks, left), trainFootprint(tracks, right))).toBe(false)
     expect(sweptTrainFootprintsConflict(trainFootprint(tracks, left), trainFootprint(tracks, next(left, 2)), trainFootprint(tracks, right), trainFootprint(tracks, next(right, 2)))).toBe(true)

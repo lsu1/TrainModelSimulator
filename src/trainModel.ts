@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { createShinkansenCar } from './shinkansenModel'
 import { getTrainSpec } from './trains'
+import { attachExposedCabCoupler } from './noseCoupler'
 import type { TrainType } from './trains'
 
 /** Japanese N scale: 1:150; every length below is in model millimetres. */
@@ -600,10 +601,11 @@ export function createE235Car(index: number, total = 11): THREE.Group {
       instancedBoxes(car, dark, [{ position: [end * (CAR_LENGTH / 2 + 0.12), GANGWAY_HEIGHT, 0], scale: [0.35, 14, 5.7] }], `rubber-gangway-${endName}`)
       instancedBoxes(car, glass, [{ position: [end * (CAR_LENGTH / 2 + 0.31), 17.2, 0], scale: [0.08, 6.9, 3.1] }], `gangway-door-window-${endName}`)
     }
-    instancedBoxes(car, dark, [{
-      position: [end * (CAR_LENGTH / 2 + (cabEnd ? 0.8 : -0.35)), COUPLING_HEIGHT, 0],
-      scale: [cabEnd ? 3.15 : 1.2, 1.25, 2.1],
-    }], cabEnd ? 'cab-coupler' : `coupler-mount-${endName}`)
+    if (cabEnd) attachExposedCabCoupler(car, getTrainSpec('e235'), endName)
+    else instancedBoxes(car, dark, [{
+      position: [end * (CAR_LENGTH / 2 - .35), COUPLING_HEIGHT, 0],
+      scale: [1.2, 1.25, 2.1],
+    }], `coupler-mount-${endName}`)
   }
   return car
 }

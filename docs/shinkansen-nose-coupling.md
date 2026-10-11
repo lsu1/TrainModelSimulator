@@ -2,7 +2,7 @@
 
 Version **0.9.0** lets any two **E5, E6, or E7** trainsets join nose to nose, including two of the same model. Both cab ends have opening mechanisms, and the simulator chooses the nearby ends automatically. Joining and separating can happen on curves and grades when the rails connect and the train bodies and opening covers have enough room.
 
-These are playful combinations. The E5/E6 references below inspire the appearance; the E7 mechanism, opposite-end mechanisms, and unrestricted pairings do not represent real production capabilities. E235 remains independent, and a Shinkansen can have one partner at a time.
+These are playful combinations. The E5/E6 references below inspire the appearance; the E7 mechanism, opposite-end mechanisms, and unrestricted pairings do not represent real production capabilities. A Shinkansen can have one partner at a time. Two E235 sets use a separate [exposed-cab coupling](yamanote-coupling.md) inspired by emergency operation; E235/Shinkansen pairs are not supported.
 
 ## Choose and join a pair
 
@@ -28,7 +28,7 @@ Track editing, switch changes, driving, layout loading/saving/exporting, and und
 
 ## Save and reopen
 
-Layout **version 5** stores settled partnerships and the cab ends used. The two train IDs remain distinct. Internal `e6Id` and `e5Id` field names are retained for compatibility: they identify the reference train and its partner, which can now be any Shinkansen models. Optional `e6End` and `e5End` identify their physical cab ends. When absent, they use the original rear/front pairing. Named designs, copies, autosave, and exported layouts retain a settled pair. Reopened sets start **paused**, with joined noses open and locked.
+Layout **version 5** stores settled partnerships and the cab ends used. The two train IDs remain distinct. Internal `e6Id` and `e5Id` field names are retained for compatibility: they identify the reference train and its partner, which can be any two Shinkansen models or two E235 sets. Mixed E235/Shinkansen groups are rejected. Optional `e6End` and `e5End` identify their physical cab ends. When absent, they use the original rear/front pairing. Named designs, copies, autosave, and exported layouts retain a settled pair. Reopened sets start **paused**; joined Shinkansen noses are open and locked, while E235 couplers remain exposed.
 
 Earlier **v1–v4** files remain readable. Version 4 restores its E6/E5 relationship with the original cab ends; version 3 preserves independent sets; versions 1 and 2 migrate to one trainset.
 

@@ -1,6 +1,6 @@
 import { solveConsistPoses } from './consistPose'
 import type { CarPose, ConsistPoses, PoseVector } from './consistPose'
-import { noseCouplerProfile } from './couplingTypes'
+import { noseCouplerProfile, supportsCouplingPair } from './couplingTypes'
 import type { TrainSnapshot } from './fleet'
 import { samplePositionBehind, withTrackGraph } from './track'
 import type { Track, TrainPosition } from './track'
@@ -105,7 +105,7 @@ function solveOnGraph(
     complete: false, frontOffset: 0, rearOffset: first.rearOffset, e5Offset: 0,
   }
   const joiningCab = leaderEnd === 'rear' ? first.cars.at(-1) : first.cars[0]
-  if (!leader.position || !leaderProfile || !followerProfile || !joiningCab || !first.cars.every(Boolean)) return unavailable
+  if (!supportsCouplingPair(leader.type, follower.type) || !leader.position || !leaderProfile || !followerProfile || !joiningCab || !first.cars.every(Boolean)) return unavailable
   const physicalReference: TrainPosition = {
     ...leader.position,
     direction: leader.cabForward ? leader.position.direction : flip(leader.position.direction),
@@ -138,8 +138,8 @@ function solveOnGraph(
     return candidate
   }
 
-  // Removed caps can overlap their original streamlined tips. Search only the
-  // nearby root, keeping the selected rails instead of jumping across a loop.
+  // Covered noses overlap their original tips; exposed cab heads leave a real
+  // body gap. Search only the nearby root without jumping across a loop.
   const nominal = (leaderEnd === 'rear' ? first.rearOffset : 0)
     + side * (jointLength - leaderProfile.mountInset - followerProfile.mountInset)
   const middle = evaluate(nominal)

@@ -187,6 +187,52 @@ describe('exact backwards rail cursors', () => {
   })
 })
 
+describe('exposed E235 cab formations', () => {
+  const orientations = (['front', 'rear'] as const).flatMap(e6End =>
+    (['front', 'rear'] as const).flatMap(e5End => ([1, -1] as const).map(direction => ({ e6End, e5End, direction }))))
+
+  it.each(orientations)('$e6End/$e5End cabs retain a five-millimetre flat body gap in direction $direction', ({ e6End, e5End, direction }) => {
+    const tracks = chain(40)
+    for (const [firstCount, secondCount] of [[3, 3], [7, 11], [11, 11]]) {
+      const leader = { ...snapshot('e235', firstCount, { trackId: tracks[20].id, distance: 100, direction, laps: 3 }), id: 'first-yamanote' }
+      const follower = { ...snapshot('e235', secondCount, null), id: 'second-yamanote' }
+      const result = solveCoupledFormation(tracks, leader, follower, { e6End, e5End })
+      expect(result.complete).toBe(true)
+      checkMember(result.e6, leader)
+      checkMember(result.e5, follower)
+      expect(result.e6).toEqual(solveConsistPoses(tracks, leader.position!, leader.cabForward, leader.carCount, 'e235'))
+      const firstCab = e6End === 'front' ? result.e6.cars[0]! : result.e6.cars.at(-1)!
+      const secondCab = e5End === 'front' ? result.e5.cars[0]! : result.e5.cars.at(-1)!
+      const firstFace = e6End === 'front' ? firstCab.frontEnd : firstCab.rearEnd
+      const secondFace = e5End === 'front' ? secondCab.frontEnd : secondCab.rearEnd
+      expect(distance(firstFace, secondFace)).toBeCloseTo(5, 6)
+      expect(distance(result.joint!.e6Mount, result.joint!.e5Mount)).toBeCloseTo(7, 6)
+      expect(distance(result.joint!.e6Mount, result.joint!.head)).toBeCloseTo(3.5, 6)
+      expect(distance(result.joint!.e5Mount, result.joint!.head)).toBeCloseTo(3.5, 6)
+      expect(result.e5CabForward).toBe(e6End !== e5End)
+      expect(result.e5Position!.laps).toBe(3)
+      if (e6End === 'front') expect(result.frontOffset).toBeGreaterThan(250)
+      else expect(result.frontOffset).toBe(0)
+      const reverse = solveCoupledFormation(tracks, { ...leader, position: { ...leader.position!, direction: direction === 1 ? -1 : 1 }, cabForward: false }, follower, { e6End, e5End })
+      expect(reverse.e6).toEqual(result.e6)
+      expect(reverse.e5).toEqual(result.e5)
+      expect(reverse.joint).toEqual(result.joint)
+    }
+  })
+
+  it.each(['e5', 'e6', 'e7'] as const)('refuses to manufacture an E235/%s mixed-family joint', type => {
+    const tracks = chain(12)
+    const yamanote = snapshot('e235', 3, { trackId: tracks[6].id, distance: 100, direction: 1, laps: 0 })
+    const shinkansen = snapshot(type, 3, { trackId: tracks[4].id, distance: 100, direction: 1, laps: 0 })
+    for (const [first, second] of [[yamanote, shinkansen], [shinkansen, yamanote]]) {
+      const result = solveCoupledFormation(tracks, first, second)
+      expect(result.complete).toBe(false)
+      expect(result.e5Position).toBeNull()
+      expect(result.joint).toBeNull()
+    }
+  })
+})
+
 
 describe('playful Shinkansen formations in either cab orientation', () => {
   const types: CouplingTrainType[] = ['e5', 'e6', 'e7']

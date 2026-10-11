@@ -5,7 +5,7 @@ import type { CarPose, PoseVector, ConsistPoses } from './consistPose'
 import { NOSE_COUPLER_PROFILES } from './couplingTypes'
 import type { NoseCouplingState } from './couplingTypes'
 import { createShinkansenCar } from './shinkansenModel'
-import { activeNoseCouplingEnd, isActiveNoseCouplingCar, updateNoseCoupler } from './noseCoupler'
+import { activeNoseCouplingEnd, isActiveNoseCouplingCar, isNoseCouplingCar, updateNoseCoupler } from './noseCoupler'
 import { convexShapesIntersect } from './convexSafety'
 import type { TrainSnapshot } from './fleet'
 import { shinkansenSurface } from './shinkansenModel'
@@ -252,7 +252,7 @@ function offsetWorldVolume(pose: CarPose, local: LocalVolume & { across: number 
 function orientedLocalPhysicalVolume(original: LocalPhysicalVolume, carIndex: number, train: PhysicalTrain): LocalPhysicalVolume {
   let local = original
   const state = (train as TrainSnapshot & { noseCoupling?: NoseCouplingState }).noseCoupling
-  if (local.mechanical && state?.axis && train.type !== 'e235' && isActiveNoseCouplingCar(train.type, carIndex, train.carCount, state)) {
+  if (local.mechanical && state?.axis && isActiveNoseCouplingCar(train.type, carIndex, train.carCount, state)) {
     const sign = activeNoseCouplingEnd(train.type, state) === 'rear' ? -1 : 1, spec = getTrainCarSpec(train.type, carIndex, train.carCount)
     const profile = NOSE_COUPLER_PROFILES[train.type]
     const pivot = new THREE.Vector3(sign * (spec.length / 2 - profile.mountInset), 0, profile.height)
@@ -304,8 +304,10 @@ export function trainFootprintFromPoses(train: PhysicalTrain, poses: ConsistPose
   // Opening covers and projecting hardware also reserve space against unrelated
   // trains; the original 45 mm headroom is never reduced.
   const state = (train as TrainSnapshot & { noseCoupling?: NoseCouplingState }).noseCoupling
-  if (state && (state.open > 0 || state.extension > 0)) poses.cars.forEach((pose, index) => {
-    if (!pose || !isActiveNoseCouplingCar(train.type, index, train.carCount, state)) return
+  poses.cars.forEach((pose, index) => {
+    const exposedCab = train.type === 'e235' && isNoseCouplingCar(train.type, index, train.carCount)
+    const activeMechanism = state && (state.open > 0 || state.extension > 0) && isActiveNoseCouplingCar(train.type, index, train.carCount, state)
+    if (!pose || !exposedCab && !activeMechanism) return
     const local = localBounds(index)
     volumes.push(offsetWorldVolume(pose, { ...local, bottom: Math.min(0, local.bottom), top: Math.max(45, local.top) }, index))
   })

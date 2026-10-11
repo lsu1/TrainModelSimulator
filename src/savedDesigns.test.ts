@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { STORAGE_KEY, PREVIOUS_STORAGE_KEY, V3_STORAGE_KEY, V2_STORAGE_KEY, createLayout, parseLayout } from './layout';
 import { restoreFleet, snapshotFleetLayout } from './fleet';
+import { solveCoupledFormation } from './formationPose';
 import {
   DESIGN_RECOVERY_PREFIX,
   SAVED_DESIGNS_KEY,
@@ -331,6 +332,54 @@ describe('working saved-design identity', () => {
     reopened.library.designs[1].layout.couplings![0].e6End = 'rear';
     expect(copied.library.designs[1].layout.couplings![0].e6End).toBe('front');
     expect(JSON.stringify(first.library)).toBe(firstJson);
+  });
+
+  it('persists a front-to-front Yamanote pair and an independent named copy beside an unchanged version 4 design', () => {
+    const working = createLayout('coupling-demo');
+    const oldRelation = { id: 'original-pair', e6Id: working.trains![0].id, e5Id: working.trains![1].id };
+    const oldLayout = { ...working, version: 4 as const, couplings: [oldRelation] };
+    const original = saveDesignSnapshot(empty(), oldLayout, 'Original Shinkansen', null, false,
+      { id: 'original', updatedAt: timestamp });
+    const oldJson = JSON.stringify(original.library);
+    const fleet = restoreFleet(working).map((train, index) => ({ ...train, type: 'e235' as const,
+      name: `Yamanote ${index + 1}`, requestedSpeed: 90,
+    }));
+    fleet[0].position = { trackId: working.tracks[6].id, distance: 124, direction: 1, laps: 0 };
+    const relation = { ...oldRelation, id: 'yamanote-pair', e6End: 'front' as const, e5End: 'front' as const };
+    const solved = solveCoupledFormation(working.tracks, fleet[0], fleet[1], relation);
+    expect(solved.complete).toBe(true);
+    fleet[1] = { ...fleet[1], position: solved.e5Position, cabForward: solved.e5CabForward };
+    const exported = JSON.stringify(snapshotFleetLayout(working, fleet, fleet[1].id, [relation]));
+    const imported = parseLayout(JSON.parse(exported));
+    const saved = saveDesignSnapshot(original.library, imported, 'Joined Yamanote', null, false,
+      { id: 'yamanote', updatedAt: timestamp });
+    const copied = saveDesignSnapshot(saved.library, saved.design.layout, 'Yamanote copy', 'yamanote', true,
+      { id: 'yamanote-copy', updatedAt: timestamp });
+    const stored = storage();
+    persistSavedDesigns(copied.library, null, stored);
+    const reopened = readSavedDesigns(stored);
+    expect(reopened.error).toBeNull();
+    expect(reopened.library.version).toBe(1);
+    expect(reopened.library.designs.map(design => design.layout.version)).toEqual([4, 5, 5]);
+    expect(reopened.library.designs[0].layout).toEqual(original.design.layout);
+    for (const design of reopened.library.designs.slice(1)) {
+      expect(design.layout.couplings).toEqual([relation]);
+      expect(design.layout.selectedTrainId).toBe(fleet[1].id);
+      expect(design.layout.trains!.map(train => train.position)).toEqual(fleet.map(train => train.position));
+      expect(design.layout.trains!.map(train => train.type)).toEqual(['e235', 'e235']);
+      const restored = restoreFleet(design.layout);
+      expect(restored.every(train => !train.running && train.actualSpeed === 0)).toBe(true);
+      expect(solveCoupledFormation(design.layout.tracks, restored[0], restored[1], relation).e5Position)
+        .toEqual(restored[1].position);
+    }
+    reopened.library.designs[2].layout.couplings![0].e6End = 'rear';
+    reopened.library.designs[2].layout.trains![0].position!.distance += 10;
+    expect(reopened.library.designs[1].layout.couplings![0].e6End).toBe('front');
+    expect(reopened.library.designs[1].layout.trains![0].position).toEqual(fleet[0].position);
+    expect(JSON.stringify(original.library)).toBe(oldJson);
+    expect(saved.design.layout).toEqual({ ...imported, name: 'Joined Yamanote' });
+    expect(imported).toEqual(JSON.parse(exported));
+    expect(stored.values.has(SAVED_DESIGNS_KEY)).toBe(true);
   });
 
   it('preserves a damaged new cab-end save for recovery instead of changing its connection', () => {

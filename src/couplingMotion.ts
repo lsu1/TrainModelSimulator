@@ -1,7 +1,7 @@
 import { solveConsistPoses } from './consistPose'
 import type { CarPose, PoseVector } from './consistPose'
-import { COUPLING_APPROACH_SPEED, COUPLING_MAX_APPROACH_DISTANCE, COUPLING_SEPARATION_DISTANCE, noseCouplerProfile } from './couplingTypes'
-import type { CabEnd, CouplingGroup, CouplingOperation, CouplingTrainType, NoseCouplingState } from './couplingTypes'
+import { COUPLING_APPROACH_SPEED, COUPLING_MAX_APPROACH_DISTANCE, COUPLING_SEPARATION_DISTANCE, hasCouplingCovers, noseCouplerProfile, supportsCouplingPair } from './couplingTypes'
+import type { CabEnd, CouplingGroup, CouplingOperation, NoseCouplingState } from './couplingTypes'
 import { trainSnapshot } from './fleet'
 import type { TrainRuntime } from './fleet'
 import { stepFleet } from './fleetMotion'
@@ -31,11 +31,11 @@ const physicalCursor = (train: TrainRuntime): TrainPosition | null => train.posi
 const dot = (a: PoseVector, b: PoseVector) => a.x * b.x + a.y * b.y + a.z * b.z
 const no = (reason: string): CouplingEligibility => ({ allowed: false, reason })
 const paused = (train: TrainRuntime): TrainRuntime => ({ ...train, actualSpeed: 0, running: false, status: train.position ? 'stopped' : 'unplaced', reverseRequested: false, stopReason: undefined })
-const shinkansen = (train: TrainRuntime): train is TrainRuntime & { type: CouplingTrainType } => train.type !== 'e235'
 const ends = (pair: Pick<CouplingGroup, 'e6End' | 'e5End'>) => ({ e6End: pair.e6End ?? 'rear' as CabEnd, e5End: pair.e5End ?? 'front' as CabEnd })
 const endIndex = (train: TrainRuntime, end: CabEnd) => end === 'front' ? 0 : train.carCount - 1
 const endCar = (cars: readonly (CarPose | null)[], end: CabEnd) => end === 'front' ? cars[0] : cars.at(-1)
-const withNose = (train: TrainRuntime, state: NoseCouplingState): TrainRuntime => ({ ...train, noseCoupling: state })
+const fixedNoseState = (train: TrainRuntime, state: NoseCouplingState): NoseCouplingState => hasCouplingCovers(train.type) ? state : { ...state, open: 0, extension: 1 }
+const withNose = (train: TrainRuntime, state: NoseCouplingState): TrainRuntime => ({ ...train, noseCoupling: fixedNoseState(train, state) })
 
 /** Exact local route distance. Nearby parallel/elevated tracks never count as
  * the same rails, and a solution cannot skip to another lap of the railway. */
@@ -68,16 +68,16 @@ function dockingGeometry(tracks: Track[], follower: TrainRuntime, leader: TrainR
   const approach = selected.e5End === 'front' ? from : { ...from, direction: flip(from.direction) }
   const target = selected.e5End === 'front' ? targetPhysical : { ...targetPhysical, direction: flip(targetPhysical.direction) }
   const gap = routeDistance(tracks, approach, target, COUPLING_MAX_APPROACH_DISTANCE)
-  if (gap === null) return no('Place the noses near each other on the same connected rails, within 200 mm of their coupling position.')
+  if (gap === null) return no('Place the cab couplers near each other on the same connected rails, within 200 mm of their coupling position.')
   const a = noseCouplerProfile(leader.type)!, b = noseCouplerProfile(follower.type)!
   const closedGap = a.mountInset + b.mountInset - a.extensionLength - b.extensionLength + 2
-  if (!allowLocked && gap < closedGap - 1e-6) return no('Leave a little room between the closed noses before coupling.')
+  if (!allowLocked && hasCouplingCovers(leader.type) && gap < closedGap - 1e-6) return no('Leave a little room between the closed noses before coupling.')
   return { allowed: true, gap }
 }
 
 function matchingPair(fleet: readonly TrainRuntime[], group: CouplingGroup): { e6: TrainRuntime; e5: TrainRuntime } | null {
   const e6 = fleet.find(value => value.id === group.e6Id), e5 = fleet.find(value => value.id === group.e5Id)
-  return e6 && e5 && e6.id !== e5.id && shinkansen(e6) && shinkansen(e5) && e6.position && e5.position ? { e6, e5 } : null
+  return e6 && e5 && e6.id !== e5.id && supportsCouplingPair(e6.type, e5.type) && e6.position && e5.position ? { e6, e5 } : null
 }
 
 /** Articulate the short fittings toward the actual two nose mounts. This is
@@ -88,10 +88,11 @@ function pairNoseStates(tracks: Track[], leader: TrainRuntime, follower: TrainRu
   const first = solved?.e6 ?? (leader.position ? solveConsistPoses(tracks, leader.position, leader.cabForward, leader.carCount, leader.type) : null)
   const second = solved?.e5 ?? (follower.position ? solveConsistPoses(tracks, follower.position, follower.cabForward, follower.carCount, follower.type) : null)
   const a = first && endCar(first.cars, selected.e6End), b = second && endCar(second.cars, selected.e5End)
-  if (!a || !b || !shinkansen(leader) || !shinkansen(follower)) return [{ ...state, end: selected.e6End }, { ...state, end: selected.e5End }]
+  const firstState = fixedNoseState(leader, state), secondState = fixedNoseState(follower, state)
+  if (!a || !b || !supportsCouplingPair(leader.type, follower.type)) return [{ ...firstState, end: selected.e6End }, { ...secondState, end: selected.e5End }]
   const firstMount = noseMount(a, leader.type, selected.e6End), secondMount = noseMount(b, follower.type, selected.e5End)
   const span = Math.hypot(secondMount.x - firstMount.x, secondMount.y - firstMount.y, secondMount.z - firstMount.z)
-  if (span < 1e-9) return [{ ...state, end: selected.e6End }, { ...state, end: selected.e5End }]
+  if (span < 1e-9) return [{ ...firstState, end: selected.e6End }, { ...secondState, end: selected.e5End }]
   const d = { x: (secondMount.x - firstMount.x) / span, y: (secondMount.y - firstMount.y) / span, z: (secondMount.z - firstMount.z) / span }
   const axis = (car: CarPose, outward: PoseVector, end: CabEnd) => {
     const sign = end === 'front' ? 1 : -1
@@ -99,7 +100,7 @@ function pairNoseStates(tracks: Track[], leader: TrainRuntime, follower: TrainRu
     const up = { x: -f.z * r.y, y: f.z * r.x, z: horizontal }
     return { x: sign * dot(outward, f), y: dot(outward, up), z: sign * dot(outward, r) }
   }
-  return [{ ...state, end: selected.e6End, axis: axis(a, d, selected.e6End) }, { ...state, end: selected.e5End, axis: axis(b, { x: -d.x, y: -d.y, z: -d.z }, selected.e5End) }]
+  return [{ ...firstState, end: selected.e6End, axis: axis(a, d, selected.e6End) }, { ...secondState, end: selected.e5End, axis: axis(b, { x: -d.x, y: -d.y, z: -d.z }, selected.e5End) }]
 }
 
 function preparedNoses(tracks: Track[], leader: TrainRuntime, follower: TrainRuntime, descriptor: Pick<CouplingGroup, 'e6End' | 'e5End'>, state: NoseCouplingState): [TrainRuntime, TrainRuntime] {
@@ -120,10 +121,14 @@ function moveRelative(tracks: Track[], train: TrainRuntime, distance: number, or
 
 function candidateEligibility(tracks: Track[], fleet: readonly TrainRuntime[], groups: readonly CouplingGroup[], leader: TrainRuntime, follower: TrainRuntime, pair: CouplingPair, geometry: CouplingEligibility): CouplingEligibility {
   const selected = ends(pair), mating: [number, number] = [endIndex(leader, selected.e6End), endIndex(follower, selected.e5End)]
-  for (const state of [CLOSED, ...[.1, .15, .2, .25, .35, .5, .75, 1].map(open => ({ ...CLOSED, open })), { ...OPEN, extension: .5 }, OPEN]) {
+  const preparation = hasCouplingCovers(leader.type)
+    ? [CLOSED, ...[.1, .15, .2, .25, .35, .5, .75, 1].map(open => ({ ...CLOSED, open })), { ...OPEN, extension: .5 }, OPEN]
+    : [OPEN]
+  for (const state of preparation) {
     const [aTrain, bTrain] = preparedNoses(tracks, leader, follower, pair, state)
     const a = trainFootprint(tracks, aTrain), b = trainFootprint(tracks, bTrain)
-    if (physicalTrainFootprintsConflict(a, b, mating)) return no('The nose covers need a little more room to open safely.')
+    if (physicalTrainFootprintsConflict(a, b, mating)) return no(hasCouplingCovers(leader.type)
+      ? 'The nose covers need a little more room to open safely.' : 'The cab bodies need more clearance before coupling.')
     for (const other of fleet) if (other.position && other.id !== follower.id && other.id !== leader.id) {
       const footprint = trainFootprint(tracks, other)
       if (trainFootprintsConflict(a, footprint) || trainFootprintsConflict(b, footprint)) return no(`Move ${other.name} away from the coupling area.`)
@@ -135,7 +140,7 @@ function candidateEligibility(tracks: Track[], fleet: readonly TrainRuntime[], g
     const advanced = moveRelative(tracks, follower, distance, selected.e5End === 'front')
     const [aTrain, candidate] = preparedNoses(tracks, leader, advanced.train, pair, OPEN)
     const footprint = trainFootprint(tracks, candidate)
-    if (advanced.stopped || !footprint.complete || trainFootprintOverlapsItself(footprint) || physicalTrainFootprintsConflict(trainFootprint(tracks, aTrain), footprint, mating)) return no('The train bodies or nose covers would touch during the approach.')
+    if (advanced.stopped || !footprint.complete || trainFootprintOverlapsItself(footprint) || physicalTrainFootprintsConflict(trainFootprint(tracks, aTrain), footprint, mating)) return no('The cab couplers or car bodies would touch during the approach.')
     for (const other of fleet) if (other.position && other.id !== follower.id && other.id !== leader.id) {
       const occupied = trainFootprint(tracks, other)
       if (sweptTrainFootprintsConflict(previous, footprint, occupied, occupied)) return no(`Move ${other.name} away from the approach route.`)
@@ -149,16 +154,16 @@ function candidateEligibility(tracks: Track[], fleet: readonly TrainRuntime[], g
   return validity.allowed ? { ...geometry, pair } : validity
 }
 
-/** Play mode supports every E5/E6/E7 pairing. Find the nearby facing end on the
+/** Play mode supports E235 pairs and every E5/E6/E7 pairing. Find the nearby facing end on the
  * connected route rather than asking a child to identify a train's head/tail. */
 export function couplingEligibility(tracks: Track[], fleet: readonly TrainRuntime[], firstId: string, secondId: string, groups: readonly CouplingGroup[] = []): CouplingEligibility {
   return withTrackGraph(tracks, () => {
     const first = fleet.find(value => value.id === firstId), second = fleet.find(value => value.id === secondId)
-    if (!first || !second || !shinkansen(first) || !shinkansen(second) || first.id === second.id) return no('Choose any two Shinkansen trainsets.')
+    if (!first || !second || first.id === second.id || !supportsCouplingPair(first.type, second.type)) return no('Choose two Yamanote trains or two Shinkansen trainsets.')
     if (groups.some(group => [group.e5Id, group.e6Id].includes(first.id) || [group.e5Id, group.e6Id].includes(second.id))) return no('Decouple the existing formation first.')
     if (!stopped(first) || !stopped(second)) return no('Stop both trains before coupling.')
     const candidates: { leader: TrainRuntime; follower: TrainRuntime; pair: CouplingPair; geometry: CouplingEligibility }[] = []
-    let reason = 'Place two Shinkansen noses near each other on connected rails.'
+    let reason = 'Place two compatible train cabs near each other on connected rails.'
     for (const [leader, follower] of [[second, first], [first, second]]) {
       for (const [e6End, e5End] of [['rear', 'front'], ['front', 'rear'], ['front', 'front'], ['rear', 'rear']] as const) {
         const pair = { e6Id: leader.id, e5Id: follower.id, e6End, e5End }
@@ -186,7 +191,7 @@ function formationFootprint(tracks: Track[], leader: TrainRuntime, follower: Tra
 }
 
 export function synchronizeCoupledFleet(tracks: Track[], fleet: readonly TrainRuntime[], groups: readonly CouplingGroup[]): TrainRuntime[] {
-  const result: TrainRuntime[] = fleet.map(train => ({ ...train, noseCoupling: train.noseCoupling ?? CLOSED }))
+  const result: TrainRuntime[] = fleet.map(train => withNose(train, train.noseCoupling ?? CLOSED))
   for (const group of groups) {
     const pair = matchingPair(result, group)
     if (!pair) continue
@@ -208,7 +213,7 @@ export function validateCoupledFleet(tracks: Track[], fleet: readonly TrainRunti
     const members = new Set<string>(), footprints: { id: string; footprint: TrainFootprint }[] = []
     for (const group of groups) {
       const pair = matchingPair(fleet, group)
-      if (!pair || members.has(group.e6Id) || members.has(group.e5Id)) return no('A formation needs two uniquely assigned Shinkansen trainsets.')
+      if (!pair || members.has(group.e6Id) || members.has(group.e5Id)) return no('A formation needs two uniquely assigned, compatible trainsets.')
       members.add(group.e6Id); members.add(group.e5Id)
       const solved = solveCoupledFormation(tracks, pair.e6, pair.e5, group), footprint = formationFootprint(tracks, pair.e6, pair.e5, group)
       const reference = physicalCursor(pair.e6)!, ahead = { ...reference, direction: flip(reference.direction) }
@@ -254,7 +259,7 @@ export function advanceCoupledFormation(tracks: Track[], leader: TrainRuntime, f
 }
 
 function groupedStep(tracks: Track[], fleet: readonly TrainRuntime[], groups: readonly CouplingGroup[], seconds: number): TrainRuntime[] {
-  if (!groups.length) return stepFleet(tracks, fleet, seconds)
+  if (!groups.length) return stepFleet(tracks, fleet, seconds).map(train => hasCouplingCovers(train.type) ? train : withNose(train, train.noseCoupling ?? CLOSED))
   const synced = synchronizeCoupledFleet(tracks, fleet, groups), leaders = new Map<string, { follower: TrainRuntime; group: CouplingGroup }>()
   groups.forEach(group => { const pair = matchingPair(synced, group); if (pair) leaders.set(pair.e6.id, { follower: pair.e5, group }) })
   const followerIds = new Set(groups.map(group => group.e5Id))
@@ -281,7 +286,7 @@ function groupedStep(tracks: Track[], fleet: readonly TrainRuntime[], groups: re
 export function decouplingEligibility(tracks: Track[], fleet: readonly TrainRuntime[], group: CouplingGroup): CouplingEligibility {
   return withTrackGraph(tracks, () => {
     const pair = matchingPair(fleet, group)
-    if (!pair) return no('Choose a connected Shinkansen formation.')
+    if (!pair) return no('Choose a connected Yamanote or Shinkansen formation.')
     if (!stopped(pair.e5) || !stopped(pair.e6)) return no('Stop the complete formation before decoupling.')
     const selected = ends(group), mating: [number, number] = [endIndex(pair.e6, selected.e6End), endIndex(pair.e5, selected.e5End)]
     let previous = trainFootprint(tracks, preparedNoses(tracks, pair.e6, pair.e5, group, OPEN)[1])
@@ -298,9 +303,13 @@ export function decouplingEligibility(tracks: Track[], fleet: readonly TrainRunt
       previous = footprint
     }
     const separated = moveRelative(tracks, pair.e5, COUPLING_SEPARATION_DISTANCE, selected.e5End !== 'front').train
-    for (const state of [OPEN, { ...OPEN, extension: .5 }, { ...OPEN, extension: 0 }, ...[.75, .5, .25, .1, 0].map(open => ({ ...CLOSED, open }))]) {
+    const closing = hasCouplingCovers(pair.e6.type)
+      ? [OPEN, { ...OPEN, extension: .5 }, { ...OPEN, extension: 0 }, ...[.75, .5, .25, .1, 0].map(open => ({ ...CLOSED, open }))]
+      : [OPEN]
+    for (const state of closing) {
       const [leader, follower] = preparedNoses(tracks, pair.e6, separated, group, state)
-      if (physicalTrainFootprintsConflict(trainFootprint(tracks, leader), trainFootprint(tracks, follower), mating)) return no('The nose covers need more room to close safely.')
+      if (physicalTrainFootprintsConflict(trainFootprint(tracks, leader), trainFootprint(tracks, follower), mating)) return no(hasCouplingCovers(pair.e6.type)
+        ? 'The nose covers need more room to close safely.' : 'The separated cab couplers need more clearance.')
     }
     return { allowed: true, gap: COUPLING_SEPARATION_DISTANCE }
   })
@@ -309,7 +318,8 @@ export function decouplingEligibility(tracks: Track[], fleet: readonly TrainRunt
 export function beginCoupling(tracks: Track[], fleet: readonly TrainRuntime[], groups: readonly CouplingGroup[], firstId: string, secondId: string): CouplingOperation | null {
   const eligibility = couplingEligibility(tracks, fleet, firstId, secondId, groups)
   if (!eligibility.allowed || !eligibility.pair) return null
-  return { id: `coupling-${eligibility.pair.e6Id}-${eligibility.pair.e5Id}`, ...eligibility.pair, phase: 'opening', elapsed: 0, paused: false,
+  const leader = fleet.find(train => train.id === eligibility.pair!.e6Id)!
+  return { id: `coupling-${eligibility.pair.e6Id}-${eligibility.pair.e5Id}`, ...eligibility.pair, phase: hasCouplingCovers(leader.type) ? 'opening' : 'approaching', elapsed: 0, paused: false,
     beforeTrains: fleet.map(trainSnapshot), beforeGroups: groups.map(group => ({ ...group })), separationTravel: 0 }
 }
 
@@ -320,10 +330,12 @@ export function beginDecoupling(tracks: Track[], fleet: readonly TrainRuntime[],
 }
 
 export function deriveNoseStates(fleet: readonly TrainRuntime[], groups: readonly CouplingGroup[], operation: CouplingOperation | null, tracks?: Track[]): Map<string, NoseCouplingState> {
-  const states = new Map(fleet.map(train => [train.id, CLOSED]))
+  const states = new Map(fleet.map(train => [train.id, fixedNoseState(train, CLOSED)]))
   groups.forEach(group => {
     const pair = matchingPair(fleet, group), selected = ends(group)
-    const jointStates = tracks && pair ? pairNoseStates(tracks, pair.e6, pair.e5, selected, LOCKED, true) : [{ ...LOCKED, end: selected.e6End }, { ...LOCKED, end: selected.e5End }]
+    if (!pair) return
+    const jointStates = tracks ? pairNoseStates(tracks, pair.e6, pair.e5, selected, LOCKED, true)
+      : [{ ...fixedNoseState(pair.e6, LOCKED), end: selected.e6End }, { ...fixedNoseState(pair.e5, LOCKED), end: selected.e5End }]
     states.set(group.e6Id, jointStates[0]); states.set(group.e5Id, jointStates[1])
   })
   if (operation) {
@@ -334,8 +346,11 @@ export function deriveNoseStates(fleet: readonly TrainRuntime[], groups: readonl
       : operation.phase === 'locking' ? { ...OPEN, locked: t >= LOCK_TIME }
       : OPEN
     const pair = matchingPair(fleet, operation), selected = ends(operation)
-    const pairStates = tracks && pair ? pairNoseStates(tracks, pair.e6, pair.e5, selected, state) : [{ ...state, end: selected.e6End }, { ...state, end: selected.e5End }]
-    states.set(operation.e6Id, pairStates[0]); states.set(operation.e5Id, pairStates[1])
+    if (pair) {
+      const pairStates = tracks ? pairNoseStates(tracks, pair.e6, pair.e5, selected, state)
+        : [{ ...fixedNoseState(pair.e6, state), end: selected.e6End }, { ...fixedNoseState(pair.e5, state), end: selected.e5End }]
+      states.set(operation.e6Id, pairStates[0]); states.set(operation.e5Id, pairStates[1])
+    }
   }
   return states
 }
@@ -344,7 +359,7 @@ export function stepCouplingSystem(tracks: Track[], fleet: readonly TrainRuntime
   return withTrackGraph(tracks, () => {
     const seconds = Math.min(.1, Math.max(0, Number.isFinite(dtSeconds) ? dtSeconds : 0))
     if (!operation) return { fleet: groupedStep(tracks, fleet, groups, seconds), groups: [...groups], operation: null }
-    if (operation.paused || !seconds) return { fleet: fleet.map(train => ({ ...train })), groups: [...groups], operation }
+    if (operation.paused || !seconds) return { fleet: fleet.map(train => withNose(train, train.noseCoupling ?? CLOSED)), groups: [...groups], operation }
     let op = { ...operation, elapsed: operation.elapsed + seconds }, nextGroups = [...groups]
     const selected = ends(op)
     const activeGroups = groups.filter(group => !(group.e6Id === op.e6Id && group.e5Id === op.e5Id))
@@ -353,6 +368,7 @@ export function stepCouplingSystem(tracks: Track[], fleet: readonly TrainRuntime
     next = next.map(train => withNose(train, states.get(train.id) ?? CLOSED))
     let follower = next.find(train => train.id === op.e5Id), leader = next.find(train => train.id === op.e6Id)
     if (!follower?.position || !leader?.position) return { fleet: next, groups: nextGroups, operation: { ...op, paused: true }, message: 'The coupling operation is paused because its track placement changed.' }
+    if (!supportsCouplingPair(leader.type, follower.type)) return { fleet: next, groups: nextGroups, operation: { ...op, paused: true }, message: 'Coupling requires two Yamanote trains or two Shinkansen trainsets.' }
     const mating: [number, number] = [endIndex(leader, selected.e6End), endIndex(follower, selected.e5End)]
     const pauseOperation = (reason: string): CouplingStep => ({ fleet: next.map(train => train.id === operation.e5Id || train.id === operation.e6Id ? paused(fleet.find(previous => previous.id === train.id) ?? train) : train),
       groups: [...groups], operation: { ...operation, paused: true }, message: reason })
@@ -369,7 +385,7 @@ export function stepCouplingSystem(tracks: Track[], fleet: readonly TrainRuntime
       const prepared = preparedNoses(tracks, leader, advanced.train, op, OPEN)
       const candidate = prepared[1], candidateFootprint = trainFootprint(tracks, candidate)
       if (advanced.stopped || !candidateFootprint.complete || trainFootprintOverlapsItself(candidateFootprint)) return pauseOperation('The whole train needs clear, connected track.')
-      if (physicalTrainFootprintsConflict(trainFootprint(tracks, prepared[0]), candidateFootprint, mating)) return pauseOperation('The nose covers or car bodies would touch. Move the trains to a clearer section.')
+      if (physicalTrainFootprintsConflict(trainFootprint(tracks, prepared[0]), candidateFootprint, mating)) return pauseOperation('The cab couplers or car bodies would touch. Move the trains to a clearer section.')
       for (const other of next) if (other.position && other.id !== follower.id && other.id !== leader.id) {
         const currentOther = trainFootprint(tracks, other), oldOther = fleet.find(train => train.id === other.id)
         if (sweptTrainFootprintsConflict(oldFootprint, candidateFootprint, oldOther ? trainFootprint(tracks, oldOther) : currentOther, currentOther)) return pauseOperation(`Paused safely for ${other.name}. Clear the coupling area before continuing.`)
@@ -381,11 +397,18 @@ export function stepCouplingSystem(tracks: Track[], fleet: readonly TrainRuntime
         if (remaining < 1e-6) op = { ...op, phase: 'locking', elapsed: 0 }
       } else {
         op = { ...op, separationTravel: op.separationTravel + travel }
-        if (op.separationTravel >= COUPLING_SEPARATION_DISTANCE - 1e-6) op = { ...op, phase: 'closing', elapsed: 0 }
+        if (op.separationTravel >= COUPLING_SEPARATION_DISTANCE - 1e-6) {
+          if (!hasCouplingCovers(leader.type)) return {
+            fleet: next.map(train => train.id === op.e5Id || train.id === op.e6Id ? withNose(paused(train), CLOSED) : train),
+            groups: nextGroups, operation: null, message: 'The trains are separated. Their cab couplers remain exposed.',
+          }
+          op = { ...op, phase: 'closing', elapsed: 0 }
+        }
       }
     } else {
       const a = trainFootprint(tracks, leader), b = trainFootprint(tracks, follower)
-      if (physicalTrainFootprintsConflict(a, b, mating)) return pauseOperation('The opening nose covers need more room.')
+      if (physicalTrainFootprintsConflict(a, b, mating)) return pauseOperation(hasCouplingCovers(leader.type) && op.phase === 'opening'
+        ? 'The opening nose covers need more room.' : 'The cab couplers or car bodies need more clearance.')
       for (const other of next) if (other.position && other.id !== follower.id && other.id !== leader.id) {
         const footprint = trainFootprint(tracks, other)
         if (trainFootprintsConflict(a, footprint) || trainFootprintsConflict(b, footprint)) return pauseOperation(`Paused safely for ${other.name}. Clear the coupling area before continuing.`)
@@ -396,7 +419,9 @@ export function stepCouplingSystem(tracks: Track[], fleet: readonly TrainRuntime
         const proposed = [...nextGroups, group], valid = validateCoupledFleet(tracks, next, proposed)
         if (!valid.allowed) return pauseOperation(valid.reason ?? 'The combined formation needs more room.')
         nextGroups = proposed; next = synchronizeCoupledFleet(tracks, next.map(paused), nextGroups)
-        return { fleet: next, groups: nextGroups, operation: null, message: 'The Shinkansen are coupled. Both trainsets now share the driving controls.' }
+        return { fleet: next, groups: nextGroups, operation: null, message: hasCouplingCovers(leader.type)
+          ? 'The Shinkansen are coupled. Both trainsets now share the driving controls.'
+          : 'The Yamanote trains are coupled. Both trainsets now share the driving controls.' }
       } else if (op.phase === 'unlocking' && op.elapsed >= LOCK_TIME) {
         nextGroups = nextGroups.filter(group => group.e5Id !== op.e5Id || group.e6Id !== op.e6Id)
         op = { ...op, phase: 'separating', elapsed: 0, separationTravel: 0 }

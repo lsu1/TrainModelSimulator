@@ -1,14 +1,14 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { makeCouplingDemo } from './couplingDemo'
-import { restoreFleet } from './fleet'
+import { restoreFleet, snapshotFleetLayout } from './fleet'
 import type { TrainRuntime } from './fleet'
 import { noseCouplerProfile } from './couplingTypes'
 import type { CabEnd, CouplingGroup, CouplingOperation, CouplingTrainType } from './couplingTypes'
-import { beginCoupling, beginDecoupling, couplingEligibility, decouplingEligibility, deriveNoseStates, stepCouplingSystem, validateCoupledFleet, COUPLING_OPEN_TIME, COUPLING_CLOSE_TIME } from './couplingMotion'
+import { advanceCoupledFormation, beginCoupling, beginDecoupling, couplingEligibility, decouplingEligibility, deriveNoseStates, stepCouplingSystem, validateCoupledFleet, COUPLING_OPEN_TIME, COUPLING_CLOSE_TIME } from './couplingMotion'
 import { solveCoupledFormation } from './formationPose'
 import { trainFootprint, trainFootprintsConflict } from './trainSafety'
 import { makeKatoPlan02 } from './katoPlan'
-import { advanceTrain, attachTrack, endpoints, sampleBehind } from './track'
+import { advanceTrain, attachTrack, closedRouteLength, endpoints, sampleBehind } from './track'
 import type { Endpoint, Track, TrainPosition } from './track'
 import { getTrainSpec } from './trains'
 import { solveConsistPoses } from './consistPose'
@@ -18,6 +18,8 @@ import { occupiedFleetTrackIds } from './fleetMotion'
 // Let Vitest deliver worker/reporting messages between the CPU-heavy geometry
 // journeys, especially when the full repository suite runs in parallel.
 afterEach(async () => { await new Promise<void>(resolve => setTimeout(resolve, 0)) })
+const SHINKANSEN_TYPES: CouplingTrainType[] = ['e5', 'e6', 'e7']
+const END_PAIRS: [CabEnd, CabEnd][] = [['rear', 'front'], ['front', 'rear'], ['front', 'front'], ['rear', 'rear']]
 
 function fixture() {
   const layout = makeCouplingDemo(), fleet = restoreFleet(layout)
@@ -26,14 +28,16 @@ function fixture() {
 }
 function finish(tracks: ReturnType<typeof makeCouplingDemo>['tracks'], fleet: TrainRuntime[], groups: CouplingGroup[], operation: CouplingOperation) {
   let current = { fleet, groups, operation: operation as CouplingOperation | null }, lastMessage = ''
+  const phases = new Set<CouplingOperation['phase']>()
   for (let tick = 0; tick < 400 && current.operation; tick++) {
+    phases.add(current.operation.phase)
     const next = stepCouplingSystem(tracks, current.fleet, current.groups, current.operation, .1)
     if (next.message) lastMessage = next.message
     if (next.operation?.paused) throw new Error(`${next.operation.phase}: ${next.message}`)
     current = next
   }
   expect(current.operation, lastMessage).toBeNull()
-  return current
+  return { ...current, phases }
 }
 
 describe('Shinkansen docking and mixed formation operation', () => {
@@ -76,7 +80,7 @@ describe('Shinkansen docking and mixed formation operation', () => {
     expect(trainFootprintsConflict(trainFootprint(layout.tracks, split.fleet[0]), trainFootprint(layout.tracks, split.fleet[1]))).toBe(false)
   })
 
-  it('rejects moving, commuter, parallel-lane and occupied docking candidates', () => {
+  it('rejects moving, mixed-family, parallel-lane and occupied docking candidates', () => {
     const { layout, fleet, e5, e6 } = fixture()
     expect(couplingEligibility(layout.tracks, [{ ...e5, running: true }, e6], e5.id, e6.id).allowed).toBe(false)
     expect(couplingEligibility(layout.tracks, [{ ...e5, type: 'e235' }, e6], e5.id, e6.id).allowed).toBe(false)
@@ -191,8 +195,147 @@ describe('Shinkansen docking and mixed formation operation', () => {
 
 })
 
-const SHINKANSEN_TYPES: CouplingTrainType[] = ['e5', 'e6', 'e7']
-const END_PAIRS: [CabEnd, CabEnd][] = [['rear', 'front'], ['front', 'rear'], ['front', 'front'], ['rear', 'rear']]
+describe('exposed Yamanote cab coupling', () => {
+  it.each(END_PAIRS)('joins and splits E235 %s/%s cabs without opening, retracting, or changing car identities', (firstEnd, secondEnd) => {
+    const { tracks, fleet } = playFixture('e235', 'e235', firstEnd, secondEnd)
+    const eligibility = couplingEligibility(tracks, fleet, fleet[1].id, fleet[0].id)
+    expect(eligibility.allowed, eligibility.reason).toBe(true)
+    const operation = beginCoupling(tracks, fleet, [], fleet[1].id, fleet[0].id)!
+    expect(operation.phase).toBe('approaching')
+    const joined = finish(tracks, fleet, [], operation)
+    expect([...joined.phases]).toEqual(['approaching', 'locking'])
+    expect(joined.fleet.map(train => [train.id, train.type, train.carCount]))
+      .toEqual(fleet.map(train => [train.id, train.type, train.carCount]))
+    expect(joined.fleet.find(train => train.id === operation.e6Id)!.position)
+      .toEqual(fleet.find(train => train.id === operation.e6Id)!.position)
+    expect(joined.fleet.every(train => train.noseCoupling?.open === 0 && train.noseCoupling.extension === 1 && train.noseCoupling.locked)).toBe(true)
+    expect(validateCoupledFleet(tracks, joined.fleet, joined.groups).allowed).toBe(true)
+    const disconnect = beginDecoupling(tracks, joined.fleet, joined.groups, joined.groups[0])!
+    expect(disconnect.phase).toBe('unlocking')
+    const split = finish(tracks, joined.fleet, joined.groups, disconnect)
+    expect([...split.phases]).toEqual(['unlocking', 'separating'])
+    expect(split.groups).toEqual([])
+    expect(split.fleet.every(train => !train.running && train.noseCoupling?.open === 0 && train.noseCoupling.extension === 1 && !train.noseCoupling.locked)).toBe(true)
+    expect(trainFootprintsConflict(trainFootprint(tracks, split.fleet[0]), trainFootprint(tracks, split.fleet[1]))).toBe(false)
+  }, 20000)
+
+  it('keeps both independent heads exposed, including stale closed poses and calls without tracks', () => {
+    const { tracks, fleet, group } = playFixture('e235', 'e235')
+    const stale = fleet.map(train => ({ ...train, noseCoupling: { open: 1, extension: 0, locked: false } }))
+    for (const state of deriveNoseStates(stale, [], null).values()) expect(state).toEqual({ open: 0, extension: 1, locked: false })
+    expect(stepCouplingSystem(tracks, stale, [], null, .1).fleet.every(train => train.noseCoupling?.open === 0 && train.noseCoupling.extension === 1)).toBe(true)
+    expect(synchronizeCoupledFleet(tracks, stale, []).every(train => train.noseCoupling?.open === 0 && train.noseCoupling.extension === 1)).toBe(true)
+    for (const state of deriveNoseStates(stale, [group], null).values()) expect(state).toMatchObject({ open: 0, extension: 1, locked: true })
+    const operation = beginCoupling(tracks, fleet, [], fleet[1].id, fleet[0].id)!
+    for (const elapsed of [0, .49, .5]) {
+      for (const state of deriveNoseStates(fleet, [], { ...operation, phase: 'locking', elapsed }).values()) {
+        expect(state).toMatchObject({ open: 0, extension: 1, locked: elapsed >= .5 })
+      }
+    }
+  })
+
+  it('pauses exposed-head approach safely and retains the brief locking and unlocking stages', () => {
+    const { tracks, fleet } = playFixture('e235', 'e235', 'front', 'front')
+    const operation = beginCoupling(tracks, fleet, [], fleet[1].id, fleet[0].id)!
+    const approached = stepCouplingSystem(tracks, fleet, [], operation, .1)
+    const paused = stepCouplingSystem(tracks, approached.fleet, [], { ...approached.operation!, paused: true }, 1)
+    expect(paused.fleet).toEqual(approached.fleet)
+    expect(paused.operation!.elapsed).toBe(approached.operation!.elapsed)
+    const joined = finish(tracks, paused.fleet, [], { ...paused.operation!, paused: false })
+    const disconnect = beginDecoupling(tracks, joined.fleet, joined.groups, joined.groups[0])!
+    let unlocking = { fleet: joined.fleet, groups: joined.groups, operation: disconnect as CouplingOperation | null }
+    for (let tick = 0; tick < 4; tick++) unlocking = stepCouplingSystem(tracks, unlocking.fleet, unlocking.groups, unlocking.operation, .1)
+    expect(unlocking.operation!.phase).toBe('unlocking')
+    expect(unlocking.groups).toHaveLength(1)
+    unlocking = stepCouplingSystem(tracks, unlocking.fleet, unlocking.groups, unlocking.operation, .1)
+    expect(unlocking.operation!.phase).toBe('separating')
+    expect(unlocking.groups).toEqual([])
+  }, 20000)
+
+  it.each(END_PAIRS)('keeps exposed E235 %s/%s fittings clear during a gentle-grade approach and split', (firstEnd, secondEnd) => {
+    const { tracks, fleet } = playFixture('e235', 'e235', firstEnd, secondEnd, { grade: true })
+    const allowed = couplingEligibility(tracks, fleet, fleet[1].id, fleet[0].id)
+    expect(allowed.allowed, allowed.reason).toBe(true)
+    const joined = finish(tracks, fleet, [], beginCoupling(tracks, fleet, [], fleet[1].id, fleet[0].id)!)
+    expect(validateCoupledFleet(tracks, joined.fleet, joined.groups).allowed).toBe(true)
+    const separation = decouplingEligibility(tracks, joined.fleet, joined.groups[0])
+    expect(separation.allowed, separation.reason).toBe(true)
+    const split = finish(tracks, joined.fleet, joined.groups, beginDecoupling(tracks, joined.fleet, joined.groups, joined.groups[0])!)
+    expect(split.groups).toEqual([])
+  }, 20000)
+
+  it('shares the simulator speed setting, pauses and reverses a maximum front-to-front Yamanote formation', () => {
+    const { tracks, fleet } = playFixture('e235', 'e235', 'front', 'front', { counts: [11, 11] })
+    const joined = finish(tracks, fleet, [], beginCoupling(tracks, fleet, [], fleet[1].id, fleet[0].id)!)
+    let moving = joined.fleet.map(train => ({ ...train, running: true, requestedSpeed: 320, actualSpeed: 320 }))
+    for (let tick = 0; tick < 20; tick++) moving = stepCouplingSystem(tracks, moving, joined.groups, null, .1).fleet
+    expect(moving.every(train => train.running && train.requestedSpeed === 90 && train.actualSpeed === 90)).toBe(true)
+    expect(moving.reduce((count, train) => count + train.carCount, 0)).toBe(22)
+    const poses = moving.map(train => solveConsistPoses(tracks, train.position!, train.cabForward, train.carCount, train.type))
+    const stopped = moving.map(train => ({ ...train, running: false, actualSpeed: 0, status: 'stopped' as const }))
+    expect(stepCouplingSystem(tracks, stopped, joined.groups, null, .1).fleet.map(train => train.position)).toEqual(stopped.map(train => train.position))
+    const reversed = stepCouplingSystem(tracks, stopped.map(train => ({ ...train, reverseRequested: true })), joined.groups, null, .1).fleet
+    expect(reversed.map(train => solveConsistPoses(tracks, train.position!, train.cabForward, train.carCount, train.type))).toEqual(poses)
+    expect(reversed.map(train => train.cabForward)).toEqual(stopped.map(train => !train.cabForward))
+    expect(validateCoupledFleet(tracks, reversed, joined.groups).allowed).toBe(true)
+    const split = finish(tracks, reversed, joined.groups, beginDecoupling(tracks, reversed, joined.groups, joined.groups[0])!)
+    expect(split.fleet.every(train => solveConsistPoses(tracks, train.position!, train.cabForward, train.carCount, train.type).cars.every(Boolean))).toBe(true)
+  }, 20000)
+
+  it('retains a front-to-front E235 joint through a whole graded KATO circuit in reverse travel', () => {
+    const tracks = makeKatoPlan02().tracks.map(track => track.switchNumber ? { ...track, switchState: 'branch' as const } : track)
+    const original = restoreFleet(makeCouplingDemo({ firstType: 'e235', secondType: 'e235' }))
+    original[0] = { ...original[0], position: { trackId: 'kato-plan02-main-7', distance: 30, direction: -1, laps: 0 }, cabForward: false }
+    const group = { id: 'yamanote-reversed-circuit', e6Id: original[0].id, e5Id: original[1].id, e6End: 'front' as const, e5End: 'front' as const }
+    let current = synchronizeCoupledFleet(tracks, original, [group])
+    const length = closedRouteLength(tracks, current[0].position!)!
+    let elevated = false, turning = false
+    for (let traveled = 0; traveled <= length; traveled += 75) {
+      const solved = solveCoupledFormation(tracks, current[0], current[1], group)
+      expect(solved.complete).toBe(true)
+      expect(validateCoupledFleet(tracks, current, [group]).allowed).toBe(true)
+      const joint = solved.joint!
+      expect(Math.hypot(joint.e6Mount.x - joint.e5Mount.x, joint.e6Mount.y - joint.e5Mount.y, joint.e6Mount.z - joint.e5Mount.z)).toBeCloseTo(7, 5)
+      elevated ||= [...solved.e6.cars, ...solved.e5.cars].some(car => car!.center.z > 40)
+      turning ||= Math.abs(joint.direction.y) > .01
+      const advanced = advanceCoupledFormation(tracks, current[0], current[1], 75, group)
+      expect(advanced.stopped).toBe(false)
+      current = synchronizeCoupledFleet(tracks, [advanced.e6, advanced.e5], [group])
+    }
+    expect(elevated).toBe(true)
+    expect(turning).toBe(true)
+  }, 20000)
+
+  it('reconstructs exposed locked heads from stable saves and restores pre-approach poses after interruption', () => {
+    const { tracks, fleet } = playFixture('e235', 'e235', 'front', 'front')
+    const operation = beginCoupling(tracks, fleet, [], fleet[1].id, fleet[0].id)!
+    const interrupted = stepCouplingSystem(tracks, fleet, [], operation, .1)
+    expect(interrupted.fleet.find(train => train.id === operation.e5Id)!.position).not.toEqual(fleet.find(train => train.id === operation.e5Id)!.position)
+    const initial = makeCouplingDemo({ firstType: 'e235', secondType: 'e235' })
+    const before = restoreFleet({ ...initial, tracks, trains: operation.beforeTrains, couplings: operation.beforeGroups })
+    expect(before.map(train => train.position)).toEqual(fleet.map(train => train.position))
+    expect([...deriveNoseStates(before, [], null).values()].every(state => state.open === 0 && state.extension === 1 && !state.locked)).toBe(true)
+    const joined = finish(tracks, fleet, [], operation)
+    const saved = snapshotFleetLayout({ ...initial, tracks }, joined.fleet, joined.fleet[0].id, joined.groups)
+    expect(saved.trains!.every(train => !Object.hasOwn(train, 'noseCoupling'))).toBe(true)
+    const restored = synchronizeCoupledFleet(tracks, restoreFleet(JSON.parse(JSON.stringify(saved))), saved.couplings!)
+    expect(restored.every(train => !train.running && train.actualSpeed === 0 && train.noseCoupling?.open === 0 && train.noseCoupling.extension === 1 && train.noseCoupling.locked)).toBe(true)
+    expect(restored.map(train => train.position)).toEqual(joined.fleet.map(train => train.position))
+  }, 20000)
+
+  it.each(SHINKANSEN_TYPES)('rejects E235/%s compatibility, including manually supplied stable groups and operations', type => {
+    const { tracks, fleet, group } = playFixture('e235', 'e235')
+    const mixed = [{ ...fleet[0], type }, fleet[1]]
+    expect(couplingEligibility(tracks, mixed, mixed[0].id, mixed[1].id).allowed).toBe(false)
+    expect(beginCoupling(tracks, mixed, [], mixed[0].id, mixed[1].id)).toBeNull()
+    expect(validateCoupledFleet(tracks, mixed, [group]).allowed).toBe(false)
+    expect(decouplingEligibility(tracks, mixed, group).allowed).toBe(false)
+    expect([...deriveNoseStates(mixed, [group], null).values()].every(state => !state.locked)).toBe(true)
+    const operation = beginCoupling(tracks, fleet, [], fleet[0].id, fleet[1].id)!
+    expect(stepCouplingSystem(tracks, mixed, [], operation, .1).operation!.paused).toBe(true)
+  })
+})
+
 function playFixture(leaderType: CouplingTrainType, followerType: CouplingTrainType, leaderEnd: CabEnd = 'rear', followerEnd: CabEnd = 'front', options: { counts?: [number, number]; curves?: boolean; grade?: boolean; tightCurve?: boolean } = {}) {
   const layout = makeCouplingDemo({ firstType: leaderType, firstCars: options.counts?.[0], secondType: followerType, secondCars: options.counts?.[1] })
   let tracks = layout.tracks

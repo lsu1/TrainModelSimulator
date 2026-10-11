@@ -22,6 +22,7 @@ import { occupiedFleetTrackIds } from "./fleetMotion";
 import { findTrainPlacement, validateTrainPlacement } from "./trainPlacement";
 import { solveConsistPoses } from "./consistPose";
 import type { CouplingGroup, CouplingOperation } from "./couplingTypes";
+import { hasCouplingCovers, supportsCouplingPair } from "./couplingTypes";
 import { couplingEligibility, decouplingEligibility, stepCouplingSystem, synchronizeCoupledFleet, validateCoupledFleet } from "./couplingMotion";
 import { auditClearances, checkPlacement } from "./clearance";
 import { auditEngineering, planRamp, trackGradePercent } from "./engineering";
@@ -156,8 +157,8 @@ export function useRailway() {
   const couplingBusy = couplingOperation !== null;
   const couplingPhase = couplingOperation?.phase ?? (selectedCoupling ? "coupled" : undefined);
   const couplingPartners = useMemo(() => {
-    if (!selectedTrain || selectedCoupling || selectedTrain.type === "e235") return [];
-    return fleet.filter(train => train.id !== selectedTrain.id && train.type !== "e235").map(partner => {
+    if (!selectedTrain || selectedCoupling) return [];
+    return fleet.filter(train => train.id !== selectedTrain.id && supportsCouplingPair(selectedTrain.type, train.type)).map(partner => {
       const result = couplingBusy ? { allowed: false, reason: "Finish the current coupling operation first." }
         : couplingEligibility(tracks, fleet, selectedTrain.id, partner.id, couplings);
       return { id: partner.id, name: partner.name, ...result };
@@ -419,7 +420,7 @@ export function useRailway() {
       ? { ...train, running: true, status: "accelerating", stopReason: undefined }
       : pausedTrain(train), !value);
   };
-  const startCouplingOperation = (pair: Pick<CouplingGroup, "e5Id" | "e6Id" | "e5End" | "e6End">, phase: "opening" | "unlocking") => {
+  const startCouplingOperation = (pair: Pick<CouplingGroup, "e5Id" | "e6Id" | "e5End" | "e6End">, phase: "opening" | "approaching" | "unlocking") => {
     couplingHistoryId.current = activeSavedDesignId;
     const next: CouplingOperation = {
       ...pair, id: crypto.randomUUID(), phase, elapsed: 0, paused: false,
@@ -432,7 +433,9 @@ export function useRailway() {
     setMode("orbit");
     setCameraPreset("coupling");
     setViewRevision(value => value + 1);
-    notify(phase === "opening" ? "Opening both noses. Other trains are paused while these trains join." : "Unlocking the nose couplers. The trains will slowly separate.");
+    notify(phase === "opening" ? "Opening both noses. Other trains are paused while these trains join."
+      : phase === "approaching" ? "Joining the cab couplers. Other trains are paused while these trains join."
+      : "Unlocking the couplers. The trains will slowly separate.");
   };
   const coupleTrains = (partnerId: string) => {
     if (!operationAllowsEdit()) return;
@@ -440,8 +443,8 @@ export function useRailway() {
     const partner = fleetRef.current.find(train => train.id === partnerId);
     if (!selected || !partner) return;
     const result = couplingEligibility(layoutRef.current.tracks, fleetRef.current, selected.id, partner.id, couplingsRef.current);
-    if (!result.allowed || !result.pair) { notify(result.reason ?? "Bring either pair of noses close together on the same clear rails.", true); return; }
-    startCouplingOperation(result.pair, "opening");
+    if (!result.allowed || !result.pair) { notify(result.reason ?? "Bring two cab ends close together on the same clear rails.", true); return; }
+    startCouplingOperation(result.pair, hasCouplingCovers(selected.type) ? "opening" : "approaching");
   };
   const decoupleTrains = () => {
     if (!operationAllowsEdit()) return;

@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import { describe, expect, it, vi } from 'vitest'
 import { NOSE_COUPLER_PROFILES } from './couplingTypes'
 import { createShinkansenCar, shinkansenSurface } from './shinkansenModel'
-import { disposeTrainModel } from './trainModel'
+import { createE235Car, disposeTrainModel } from './trainModel'
 import { getTrainCarSpec } from './trains'
 import { getNoseCouplerDiagnostics, isMechanicalNoseCouplerContact, isNoseCouplingCar, orientNoseCoupler, updateNoseCoupler } from './noseCoupler'
 
@@ -34,7 +34,8 @@ describe('playful Shinkansen retained nose mechanisms', () => {
       expect(isNoseCouplingCar(type, 0, total)).toBe(true)
       expect(isNoseCouplingCar(type, total - 1, total)).toBe(true)
       expect(isNoseCouplingCar(type, 1, total)).toBe(false)
-      expect(isNoseCouplingCar('e235', total - 1, total)).toBe(false)
+      expect(isNoseCouplingCar('e235', total - 1, total)).toBe(true)
+      expect(isNoseCouplingCar('e235', 1, total)).toBe(false)
     }
   })
 
@@ -178,5 +179,81 @@ describe('playful Shinkansen retained nose mechanisms', () => {
     const spies = [...geometries, ...materials].map(resource => vi.spyOn(resource, 'dispose'))
     disposeTrainModel(car)
     spies.forEach(spy => expect(spy).toHaveBeenCalledOnce())
+  })
+})
+
+describe('exposed Yamanote emergency cab couplers', () => {
+  it.each(['front', 'rear'] as const)('%s cab keeps its flat face and a permanently visible under-cab fitting', end => {
+    const index = end === 'front' ? 0 : 2, sign = end === 'front' ? 1 : -1
+    const car = createE235Car(index, 3), profile = NOSE_COUPLER_PROFILES.e235
+    const body = car.getObjectByName('stainless-steel-body') as THREE.Mesh
+    const face = car.getObjectByName('E235-green-front-and-destination') as THREE.Mesh
+    const geometry = body.geometry, faceGeometry = face.geometry
+    const bodyArea = area(geometry), faceArea = area(faceGeometry)
+    const head = car.getObjectByName('cab-mechanical-coupler-head') as THREE.Mesh
+    const shank = car.getObjectByName('cab-mechanical-coupler-shank') as THREE.Mesh
+    expect(car.getObjectByName('cab-coupler')).toBeUndefined()
+    expect(car.getObjectByName(`gangway-${end}`)).toBeUndefined()
+    expect(car.getObjectByName('nose-opening-cover-left')).toBeUndefined()
+    expect(car.getObjectByName('nose-opening-cover-right')).toBeUndefined()
+    for (const state of [
+      { open: 0, extension: 0, locked: false },
+      { open: .5, extension: .5, locked: false },
+      { open: 1, extension: 1, locked: true },
+    ]) {
+      updateNoseCoupler(car, { ...state, end })
+      const diagnostic = getNoseCouplerDiagnostics(car)!
+      expect(diagnostic.mechanism).toBe('exposed')
+      expect(diagnostic.coverTransforms).toEqual([])
+      expect(diagnostic.state).toMatchObject({ open: 0, extension: 1, locked: state.locked, end })
+      expect(diagnostic.pivot.x).toBeCloseTo(sign * (133.3 / 2 - profile.mountInset), 7)
+      expect(diagnostic.pivot.y).toBe(profile.height)
+      expect(diagnostic.matingFace.x).toBeCloseTo(sign * (133.3 / 2 + 2.5), 7)
+      expect(diagnostic.pivot.distanceTo(diagnostic.matingFace)).toBeCloseTo(profile.extensionLength, 7)
+      expect(head.visible && shank.visible).toBe(true)
+      expect(head.scale.toArray()).toEqual([1, 1, 1])
+      expect(shank.scale.toArray()).toEqual([1, 1, 1])
+      expect(body.geometry).toBe(geometry)
+      expect(face.geometry).toBe(faceGeometry)
+      expect(area(body.geometry)).toBe(bodyArea)
+      expect(area(face.geometry)).toBe(faceArea)
+    }
+    const contact: THREE.Object3D[] = []
+    car.traverse(object => { if (isMechanicalNoseCouplerContact(object)) contact.push(object) })
+    expect(contact).toEqual([head])
+    expect(isMechanicalNoseCouplerContact(shank)).toBe(false)
+    head.geometry.computeBoundingBox()
+    const actualMatingFace = head.localToWorld(new THREE.Vector3(head.geometry.boundingBox!.max.x, 0, 0))
+    expect(actualMatingFace.distanceTo(getNoseCouplerDiagnostics(car)!.matingFace)).toBeLessThan(1e-7)
+    disposeTrainModel(car)
+  })
+
+  it.each(['front', 'rear'] as const)('%s head swivels at rigid reach and only its selected cab locks', end => {
+    const index = end === 'front' ? 0 : 2, sign = end === 'front' ? 1 : -1
+    const car = createE235Car(index, 3), profile = NOSE_COUPLER_PROFILES.e235
+    const baseline = getNoseCouplerDiagnostics(car)!
+    const direction = new THREE.Vector3(sign, .08, -.16).normalize()
+    const target = baseline.pivot.clone().addScaledVector(direction, profile.extensionLength)
+    expect(orientNoseCoupler(car, target)).toBe(true)
+    expect(getNoseCouplerDiagnostics(car)!.matingFace.distanceTo(target)).toBeLessThan(1e-7)
+    const axis = new THREE.Vector3(1, .06, -.12).normalize()
+    updateNoseCoupler(car, { open: 0, extension: 1, locked: true, end, axis: { x: axis.x, y: axis.y, z: axis.z } })
+    const actual = getNoseCouplerDiagnostics(car)!, carAxis = new THREE.Vector3(sign * axis.x, axis.y, sign * axis.z)
+    expect(actual.matingFace.distanceTo(actual.pivot.clone().addScaledVector(carAxis, profile.extensionLength))).toBeLessThan(1e-7)
+    expect(actual.pivot.distanceTo(actual.matingFace)).toBeCloseTo(profile.extensionLength, 7)
+    expect(actual.coverTransforms).toEqual([])
+    updateNoseCoupler(car, { open: 0, extension: 1, locked: true, end: end === 'front' ? 'rear' : 'front', axis })
+    expect(getNoseCouplerDiagnostics(car)!.state).toMatchObject({ open: 0, extension: 1, locked: false })
+    expect(getNoseCouplerDiagnostics(car)!.matingFace).toEqual(baseline.matingFace)
+    disposeTrainModel(car)
+  })
+
+  it('keeps intermediate E235 cars and their inter-car gangways independent of cab fittings', () => {
+    const car = createE235Car(1, 3)
+    expect(getNoseCouplerDiagnostics(car)).toBeNull()
+    expect(car.getObjectByName('cab-mechanical-coupler-head')).toBeUndefined()
+    expect(car.getObjectByName('gangway-front')).toBeDefined()
+    expect(car.getObjectByName('gangway-rear')).toBeDefined()
+    disposeTrainModel(car)
   })
 })
