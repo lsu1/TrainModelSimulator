@@ -107,6 +107,73 @@ describe('playful Shinkansen retained nose mechanisms', () => {
     disposeTrainModel(car)
   })
 
+  it.each(cabs)('$type $end follows a rounded mirrored rigid sweep and closes along exactly the opening path', ({ type, index, end }) => {
+    const car = createShinkansenCar(index, 3, type)
+    const exterior = car.getObjectByName('smooth-aerodynamic-exterior')!
+    const covers = ['left', 'right'].map(side => car.getObjectByName(`nose-opening-cover-${side}`)!)
+    const profile = NOSE_COUPLER_PROFILES[type], spec = getTrainCarSpec(type, index, 3)
+    // A point near the tip detects actual rotation around the cap, rather than
+    // merely reading a translation which hides the source-coordinate pivot.
+    const point = new THREE.Vector3(spec.length / 2, profile.height, .5)
+    const sample = (open: number) => {
+      updateNoseCoupler(car, { open, extension: 0, locked: false, end })
+      const transformed = exterior.worldToLocal(covers[0].localToWorld(point.clone()))
+      return { transformed, diagnostics: getNoseCouplerDiagnostics(car)!.coverTransforms }
+    }
+    const opening = Array.from({ length: 41 }, (_, i) => sample(i / 40))
+    const midpoint = opening[20].diagnostics
+    expect(Math.abs(midpoint[0].quaternion[1])).toBeGreaterThan(.05)
+    expect(midpoint[0].position[0]).toBeCloseTo(midpoint[1].position[0], 12)
+    expect(midpoint[0].position[1]).toBeCloseTo(midpoint[1].position[1], 12)
+    expect(midpoint[0].position[2]).toBeCloseTo(-midpoint[1].position[2], 12)
+    expect(midpoint[0].quaternion[1]).toBeCloseTo(-midpoint[1].quaternion[1], 12)
+    expect(midpoint[0].quaternion[3]).toBeCloseTo(midpoint[1].quaternion[3], 12)
+    const a = opening[8].transformed, b = opening[20].transformed, c = opening[32].transformed
+    expect(Math.abs((b.x - a.x) * (c.z - a.z) - (b.z - a.z) * (c.x - a.x))).toBeGreaterThan(2)
+    for (let i = 40; i >= 0; i--) {
+      const closing = sample(i / 40)
+      expect(closing.diagnostics).toEqual(opening[i].diagnostics)
+      expect(closing.transformed.toArray()).toEqual(opening[i].transformed.toArray())
+    }
+    for (const i of [0, 40]) for (const cover of opening[i].diagnostics) {
+      expect(cover.quaternion).toEqual([0, 0, 0, 1])
+    }
+    // Source vertices already sit near the cab end. A compensated pivot keeps
+    // the rigid tip in the nose's vicinity throughout the sweep.
+    for (const { transformed } of opening) expect(transformed.distanceTo(point)).toBeLessThan(profile.cutBack + 14)
+    disposeTrainModel(car)
+  })
+
+  it.each(types)('%s has smooth velocity and acceleration through the old slide-stage boundaries', type => {
+    const car = createShinkansenCar(0, 3, type), spec = getTrainCarSpec(type, 0, 3)
+    const cover = car.getObjectByName('nose-opening-cover-left')!
+    const point = new THREE.Vector3(spec.length / 2, 9.5, .5), h = .0001
+    const sample = (open: number) => {
+      updateNoseCoupler(car, { open, extension: 0, locked: false, end: 'front' })
+      return cover.localToWorld(point.clone())
+    }
+    const acceleration = (open: number) => sample(open + h).add(sample(open - h)).addScaledVector(sample(open), -2).multiplyScalar(1 / h ** 2)
+    for (const boundary of [.14, .17, .18, .22, .44, .48, .51, .55]) {
+      expect(acceleration(boundary - h).distanceTo(acceleration(boundary + h))).toBeLessThan(2)
+    }
+    expect(sample(h).distanceTo(sample(0)) / h).toBeLessThan(.0001)
+    expect(sample(1).distanceTo(sample(1 - h)) / h).toBeLessThan(.0001)
+    disposeTrainModel(car)
+  })
+
+  it('shares the same normalized panel rotation for E5, E6, and E7', () => {
+    const cars = types.map(type => createShinkansenCar(0, 3, type))
+    for (const open of [.1, .25, .5, .75, .9]) {
+      const rotations = cars.map(car => {
+        updateNoseCoupler(car, { open, extension: 0, locked: false, end: 'front' })
+        return getNoseCouplerDiagnostics(car)!.coverTransforms.map(cover => cover.quaternion)
+      })
+      expect(rotations[1]).toEqual(rotations[0])
+      expect(rotations[2]).toEqual(rotations[0])
+    }
+    cars.forEach(disposeTrainModel)
+  })
+
   it.each(cabs)('$type $end exposes the contractual mount and extended face on the physical cab end', ({ type, index, sign, end }) => {
     const spec = getTrainCarSpec(type, index, 3), profile = NOSE_COUPLER_PROFILES[type]
     const car = createShinkansenCar(index, 3, type, { open: 1, extension: 1, locked: true, end })

@@ -9,6 +9,8 @@ type Vertex = Record<string, number[]>
 interface NoseRig {
   profile: NoseCouplerProfile
   end: CabEnd
+  /** Cover geometry uses cab coordinates, so yaw needs a local cap pivot. */
+  coverPivotX?: number
   covers: { side: -1 | 1; group: THREE.Group }[]
   pivot: THREE.Object3D
   face: THREE.Object3D
@@ -227,7 +229,8 @@ export function attachNoseCoupler(
   box(slide, [.35, .45, .85], [.75, .97, 2.08], graphite, 'nose-coupler-electrical-connector', 'connector')
   box(slide, [.55, .55, .55], [.45, -.85, -1.9], graphite, 'nose-coupler-air-connector', 'connector')
   const face = new THREE.Object3D(); face.name = 'nose-coupler-mating-face'; face.position.x = 2.6; slide.add(face)
-  const rig: NoseRig = { profile, end, covers, pivot, face, head, gimbal, slide, state: { open: -1, extension: -1, locked: false } }
+  const rig: NoseRig = { profile, end, covers, coverPivotX: spec.length / 2 - profile.cutBack * .55,
+    pivot, face, head, gimbal, slide, state: { open: -1, extension: -1, locked: false } }
   rigs.set(car, rig)
   car.userData.noseCouplingEnd = end
   car.userData.noseCouplingProfile = { ...profile }
@@ -262,8 +265,10 @@ export function attachExposedCabCoupler(car: THREE.Group, spec: TrainSpec, end: 
 
 function unit(value: number): number { return Number.isFinite(value) ? THREE.MathUtils.clamp(value, 0, 1) : 0 }
 
-/** Covers translate as rigid pieces: clear the seam, move apart, then retract
- * inside the retained shell. Series have distinct distances and timing.
+/** Both curved cap halves follow one continuous inward sweep. This shared
+ * photographic approximation is a rigid motion, not a measured linkage:
+ * a rounded path clears the seam and tucks the panels inside, with modest yaw
+ * about the cap itself. Closing evaluates the exact same path in reverse.
  */
 export function updateNoseCoupler(car: THREE.Object3D, state: NoseCouplingState): boolean {
   const rig = rigs.get(car)
@@ -282,14 +287,27 @@ export function updateNoseCoupler(car: THREE.Object3D, state: NoseCouplingState)
     && next.axis?.x === rig.state.axis?.x && next.axis?.y === rig.state.axis?.y && next.axis?.z === rig.state.axis?.z) return false
   rig.state = next
   const e5 = rig.profile.type === 'e5', e7 = rig.profile.type === 'e7'
-  const clear = THREE.MathUtils.smoothstep(next.open, 0, e5 ? .18 : .22)
-  const spread = THREE.MathUtils.smoothstep(next.open, e5 ? .14 : .17, e5 ? .48 : .55)
-  const retract = THREE.MathUtils.smoothstep(next.open, e5 ? .44 : .51, 1)
+  // Quintic easing leaves zero speed and acceleration at the closed/stowed
+  // endpoints. A single cubic path has no separate slide stages or corners.
+  const progress = next.open ** 3 * (next.open * (next.open * 6 - 15) + 10)
+  const remaining = 1 - progress
+  const first = 3 * remaining ** 2 * progress, second = 3 * remaining * progress ** 2
+  const last = progress ** 3
+  // Stow depths/offsets fit the existing three shells; the normalized path and
+  // easing are identical. Endpoint poses retain the complete cap inside them.
+  const depth = rig.profile.cutBack + (e5 ? 5.9 : e7 ? 11.1 : 6.1)
+  const longitudinal = first * rig.profile.cutBack * .16 - second * depth * .18 - last * depth
+  const lateral = first * rig.profile.cutBack * .22 + second * rig.profile.cutBack * .26 + last * (e7 ? .15 : .25)
+  const yaw = progress === 0 || progress === 1 ? 0 : .16 * Math.sin(Math.PI * progress)
   for (const { side, group } of rig.covers) {
-    group.position.set((e5 ? 1.1 : .9) * clear - (rig.profile.cutBack + (e7 ? 12.0 : 7.0)) * retract,
-      -(e5 ? .12 : .24) * retract, side * ((e5 ? 2.25 : 1.95) * spread - (e5 ? 2.0 : e7 ? 1.8 : 1.7) * retract))
+    // p - R p compensates for source vertices already being positioned at the
+    // cab tip. Rotating their group about the train origin would fling them.
+    const angle = yaw === 0 ? 0 : -side * yaw, pivotX = rig.coverPivotX ?? 0
+    group.rotation.y = angle
+    group.position.set(longitudinal + pivotX * (1 - Math.cos(angle)),
+      -(e5 ? .12 : .24) * progress, side * lateral + pivotX * Math.sin(angle))
     group.children.forEach(child => {
-      if (child.name === 'nose-fairing-stow-lift') child.position.set(0, 2.4 * retract, -side * 3.5 * retract)
+      if (child.name === 'nose-fairing-stow-lift') child.position.set(0, 2.4 * progress, -side * 3.5 * progress)
     })
   }
   rig.slide.position.x = exposed ? 0 : (rig.profile.extensionLength - 2.6) * next.extension
