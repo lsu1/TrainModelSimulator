@@ -279,7 +279,8 @@ test('train choice survives browser reload, independent named layouts, file back
   await expect(selector(page)).toHaveValue('e6');
   await expect(scene(page)).toHaveAttribute('data-train-type', 'e6');
   await page.getByRole('button', { name: 'Layouts', exact: true }).click();
-  await page.getByRole('dialog').getByRole('button', { name: 'Open saved layout Our green Shinkansen', exact: true }).click();
+  await page.getByRole('dialog').getByRole('combobox', { name: 'Choose a layout', exact: true }).selectOption({ label: 'Our green Shinkansen' });
+  await page.getByRole('dialog').getByRole('button', { name: 'Open layout', exact: true }).click();
   await expect(selector(page)).toHaveValue('e5');
   await selector(page).selectOption('e6');
   await page.getByRole('button', { name: 'Undo last change', exact: true }).click();

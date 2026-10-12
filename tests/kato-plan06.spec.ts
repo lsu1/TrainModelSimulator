@@ -40,7 +40,9 @@ async function fleet(page: Page): Promise<RenderedTrain[]> {
 
 async function choose(page: Page, name: string) {
   await page.getByRole('button', { name: 'Layouts', exact: true }).click()
-  await page.getByRole('dialog').getByRole('button', { name: new RegExp(`^${name}`) }).click()
+  const chooser = page.getByRole('dialog')
+  await chooser.getByRole('combobox', { name: 'Choose a layout', exact: true }).selectOption({ label: name })
+  await chooser.getByRole('button', { name: 'Open layout', exact: true }).click()
   await expect(page.getByRole('dialog')).toHaveCount(0)
   await advance(page)
 }

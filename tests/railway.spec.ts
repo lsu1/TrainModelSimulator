@@ -22,7 +22,9 @@ async function openRailway(page: Page) {
 
 async function chooseLayout(page: Page, name: string) {
   await page.getByRole('button', { name: 'Layouts', exact: true }).click();
-  await page.getByRole('dialog').getByRole('button', { name: new RegExp(`^${name}`) }).click();
+  const chooser = page.getByRole('dialog');
+  await chooser.getByRole('combobox', { name: 'Choose a layout', exact: true }).selectOption({ label: name === 'KATO M1' ? 'KATO M1 + V1 + V2' : name });
+  await chooser.getByRole('button', { name: 'Open layout', exact: true }).click();
 }
 
 async function startFresh(page: Page) {
@@ -55,7 +57,9 @@ async function saveDesign(page: Page, name: string, action: 'Save layout' | 'Sav
 
 async function openSavedDesign(page: Page, name: string) {
   await page.getByRole('button', { name: 'Layouts', exact: true }).click();
-  await page.getByRole('dialog').getByRole('button', { name: `Open saved layout ${name}`, exact: true }).click();
+  const chooser = page.getByRole('dialog');
+  await chooser.getByRole('combobox', { name: 'Choose a layout', exact: true }).selectOption({ label: name });
+  await chooser.getByRole('button', { name: 'Open layout', exact: true }).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(page.getByRole('heading', { name, exact: true })).toBeVisible();
 }
@@ -643,7 +647,7 @@ test('named saved layouts keep independent designs through fresh starts, reloads
   expect((await savedDesigns(page)).designs).toHaveLength(3);
   await libraryDialog.getByRole('button', { name: 'Delete saved layout Station at night', exact: true }).click();
   await libraryDialog.getByRole('button', { name: 'Confirm delete Station at night', exact: true }).click();
-  await expect(libraryDialog.getByRole('button', { name: 'Open saved layout Station at night', exact: true })).toHaveCount(0);
+  await expect(libraryDialog.getByRole('combobox', { name: 'Choose a layout', exact: true }).locator(`option[value="saved:${forkId}"]`)).toHaveCount(0);
   expect((await savedDesigns(page)).designs).toHaveLength(2);
   expect(await currentRailway(page), 'Deleting a saved snapshot keeps the design on the table').toEqual(fork);
   expect((await savedLayout(page)).savedDesignId).toBeUndefined();
@@ -763,8 +767,9 @@ test('Save layout focuses the name, traps keyboard focus, and fits a small scree
   await expect(dialog).toHaveCount(0);
   await expect(saveButton).toBeFocused();
   await page.getByRole('button', { name: 'Layouts', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Your saved layouts', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: `Open saved layout ${longName}`, exact: true })).toBeVisible();
+  await expect(page.getByRole('combobox', { name: 'Choose a layout', exact: true }).locator('optgroup[label="Your saved layouts"]')).toHaveCount(1);
+  await expect(page.getByRole('dialog').locator('.layout-selection-details')).toContainText(longName);
+  await expect(page.getByRole('dialog').getByRole('button', { name: 'Open layout', exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.keyboard.press('Escape');
   await saveButton.click();

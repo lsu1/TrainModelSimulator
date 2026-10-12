@@ -1,6 +1,6 @@
 # 新干线与在来线交错运行 — KATO plan 06-15
 
-Open **Layouts → Sample layouts → 新干线与在来线交错运行**. This adds a separate preset; existing layouts, the startup layout, saved designs, train models, and driving controls retain their behavior. The preset opens paused with three-car E235, E5, and E6 trainsets. E7 remains available through the existing train editor.
+Open **Layouts**, select **新干线与在来线交错运行** under **Sample layouts** in the **Choose a layout** dropdown, then press **Open layout**. This adds a separate preset; existing layouts, the startup layout, saved designs, train models, and driving controls retain their behavior. The preset opens paused with three-car E235, E5, and E6 trainsets. E7 remains available through the existing train editor.
 
 ## Official references
 

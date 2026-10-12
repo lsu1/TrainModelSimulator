@@ -426,7 +426,8 @@ test('fleet identity, positions, directions and speeds survive named saves, file
   await advance(page, 100);
   expect((await fleet(page)).map(value => value.id)).toEqual(['first', 'second']);
   await page.getByRole('button', { name: 'Layouts', exact: true }).click();
-  await page.getByRole('dialog').getByRole('button', { name: 'Open saved layout Two independent Shinkansen', exact: true }).click();
+  await page.getByRole('dialog').getByRole('combobox', { name: 'Choose a layout', exact: true }).selectOption({ label: 'Two independent Shinkansen' });
+  await page.getByRole('dialog').getByRole('button', { name: 'Open layout', exact: true }).click();
   await advance(page, 100);
   expect((await fleet(page)).map(value => value.position)).toEqual(snapshot.trains.map((value: TrainSnapshot) => value.position));
 });

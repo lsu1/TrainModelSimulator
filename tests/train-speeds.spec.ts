@@ -160,7 +160,8 @@ test('Shinkansen speeds above 120 and a zero request survive named saves, reload
   expect((await fleet(page)).map(value => value.requestedSpeed)).toEqual(expectedSpeeds);
   expect((await fleet(page)).map(value => value.position)).toEqual(snapshot.trains.map((value: TrainSnapshot) => value.position));
   await page.getByRole('button', { name: 'Layouts', exact: true }).click();
-  await page.getByRole('dialog').getByRole('button', { name: 'Open saved layout Our express speeds', exact: true }).click();
+  await page.getByRole('dialog').getByRole('combobox', { name: 'Choose a layout', exact: true }).selectOption({ label: 'Our express speeds' });
+  await page.getByRole('dialog').getByRole('button', { name: 'Open layout', exact: true }).click();
   await advance(page, 100);
   expect((await fleet(page)).map(value => value.requestedSpeed)).toEqual(expectedSpeeds);
   await select(page, 'set-3');

@@ -4,7 +4,9 @@
 
 A 3D KATO N scale railway playground for a young conductor on a Mac. Build layouts, arrange stations and bridges, explore overpasses, and run independent E235 Yamanote Line, E5, E6, and E7 Shinkansen trainsets together. Visitors need no download, installation, account, or API key. Use a current browser with WebGL 2 graphics support.
 
-Version **0.14.1** refines the Shinkansen nose covers with a shared smooth inward opening and closing effect for **E5, E6, and E7**. Their original nose shapes, paint, coupling controls, and saved layouts remain intact. See [the motion and reference notes](docs/shinkansen-nose-coupling.md).
+Version **0.14.2** replaces the growing Layouts lists with a compact dropdown for **Your saved layouts** and **Sample layouts**. Select a layout to see its details, then choose **Open layout**. Existing saved designs, backups, undo, and preset tracks remain supported.
+
+Version **0.14.1** refined the Shinkansen nose covers with a shared smooth inward opening and closing effect for **E5, E6, and E7**. Their original nose shapes, paint, coupling controls, and saved layouts remain intact. See [the motion and reference notes](docs/shinkansen-nose-coupling.md).
 
 Version **0.14.0** added **新干线与在来线交错运行**, a separate preset based on KATO plan 06-15, with elevated and ground routes, stations, a yard, four blue truss bridges, and 24 turnouts. Existing layouts and the startup design retain their behavior. See [the plan and assembly notes](docs/kato-plan06-15.md).
 
@@ -13,7 +15,7 @@ Version **0.13.0** added cab-to-cab coupling between two E235 Yamanote trainsets
 ## Explore and build
 
 - **Look around:** drag to orbit, right-drag to pan, and scroll to zoom. On a Mac trackpad, use a secondary click to pan. **3D view**, **Top view**, **Train view**, and the fit-view button provide different ways to explore the railway.
-- **Choose a layout:** open **Layouts** for **KATO M1 + V1 + V2** (official plan 02-1A with a passing siding, red bridge, slopes, and a three-car train), **Tokyo Railway** (wide loop and 11-car train), **Sky Railway** (60 mm elevated loop above a separate ground-level line), **Small Railway**, **A fresh adventure**, or **新干线与在来线交错运行** (KATO plan 06-15, with separate elevated and ground railways).
+- **Choose a layout:** open **Layouts**, use the **Choose a layout** dropdown, and press **Open layout**. The menu groups your saved designs and sample railways, including **KATO M1 + V1 + V2** (official plan 02-1A with a passing siding, red bridge, slopes, and a three-car train), **Tokyo Railway** (wide loop and 11-car train), **Sky Railway** (60 mm elevated loop above a separate ground-level line), **Small Railway**, **A fresh adventure**, or **新干线与在来线交错运行** (KATO plan 06-15, with separate elevated and ground railways).
 - **Place pieces:** search the track box by name, radius, length, or KATO product number. Click a piece to add it, or drag it into the scene. Click a green connector before choosing a track to attach it at that connector's height. Curved pieces have left/right bend controls.
 - **Arrange the layout:** choose **Move pieces**, then drag existing tracks or scenery. Nearby compatible track connectors snap together. Select a piece to rotate it by 45°, remove it, or change its height. **Placed pieces** also lets you select an item from a list.
 - **Name your stations:** select a platform or station building in the scene or **Placed pieces**, enter its **Station name**, and press **Apply name** (or Enter). Each piece has its own name, with up to 60 characters including Japanese and English. The 3D sign updates without stopping a running train. **Reset to default**, or applying a blank name, restores the original label. Names stay with autosaves, named layouts, and exported layout files; older layouts retain their existing signs.

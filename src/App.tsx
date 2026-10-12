@@ -33,7 +33,7 @@ import type { CatalogCategory, CatalogItem } from "./catalogTypes";
 import { CATALOG, useRailway } from "./useRailway";
 import { TRAIN_TYPES, getTrainSpec } from "./trains";
 import type { TrainType } from "./trains";
-import type { LayoutData } from "./layout";
+import type { LayoutData, LayoutPreset } from "./layout";
 import {
   CheckSummary,
   RampBuilder,
@@ -60,6 +60,49 @@ const TRAIN_DESCRIPTIONS: Record<TrainType, string> = {
   e6: "Red and silver with a pointed nose",
   e7: "Blue and white with a copper stripe",
 };
+const LAYOUT_PRESETS: {
+  kind: LayoutPreset;
+  title: string;
+  text: string;
+  icon: typeof Route;
+}[] = [
+  {
+    kind: "kato-plan02",
+    title: "KATO M1 + V1 + V2",
+    text: "Plan 02-1A · a red bridge, slopes and a passing siding.",
+    icon: Mountain,
+  },
+  {
+    kind: "city",
+    title: "Tokyo Railway",
+    text: "A wide loop, a station, and the full 11-car E235.",
+    icon: Building2,
+  },
+  {
+    kind: "viaduct",
+    title: "Sky Railway",
+    text: "An elevated line with a ground-level track passing below.",
+    icon: Mountain,
+  },
+  {
+    kind: "compact",
+    title: "Small Railway",
+    text: "A compact loop with a three-car train to experiment with.",
+    icon: Route,
+  },
+  {
+    kind: "empty",
+    title: "A fresh adventure",
+    text: "An empty world. Drag, connect, and build it your way.",
+    icon: Plus,
+  },
+  {
+    kind: "kato-plan06-15",
+    title: "新干线与在来线交错运行",
+    text: "KATO plan 06-15 · an elevated double-track line, local routes, stations and a yard.",
+    icon: Layers3,
+  },
+];
 function savedTrainSummary(layout: LayoutData): string {
   if (!layout.trains) {
     return `${getTrainSpec(layout.trainType).name} · ${layout.carCount} cars`;
@@ -158,6 +201,8 @@ export default function App() {
   } = h;
   const [saveName, setSaveName] = useState(layout.name);
   const [deleteDesignId, setDeleteDesignId] = useState<string | null>(null);
+  const [layoutChoice, setLayoutChoice] = useState("");
+  const layoutsWasOpen = useRef(false);
   const saveNameInput = useRef<HTMLInputElement>(null);
   useEffect(() => {
     setDeleteDesignId(null);
@@ -167,6 +212,29 @@ export default function App() {
       saveNameInput.current?.select();
     }
   }, [h.modal, layout.name]);
+  useEffect(() => {
+    const isOpen = h.modal === "layouts";
+    if (isOpen && !layoutsWasOpen.current) {
+      const activeDesign = h.savedDesigns.find(
+        (design) => design.id === h.activeSavedDesignId,
+      );
+      setLayoutChoice(activeDesign ? `saved:${activeDesign.id}` : "");
+      setDeleteDesignId(null);
+    }
+    layoutsWasOpen.current = isOpen;
+  }, [h.modal, h.activeSavedDesignId, h.savedDesigns]);
+  const selectedSavedDesign = layoutChoice.startsWith("saved:")
+    ? h.savedDesigns.find((design) => design.id === layoutChoice.slice(6))
+    : undefined;
+  const selectedPreset = layoutChoice.startsWith("preset:")
+    ? LAYOUT_PRESETS.find((preset) => preset.kind === layoutChoice.slice(7))
+    : undefined;
+  const hasSelectedLayout = !!selectedSavedDesign || !!selectedPreset;
+  const openSelectedLayout = () => {
+    if (h.couplingBusy) return;
+    if (selectedSavedDesign) h.openSavedDesign(selectedSavedDesign.id);
+    else if (selectedPreset) h.chooseLayout(selectedPreset.kind);
+  };
   const saveDesign = (asCopy = false) => {
     if (h.saveDesign(saveName, asCopy)) h.setModal(null);
   };
@@ -816,9 +884,38 @@ export default function App() {
                   Save your design before starting a new idea. Undo brings back
                   your previous railway.
                 </p>
-                <h3 className="saved-layout-heading">Your saved layouts</h3>
+                <div className="layout-picker">
+                  <label htmlFor="layout-choice">Choose a layout</label>
+                  <select
+                    id="layout-choice"
+                    value={hasSelectedLayout ? layoutChoice : ""}
+                    disabled={h.couplingBusy}
+                    onChange={(event) => {
+                      setLayoutChoice(event.target.value);
+                      setDeleteDesignId(null);
+                    }}
+                  >
+                    <option value="">Choose a layout…</option>
+                    {h.savedDesigns.length > 0 && (
+                      <optgroup label="Your saved layouts">
+                        {h.savedDesigns.map((design) => (
+                          <option key={design.id} value={`saved:${design.id}`}>
+                            {design.name}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                    <optgroup label="Sample layouts">
+                      {LAYOUT_PRESETS.map((preset) => (
+                        <option key={preset.kind} value={`preset:${preset.kind}`}>
+                          {preset.title}
+                        </option>
+                      ))}
+                    </optgroup>
+                  </select>
+                </div>
                 <p className="saved-layout-hint">
-                  These designs stay in this browser on this computer. All saved
+                  Saved designs stay in this browser on this computer. All saved
                   trains reopen stopped, ready for their next journey.
                 </p>
                 {h.savedDesignsError && (
@@ -826,142 +923,92 @@ export default function App() {
                     {h.savedDesignsError}
                   </p>
                 )}
-                {h.savedDesigns.length ? (
-                  <div className="saved-layout-list">
-                    {h.savedDesigns.map((design) => (
-                      <div className="saved-layout-row" key={design.id}>
-                        <div className="saved-layout-description">
-                          <strong>{design.name}</strong>
-                          <small>
-                            {savedTrainSummary(design.layout)}
-                          </small>
-                          <small>
-                            {design.layout.tracks.length} tracks ·{" "}
-                            {design.layout.accessories.length} scenery ·{" "}
-                            {new Date(design.updatedAt).toLocaleDateString(
-                              undefined,
-                              { year: "numeric", month: "short", day: "numeric" },
-                            )}
-                          </small>
-                          {h.activeSavedDesignId === design.id && (
-                            <span className="saved-layout-current">
-                              Current saved design
-                            </span>
-                          )}
-                        </div>
-                        {deleteDesignId === design.id ? (
-                          <div className="saved-layout-delete-confirm">
-                            <p>Delete this saved layout?</p>
-                            <div>
-                              <button
-                                className="button secondary"
-                                autoFocus
-                                onClick={() => setDeleteDesignId(null)}
-                              >
-                                Keep layout
-                              </button>
-                              <button
-                                className="button delete-layout-button"
-                                disabled={h.couplingBusy}
-                                aria-label={`Confirm delete ${design.name}`}
-                                onClick={() => {
-                                  if (h.deleteSavedDesign(design.id)) {
-                                    setDeleteDesignId(null);
-                                  }
-                                }}
-                              >
-                                Delete layout
-                              </button>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="saved-layout-actions">
-                            <button
-                              className="button secondary"
-                              disabled={h.couplingBusy}
-                              aria-label={`Open saved layout ${design.name}`}
-                              onClick={() => h.openSavedDesign(design.id)}
-                            >
-                              <FolderOpen size={16} />
-                              Open
-                            </button>
-                            <button
-                              className="icon-button"
-                              disabled={h.couplingBusy}
-                              aria-label={`Delete saved layout ${design.name}`}
-                              onClick={() => setDeleteDesignId(design.id)}
-                            >
-                              <Trash2 size={17} />
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                ) : (
+                {!h.savedDesigns.length && (
                   <p className="saved-layout-empty">
                     No saved layouts yet. Choose Save layout to keep your
                     current design.
                   </p>
                 )}
-                <h3 className="saved-layout-heading preset-heading">
-                  Sample layouts
-                </h3>
-                <div className="layout-options">
-                  {(
-                    [
-                      {
-                        kind: "kato-plan02",
-                        title: "KATO M1 + V1 + V2",
-                        text: "Plan 02-1A · a red bridge, slopes and a passing siding.",
-                        icon: Mountain,
-                      },
-                      {
-                        kind: "city",
-                        title: "Tokyo Railway",
-                        text: "A wide loop, a station, and the full 11-car E235.",
-                        icon: Building2,
-                      },
-                      {
-                        kind: "viaduct",
-                        title: "Sky Railway",
-                        text: "An elevated line with a ground-level track passing below.",
-                        icon: Mountain,
-                      },
-                      {
-                        kind: "compact",
-                        title: "Small Railway",
-                        text: "A compact loop with a three-car train to experiment with.",
-                        icon: Route,
-                      },
-                      {
-                        kind: "empty",
-                        title: "A fresh adventure",
-                        text: "An empty world. Drag, connect, and build it your way.",
-                        icon: Plus,
-                      },
-                      {
-                        kind: "kato-plan06-15",
-                        title: "新干线与在来线交错运行",
-                        text: "KATO plan 06-15 · an elevated double-track line, local routes, stations and a yard.",
-                        icon: Layers3,
-                      },
-                    ] as const
-                  ).map((preset) => (
-                    <button
-                      key={preset.kind}
-                      className="layout-option"
-                      disabled={h.couplingBusy}
-                      onClick={() => h.chooseLayout(preset.kind)}
-                    >
-                      <preset.icon size={35} strokeWidth={1.5} />
-                      <span className="layout-description">
-                        <strong>{preset.title}</strong>
-                        <small>{preset.text}</small>
-                      </span>
-                      <ChevronRight size={18} />
-                    </button>
-                  ))}
+                {selectedSavedDesign ? (
+                  <div className="layout-selection-details saved-layout-row">
+                    <div className="saved-layout-description">
+                      <strong>{selectedSavedDesign.name}</strong>
+                      <small>{savedTrainSummary(selectedSavedDesign.layout)}</small>
+                      <small>
+                        {selectedSavedDesign.layout.tracks.length} tracks ·{" "}
+                        {selectedSavedDesign.layout.accessories.length} scenery ·{" "}
+                        {new Date(selectedSavedDesign.updatedAt).toLocaleDateString(
+                          undefined,
+                          { year: "numeric", month: "short", day: "numeric" },
+                        )}
+                      </small>
+                      {h.activeSavedDesignId === selectedSavedDesign.id && (
+                        <span className="saved-layout-current">
+                          Current saved design
+                        </span>
+                      )}
+                    </div>
+                    {deleteDesignId === selectedSavedDesign.id ? (
+                      <div className="saved-layout-delete-confirm">
+                        <p>Delete this saved layout?</p>
+                        <div>
+                          <button
+                            className="button secondary"
+                            autoFocus
+                            onClick={() => setDeleteDesignId(null)}
+                          >
+                            Keep layout
+                          </button>
+                          <button
+                            className="button delete-layout-button"
+                            disabled={h.couplingBusy}
+                            aria-label={`Confirm delete ${selectedSavedDesign.name}`}
+                            onClick={() => {
+                              if (h.deleteSavedDesign(selectedSavedDesign.id)) {
+                                setDeleteDesignId(null);
+                                setLayoutChoice("");
+                              }
+                            }}
+                          >
+                            Delete layout
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="saved-layout-actions">
+                        <button
+                          className="icon-button"
+                          disabled={h.couplingBusy}
+                          aria-label={`Delete saved layout ${selectedSavedDesign.name}`}
+                          onClick={() => setDeleteDesignId(selectedSavedDesign.id)}
+                        >
+                          <Trash2 size={17} />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ) : selectedPreset ? (
+                  <div className="layout-selection-details layout-preset-details">
+                    <selectedPreset.icon size={35} strokeWidth={1.5} />
+                    <div className="layout-description">
+                      <strong>{selectedPreset.title}</strong>
+                      <small>{selectedPreset.text}</small>
+                    </div>
+                  </div>
+                ) : null}
+                <div className="layout-picker-actions">
+                  <button
+                    className="button primary"
+                    disabled={
+                      !hasSelectedLayout ||
+                      h.couplingBusy ||
+                      (!!selectedSavedDesign && deleteDesignId === selectedSavedDesign.id)
+                    }
+                    onClick={openSelectedLayout}
+                  >
+                    <FolderOpen size={16} />
+                    Open layout
+                  </button>
                 </div>
                 <div className="modal-footer">
                   <button
