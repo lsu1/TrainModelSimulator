@@ -21,6 +21,7 @@ import { TurnoutPoints, staticRailRanges } from './turnoutPoints';
 import type { TrainRuntime, TrainSnapshot } from './fleet';
 import { closestTrainPlacement, validateTrainPlacement } from './trainPlacement';
 import { defaultStationName, normalizeStationName } from './stationName';
+import type { TrackHelperPreview } from './trackHelperTypes';
 
 interface Scene3DProps {
   tracks: Track[];
@@ -51,6 +52,8 @@ interface Scene3DProps {
   onDropItem?: (kind: string, x: number, y: number) => void;
   placementHeight?: number;
   issues?: LayoutIssue[];
+  /** A noninteractive overlay; the existing layout remains untouched. */
+  helperPreview?: TrackHelperPreview | null;
   onReady?: (ready: boolean) => void;
 }
 
@@ -872,6 +875,90 @@ function disposePiece(group: THREE.Object3D, library: ModelLibrary) {
   for (const material of materials) { if (material instanceof THREE.MeshStandardMaterial || material instanceof THREE.SpriteMaterial) material.map?.dispose(); material.dispose(); }
 }
 
+/** All helper resources belong to this overlay, never to the model library. */
+function disposeTrackHelperOverlay(group: THREE.Group) {
+  const geometries = new Set<THREE.BufferGeometry>(), materials = new Set<THREE.Material>(), textures = new Set<THREE.Texture>();
+  group.traverse(object => {
+    if (!(object instanceof THREE.Mesh || object instanceof THREE.Line || object instanceof THREE.Sprite)) return;
+    // Sprite geometry is shared by Three.js, so only its material is owned here.
+    if (!(object instanceof THREE.Sprite)) geometries.add(object.geometry);
+    for (const material of Array.isArray(object.material) ? object.material : [object.material]) {
+      materials.add(material);
+      if (material instanceof THREE.SpriteMaterial && material.map) textures.add(material.map);
+    }
+  });
+  group.clear();
+  for (const geometry of geometries) geometry.dispose();
+  for (const texture of textures) texture.dispose();
+  for (const material of materials) material.dispose();
+}
+
+function helperRibbon(path: Path, halfWidth: number, height: number): THREE.BufferGeometry {
+  const count = Math.max(2, Math.min(120, Math.ceil(path.length / 8)));
+  const positions: number[] = [], indices: number[] = [];
+  for (let i = 0; i <= count; i++) {
+    const p = path.pointAt(path.length * i / count);
+    for (const side of [-1, 1]) positions.push(p.x - Math.sin(p.angle) * halfWidth * side, p.z + height, p.y + Math.cos(p.angle) * halfWidth * side);
+    if (i < count) { const a = i * 2; indices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3)); geometry.setIndex(indices);
+  return geometry;
+}
+
+function makeTrackHelperOverlay(group: THREE.Group, preview: TrackHelperPreview, tracks: Track[]) {
+  const roadbed = new THREE.MeshBasicMaterial({ color: '#29c4b5', transparent: true, opacity: .24, depthWrite: false, side: THREE.DoubleSide });
+  const rails = new THREE.MeshBasicMaterial({ color: '#138f88', transparent: true, opacity: .88, depthWrite: false });
+  const removed = new THREE.MeshBasicMaterial({ color: '#f39b38', transparent: true, opacity: .58, depthWrite: false, depthTest: false, side: THREE.DoubleSide });
+  // Even an empty overlay owns these materials, so attach them only when used.
+  let usesRoadbed = false, usesRails = false, usesRemoved = false;
+  for (const track of preview.tracks) for (const path of pathsFor(track)) {
+    const bed = new THREE.Mesh(helperRibbon(path, 12.5, 5.4), roadbed); bed.renderOrder = 20; group.add(bed); usesRoadbed = true;
+    const count = Math.max(2, Math.min(120, Math.ceil(path.length / 8)));
+    for (const side of [-1, 1]) {
+      const points = Array.from({ length: count + 1 }, (_, i) => {
+        const p = path.pointAt(path.length * i / count), offset = side * RAIL_CENTER;
+        return new THREE.Vector3(p.x - Math.sin(p.angle) * offset, p.z + RAIL_TOP + .6, p.y + Math.cos(p.angle) * offset);
+      });
+      const rail = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(points), count, .9, 6, false), rails);
+      rail.renderOrder = 21; group.add(rail); usesRails = true;
+    }
+  }
+  const removedIds = new Set(preview.removeIds);
+  for (const track of tracks) if (removedIds.has(track.id)) for (const path of pathsFor(track)) {
+    const highlight = new THREE.Mesh(helperRibbon(path, 13, RAIL_TOP + 2), removed);
+    highlight.renderOrder = 22; group.add(highlight); usesRemoved = true;
+  }
+  if (!usesRoadbed) roadbed.dispose(); if (!usesRails) rails.dispose(); if (!usesRemoved) removed.dispose();
+  const selected: THREE.Vector3[] = [];
+  for (const [index, ref] of preview.ends.entries()) {
+    const track = tracks.find(track => track.id === ref.trackId), endpoint = track && endpoints(track)[ref.end];
+    if (!endpoint) continue;
+    const position = new THREE.Vector3(endpoint.position.x, (endpoint.position.z ?? 0) + RAIL_TOP + 4, endpoint.position.y);
+    selected.push(position);
+    const material = new THREE.MeshBasicMaterial({ color: '#087c74', transparent: true, opacity: .95, depthTest: false, depthWrite: false, side: THREE.DoubleSide });
+    const ring = new THREE.Mesh(new THREE.RingGeometry(10, 15, 32), material);
+    ring.rotation.x = -Math.PI / 2; ring.position.copy(position); ring.renderOrder = 24; group.add(ring);
+    const direction = new THREE.Vector3(Math.cos(endpoint.angle), 0, Math.sin(endpoint.angle));
+    const arrow = new THREE.Line(new THREE.BufferGeometry().setFromPoints([position.clone().addScaledVector(direction, 17), position.clone().addScaledVector(direction, 53)]),
+      new THREE.LineBasicMaterial({ color: '#087c74', depthTest: false, depthWrite: false, transparent: true, opacity: .95 }));
+    arrow.renderOrder = 24; group.add(arrow);
+    const tip = new THREE.Mesh(new THREE.ConeGeometry(6, 14, 8), material);
+    tip.position.copy(position).addScaledVector(direction, 53); tip.quaternion.setFromUnitVectors(UP, direction); tip.renderOrder = 24; group.add(tip);
+    const canvas = document.createElement('canvas'); canvas.width = canvas.height = 96;
+    const context = canvas.getContext('2d')!;
+    context.fillStyle = '#087c74'; context.beginPath(); context.arc(48, 48, 42, 0, Math.PI * 2); context.fill();
+    context.fillStyle = '#ffffff'; context.font = 'bold 62px sans-serif'; context.textAlign = 'center'; context.textBaseline = 'middle'; context.fillText(index === 0 ? 'A' : 'B', 48, 50);
+    const texture = new THREE.CanvasTexture(canvas); texture.colorSpace = THREE.SRGBColorSpace;
+    const label = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, depthTest: false, depthWrite: false, transparent: true }));
+    label.position.copy(position).add(new THREE.Vector3(0, 27, 0)); label.scale.set(27, 27, 1); label.renderOrder = 25; group.add(label);
+  }
+  if (selected.length === 2) {
+    const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(selected), new THREE.LineDashedMaterial({ color: '#087c74', dashSize: 12, gapSize: 9, transparent: true, opacity: .7, depthTest: false, depthWrite: false }));
+    line.computeLineDistances(); line.renderOrder = 23; group.add(line);
+  }
+}
+
 interface Runtime {
   renderer: THREE.WebGLRenderer;
   scene: THREE.Scene;
@@ -885,6 +972,7 @@ interface Runtime {
   selected: THREE.BoxHelper | null;
   issueOutlines: THREE.BoxHelper[];
   updateLayout: () => void;
+  updateHelperPreview: () => void;
   fitCamera: () => void;
   publishPickPoints: () => void;
 }
@@ -923,6 +1011,8 @@ export default function Scene3D(props: Scene3DProps) {
     const world = new THREE.Group(); world.scale.setScalar(SCALE); scene.add(world);
     const pieces = new THREE.Group(), anchors = new THREE.Group(), trains = new THREE.Group(), connections = new THREE.Group();
     world.add(pieces, anchors, trains, connections);
+    // Excluded from picking and camera fitting: suggestions are visual only.
+    const helperOverlay = new THREE.Group(); world.add(helperOverlay);
     const hemi = new THREE.HemisphereLight('#fafcf5', '#a4b59d', .9); scene.add(hemi);
     const sunlight = new THREE.DirectionalLight('#fff7e8', 2.0);
     sunlight.position.set(-15, 28, 13); sunlight.castShadow = true;
@@ -1314,6 +1404,24 @@ export default function Scene3D(props: Scene3DProps) {
           cars: ghost.diagnostics.cars,
         });
     };
+    const publishHelperPreview = () => {
+      const preview = latest.current.helperPreview;
+      if (!preview) { delete renderer.domElement.dataset.trackHelperPreview; return; }
+      const width = renderer.domElement.clientWidth, height = renderer.domElement.clientHeight;
+      renderer.domElement.dataset.trackHelperPreview = JSON.stringify({
+        ghostCount: preview.tracks.length,
+        ghostIds: preview.tracks.map(track => track.id),
+        removeIds: preview.removeIds,
+        ends: preview.ends.flatMap((ref, index) => {
+          const track = latest.current.tracks.find(track => track.id === ref.trackId), endpoint = track && endpoints(track)[ref.end];
+          if (!endpoint) return [];
+          const position = endpoint.position;
+          const projected = new THREE.Vector3(position.x * SCALE, ((position.z ?? 0) + RAIL_TOP + 4) * SCALE, position.y * SCALE).project(camera);
+          return [{ ...ref, label: index === 0 ? 'A' : 'B', position, angle: endpoint.angle,
+            screen: { x: Math.round((projected.x + 1) * width / 2), y: Math.round((1 - projected.y) * height / 2) } }];
+        }),
+      });
+    };
     const publishPickPoints = () => {
       camera.updateMatrixWorld(); world.updateMatrixWorld(true);
       const width = renderer.domElement.clientWidth, height = renderer.domElement.clientHeight;
@@ -1347,6 +1455,7 @@ export default function Scene3D(props: Scene3DProps) {
         trainPoints[id] = { x: Math.round((projected.x + 1) * width / 2), y: Math.round((1 - projected.y) * height / 2) };
       }
       renderer.domElement.dataset.trainPickPoints = JSON.stringify(trainPoints);
+      publishHelperPreview();
       pickDirty = false;
     };
     const sizeSwitchBadges = () => {
@@ -1433,6 +1542,11 @@ export default function Scene3D(props: Scene3DProps) {
         const vertical = horizontal.clone(); vertical.rotation.y = Math.PI / 2; marker.add(vertical);
         anchors.add(marker);
       });
+    };
+    const updateHelperPreview = () => {
+      disposeTrackHelperOverlay(helperOverlay);
+      if (latest.current.helperPreview) makeTrackHelperOverlay(helperOverlay, latest.current.helperPreview, latest.current.tracks);
+      publishHelperPreview(); pickDirty = true;
     };
     const updateLayout = () => {
       const settlePoints = previousLayoutRevision !== latest.current.layoutRevision;
@@ -1567,8 +1681,8 @@ export default function Scene3D(props: Scene3DProps) {
       if (runtime.current) fitCamera();
     };
     const resizeObserver = new ResizeObserver(resize); resizeObserver.observe(element); resize();
-    runtime.current = { renderer, scene, camera, controls, world, pieces, anchors, trains, library, selected: null, issueOutlines: [], updateLayout, fitCamera, publishPickPoints };
-    updateLayout(); fitCamera(); publishPickPoints();
+    runtime.current = { renderer, scene, camera, controls, world, pieces, anchors, trains, library, selected: null, issueOutlines: [], updateLayout, updateHelperPreview, fitCamera, publishPickPoints };
+    updateLayout(); updateHelperPreview(); fitCamera(); publishPickPoints();
     const animate = () => {
       if (stopped) return;
       frame = requestAnimationFrame(animate);
@@ -1793,6 +1907,7 @@ export default function Scene3D(props: Scene3DProps) {
       for (const piece of pieces.children) disposePiece(piece, library);
       for (const rendered of renderedFleet.values()) disposeRenderedTrain(rendered);
       if (ghost) disposeRenderedTrain(ghost);
+      disposeTrackHelperOverlay(helperOverlay);
       if (runtime.current?.selected) { scene.remove(runtime.current.selected); runtime.current.selected.geometry.dispose(); }
       for (const outline of runtime.current?.issueOutlines ?? []) { outline.removeFromParent(); outline.geometry.dispose(); }
       ground.geometry.dispose(); grid.geometry.dispose(); (grid.material as THREE.Material).dispose();
@@ -1802,6 +1917,7 @@ export default function Scene3D(props: Scene3DProps) {
   }, []);
 
   useEffect(() => { runtime.current?.updateLayout(); }, [props.tracks, props.accessories, props.selectedId, props.activeAnchor, props.issues, props.layoutRevision]);
+  useEffect(() => { runtime.current?.updateHelperPreview(); }, [props.tracks, props.helperPreview]);
   useEffect(() => {
     const r = runtime.current; if (!r) return;
     r.controls.enabled = props.cameraPreset !== 'ride'; r.fitCamera();

@@ -26,6 +26,9 @@ import { hasCouplingCovers, supportsCouplingPair } from "./couplingTypes";
 import { couplingEligibility, decouplingEligibility, stepCouplingSystem, synchronizeCoupledFleet, validateCoupledFleet } from "./couplingMotion";
 import { auditClearances, checkPlacement } from "./clearance";
 import { auditEngineering, planRamp, trackGradePercent } from "./engineering";
+import { validateTrackHelperSolution } from "./trackFeasibility";
+import { TRACK_HELPER_LIMITS } from "./trackHelperTypes";
+import type { TrackHelperSolution } from "./trackHelperTypes";
 import {
   SAVED_DESIGNS_KEY,
   persistSavedDesigns,
@@ -566,6 +569,55 @@ export function useRailway() {
     setAnchor(null);
     setLayoutRevision((value) => value + 1);
     notify("Back one step. Keep building!");
+  };
+  const getHelperProtectedTrackIds = (): string[] => Array.from(
+    occupiedFleetTrackIds(layoutRef.current.tracks, fleetRef.current, couplingsRef.current),
+  );
+  const applyTrackHelperSolution = (
+    solution: TrackHelperSolution,
+    originalTracks: Track[],
+    originalAccessories: PlacedAccessory[],
+  ): boolean => {
+    if (!operationAllowsEdit()) return false;
+    if (layoutRef.current.tracks !== originalTracks || layoutRef.current.accessories !== originalAccessories) {
+      notify("Your railway changed. Check feasibility again before adding this suggestion.", true);
+      return false;
+    }
+    const current = currentLayoutSnapshot();
+    const removed = new Set(solution.removeIds);
+    if (removed.size !== solution.removeIds.length || removed.size > TRACK_HELPER_LIMITS.repairPieces
+      || solution.tracks.length > TRACK_HELPER_LIMITS.pieces || (!removed.size && !solution.tracks.length)) {
+      notify("This suggestion is outside the track helper's limits. Check again.", true);
+      return false;
+    }
+    if (current.tracks.length - removed.size + solution.tracks.length + current.accessories.length
+      > getLayoutPieceLimit(current.sourcePlan)) {
+      notify("There is not enough room in this layout for the suggested pieces. Remove a piece first.", true);
+      return false;
+    }
+    const protectedIds = new Set(getHelperProtectedTrackIds());
+    if (solution.removeIds.some(id => protectedIds.has(id))) {
+      notify("A train is on a piece this repair would remove. Place it elsewhere, then check again.", true);
+      return false;
+    }
+    const accepted = { ...solution, tracks: solution.tracks.map(track => ({ ...track, id: crypto.randomUUID() })) };
+    const validation = validateTrackHelperSolution(current, accepted);
+    if (!validation.allowed) {
+      notify(validation.message, true);
+      return false;
+    }
+    const next = {
+      ...current,
+      tracks: [...current.tracks.filter(track => !removed.has(track.id)), ...accepted.tracks],
+    };
+    if (!changeLayout(next)) return false;
+    setSelectedId(accepted.tracks[0]?.id ?? null);
+    notify(accepted.closesLoop
+      ? "Your track circuit is connected! Undo brings back the previous design."
+      : removed.size
+        ? "Your suggested repair is in place. Undo brings back the previous pieces."
+        : "The suggested pieces are connected. Keep building!");
+    return true;
   };
   useEffect(() => {
     try {
@@ -1339,6 +1391,8 @@ export function useRailway() {
     grade,
     notify,
     changeLayout,
+    getHelperProtectedTrackIds,
+    applyTrackHelperSolution,
     undo,
     addPiece,
     movePiece,

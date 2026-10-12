@@ -27,6 +27,8 @@ import { useEffect, useRef, useState } from "react";
 import Scene3D from "./Scene3D";
 import RailwayCockpit from "./RailwayCockpit";
 import StationNameEditor from "./StationNameEditor";
+import TrackHelper from "./TrackHelper";
+import { useTrackHelper } from "./useTrackHelper";
 import { supportsStationName } from "./stationName";
 import { KATO_CATALOG, CATALOG_SOURCES } from "./catalog";
 import type { CatalogCategory, CatalogItem } from "./catalogTypes";
@@ -190,6 +192,7 @@ function PieceIllustration({ piece }: { piece: CatalogItem }) {
 
 export default function App() {
   const h = useRailway();
+  const trackHelper = useTrackHelper(h);
   const {
     layout,
     tracks,
@@ -395,6 +398,7 @@ export default function App() {
                   }}
                   onReady={() => h.setReady(true)}
                   issues={h.issues}
+                  helperPreview={trackHelper.preview}
                 />
               )}
             </RailwayCockpit>
@@ -701,6 +705,7 @@ export default function App() {
             </div>
           )}
           <RampBuilder h={h} />
+          <TrackHelper h={h} helper={trackHelper} />
           </fieldset>
           <CheckSummary h={h} />
           <details className="inventory">
