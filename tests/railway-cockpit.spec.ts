@@ -194,6 +194,11 @@ test('Mac-sized screens keep driving and active-train controls in view without p
   await expect(page.getByRole('combobox', { name: 'Train car count', exact: true })).toHaveValue('3');
   expect((await fleet(page)).map(({ selected: _selected, ...train }) => train)).toEqual(initial.map(({ selected: _selected, ...train }) => train));
   await page.getByRole('button', { name: 'Prepare a new train', exact: true }).click();
+  // Resolve the projection after the resized, paused canvas has rendered.
+  // Top view keeps the small parked cab clear of perspective occlusion.
+  await page.getByRole('button', { name: 'Top view', exact: true }).click();
+  await advance(page, 400);
+  await page.clock.runFor(100);
   const body = await scene(page).evaluate(element => {
     const point = JSON.parse((element as HTMLCanvasElement).dataset.trainPickPoints!)["cockpit-train-2"];
     const bounds = element.getBoundingClientRect();

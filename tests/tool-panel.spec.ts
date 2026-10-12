@@ -65,6 +65,9 @@ async function expectSplitInViewport(page: Page) {
     return {
       viewport: [innerWidth, innerHeight], tool: visiblePane.id,
       canvasHeight: document.querySelector('canvas')!.getBoundingClientRect().height,
+      railwayHeights: Object.fromEntries(['.railway-card', '.board-header', '.layout-plan-info', '.cockpit-fleet', '.cockpit-drive-dock'].map(selector => [selector, document.querySelector(selector)?.getBoundingClientRect().height ?? 0])),
+      chromeStyles: Object.fromEntries(['.app-header', '.board-header'].map(selector => { const element = document.querySelector(selector)!; const style = getComputedStyle(element); return [selector, { height: element.getBoundingClientRect().height, minHeight: style.minHeight, flexBasis: style.flexBasis, padding: style.padding }]; })),
+      desktopHeaderMedia: matchMedia('(min-width: 761px)').matches,
       panelHeight: panel.getBoundingClientRect().height, headerHeight: height('.builder-header'),
       tabsHeight: height('.builder-tabs'), selectedHeight: height('.builder-selected-strip'),
       scrollHeight: visiblePane.querySelector('.builder-scroll')!.getBoundingClientRect().height,
@@ -317,6 +320,18 @@ test('the KATO M1 preset retains a usable railway with the helper and selection 
   await expectSplitInViewport(page);
   await expect(page.getByRole('button', { name: 'Expand tools', exact: true })).toBeHidden();
   await expect(helperActions(page).getByRole('button', { name: 'Check feasibility', exact: true })).toBeVisible();
+  const planLink = page.locator('.layout-plan-info').getByRole('link', { name: 'View KATO plan', exact: true });
+  await planLink.scrollIntoViewIfNeeded();
+  await planLink.focus();
+  await expect(planLink).toBeFocused();
+  const driveRow = page.locator('.cockpit-drive-dock');
+  await page.getByRole('button', { name: 'Couple trains', exact: true }).scrollIntoViewIfNeeded();
+  const couplingButton = await page.getByRole('button', { name: 'Couple trains', exact: true }).boundingBox();
+  const dockBox = await driveRow.boundingBox();
+  expect(couplingButton!.x).toBeGreaterThanOrEqual(dockBox!.x);
+  expect(couplingButton!.x + couplingButton!.width).toBeLessThanOrEqual(dockBox!.x + dockBox!.width + 1);
+  await page.getByRole('button', { name: 'Run train', exact: true }).scrollIntoViewIfNeeded();
+  await expectSplitInViewport(page);
   await page.clock.runFor(100);
   await page.screenshot({ path: info.outputPath('landscape-kato-selected-helper.png') });
 });

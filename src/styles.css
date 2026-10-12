@@ -1071,7 +1071,17 @@ kbd { display: inline-block; padding: 1px 5px; min-width: 20px; border: 1px soli
 
 /* A wide phone in landscape has more useful room beside the railway. */
 @media (min-width: 700px) and (max-width: 900px) and (max-height: 500px) {
-  .workspace, .workspace.tool-panel-expanded { grid-template-columns: minmax(0, 1fr) 290px; grid-template-rows: minmax(0, 1fr); }
+  .app-shell { padding-bottom: 0; }
+  .app-header { min-height: 44px; }
+  .workspace, .workspace.tool-panel-expanded { grid-template-columns: minmax(0, 1fr) 290px; grid-template-rows: minmax(0, 1fr); margin-top: 4px; }
+  .board-header { min-height: 44px; padding-top: 2px; padding-bottom: 2px; }
+  .layout-plan-info { max-height: 34px; padding-top: 2px; padding-bottom: 2px; }
+  .cockpit-fleet { padding-top: 2px; padding-bottom: 2px; }
+  .cockpit-drive-dock { padding-top: 2px; padding-bottom: 2px; }
+  .cockpit-coupling { flex-basis: auto; flex-wrap: nowrap; }
+  .cockpit-coupling-actions { flex: 0 0 250px; }
+  .cockpit-coupling-note { flex: 0 0 230px; }
+  .footer { margin-top: 0; padding-top: 2px; }
   .builder-expand { display: none; }
   .builder-panel .piece-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .builder-panel .catalog-tabs { grid-template-columns: repeat(4, minmax(0, 1fr)); }
