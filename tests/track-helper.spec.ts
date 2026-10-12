@@ -36,7 +36,9 @@ function straight(id: string, x: number, y = 0, height = 0): Track {
 
 async function start(page: Page, value: LayoutData, saved = false) {
   const time = new Date('2026-10-12T00:00:00Z');
-  await page.clock.install({ time });
+  // Installation starts a running clock. Begin before the target so a slow
+  // setup RPC cannot make pauseAt() attempt to travel backwards in time.
+  await page.clock.install({ time: new Date(time.getTime() - 60_000) });
   await page.clock.pauseAt(time);
   await page.addInitScript(({ value, saved }) => {
     if (sessionStorage.getItem('track-helper-fixture')) return;
