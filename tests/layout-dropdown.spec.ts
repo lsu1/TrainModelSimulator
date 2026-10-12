@@ -54,7 +54,7 @@ function coupledLayout(): LayoutData {
 
 async function start(page: Page, layout = smallLayout(), designs: SavedDesign[] = [], options: { activeId?: string; rawLibrary?: string } = {}) {
   const time = new Date('2026-10-12T00:00:00Z');
-  await page.clock.install({ time });
+  await page.clock.install({ time: new Date(time.getTime() - 60_000) });
   await page.clock.pauseAt(time);
   await page.addInitScript(({ working, library, rawLibrary }) => {
     // Do not reinstall fixtures after reload: test persistence, not a reset.

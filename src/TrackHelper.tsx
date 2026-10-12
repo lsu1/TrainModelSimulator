@@ -7,7 +7,25 @@ import type { TrackHelperController } from "./useTrackHelper";
 
 type Railway = ReturnType<typeof useRailway>;
 
-export default function TrackHelper({ h, helper }: { h: Railway; helper: TrackHelperController }) {
+export function TrackHelperActions({ h, helper }: { h: Railway; helper: TrackHelperController }) {
+  const { inspection, solution } = helper;
+  const canCheck = !!inspection?.eligible && !h.couplingBusy && !helper.working;
+  const exceedsLimit = !!solution && h.pieceCount - solution.removeIds.length + solution.tracks.length
+    > getLayoutPieceLimit(h.layout.sourcePlan);
+  return (
+    <div className="track-helper-check-actions">
+      <button className="button primary" disabled={!canCheck} onClick={helper.check}>
+        <Search size={15} /> {helper.working ? "Checking your gap…" : "Check feasibility"}
+      </button>
+      {helper.working && <button className="button secondary" onClick={helper.cancel}><X size={15} /> Cancel check</button>}
+      {solution && <button className="button primary" disabled={h.couplingBusy || exceedsLimit} onClick={helper.apply}>
+        {solution.removeIds.length ? "Apply suggested repair" : "Add these pieces"}
+      </button>}
+    </div>
+  );
+}
+
+export default function TrackHelper({ h, helper, docked = false }: { h: Railway; helper: TrackHelperController; docked?: boolean }) {
   const { inspection, result, solution } = helper;
   const addedNames = solution?.tracks.map((track) => CATALOG.get(track.kind)?.name ?? "Track piece") ?? [];
   const removedTracks = solution?.removeIds.flatMap((id) => {
@@ -19,12 +37,11 @@ export default function TrackHelper({ h, helper }: { h: Railway; helper: TrackHe
   const selectionMessage = h.ends.length < 2
     ? "Build until there are two open ends you want to join. Unused sidings may stay open."
     : "Choose two open ends. Look for A and B on your railway.";
-  const canCheck = !!inspection?.eligible && !h.couplingBusy && !helper.working;
 
   return (
     <section className="track-helper" aria-label="Track helper">
       <h3>
-        <button
+        {docked ? <span><Lightbulb size={17} /> Track helper</span> : <button
           className="track-helper-toggle"
           aria-expanded={helper.expanded}
           aria-controls="track-helper-content"
@@ -32,10 +49,10 @@ export default function TrackHelper({ h, helper }: { h: Railway; helper: TrackHe
         >
           <span><Lightbulb size={17} /> Track helper</span>
           <ChevronDown size={16} />
-        </button>
+        </button>}
       </h3>
-      {!helper.expanded && <p>Need help finishing a gap? Choose two ends and see what fits.</p>}
-      {helper.expanded && (
+      {!docked && !helper.expanded && <p>Need help finishing a gap? Choose two ends and see what fits.</p>}
+      {(docked || helper.expanded) && (
         <div id="track-helper-content" className="track-helper-content">
           <p>Build freely, then ask for a finish. Your pieces stay in place until you accept a suggestion.</p>
           <div className="track-helper-fields">
@@ -67,12 +84,7 @@ export default function TrackHelper({ h, helper }: { h: Railway; helper: TrackHe
             </div>
           ) : <p className="track-helper-hint">{selectionMessage}</p>}
           {h.couplingBusy && <p className="track-helper-hint">Finish connecting or separating your trains before checking this gap.</p>}
-          <div className="track-helper-check-actions">
-            <button className="button primary" disabled={!canCheck} onClick={helper.check}>
-              <Search size={15} /> {helper.working ? "Checking your gap…" : "Check feasibility"}
-            </button>
-            {helper.working && <button className="button secondary" onClick={helper.cancel}><X size={15} /> Cancel check</button>}
-          </div>
+          {!docked && <TrackHelperActions h={h} helper={helper} />}
           <div aria-live="polite" aria-atomic="true" className="track-helper-status">
             {helper.working && <p>Looking for a finish and small repairs. You can cancel at any time.</p>}
             {helper.notice && <p>{helper.notice}</p>}
@@ -113,9 +125,6 @@ export default function TrackHelper({ h, helper }: { h: Railway; helper: TrackHe
                 </>}
                 <p>{solution.closesLoop ? "This joins the selected ends and completes a track circuit. Turnout routes still control where trains go." : "This joins the selected ends. It may not complete a route around a loop."} Unused sidings may stay open.</p>
                 {exceedsLimit && <p>This suggestion would exceed your layout’s piece limit. Remove some other pieces, then check again.</p>}
-                <button className="button primary" disabled={h.couplingBusy || exceedsLimit} onClick={helper.apply}>
-                  {solution.removeIds.length ? "Apply suggested repair" : "Add these pieces"}
-                </button>
                 <small>You can Undo the whole change in one step.</small>
               </div>
             )}

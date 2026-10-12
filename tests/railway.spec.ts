@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import type { Locator, Page } from '@playwright/test';
+import { editSelectedPiece, openMoreTools, showPieces } from './builder-navigation';
 import { readFile } from 'node:fs/promises';
 import { KATO_CATALOG } from '../src/catalog';
 import { attachTrack, endpoints, pathsFor } from '../src/track';
@@ -244,6 +245,7 @@ test('catalog categories and product-number search expose referenced Kato pieces
   await expect(page.getByText('No pieces found. Try a radius, length, or product number.')).toBeVisible();
   await page.getByRole('button', { name: 'Clear catalog search' }).click();
   await expect(search).toHaveValue('');
+  await openMoreTools(page);
   await page.getByRole('button', { name: 'Catalog & model references', exact: true }).click();
   const links = page.getByRole('dialog').getByRole('link');
   await expect(links).toHaveCount(16);
@@ -261,6 +263,7 @@ test('eight curves build a closed 3D loop, with removal and undo restoring the c
   await expect(page.getByText('8 tracks · 0 scenery pieces', { exact: true })).toBeVisible();
   await expect(page.getByText('Connected loop · ready to ride', { exact: true })).toBeVisible();
   expect((await savedLayout(page)).tracks.every((track: { bend: number }) => track.bend === -1)).toBe(true);
+  await editSelectedPiece(page);
   await page.getByRole('button', { name: 'Remove', exact: true }).click();
   await expect(page.getByText('2 open connectors', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Undo last change' }).click();
@@ -284,6 +287,7 @@ test('native catalog drag places a track, and pointer dragging moves it with und
   await page.getByRole('button', { name: 'Top view', exact: true }).click();
   const canvas = scene(page);
   const bounds = (await canvas.boundingBox())!;
+  await showPieces(page);
   await page.getByRole('button', { name: straightButton, exact: true }).dragTo(canvas, {
     targetPosition: { x: bounds.width * .55, y: bounds.height * .55 },
   });
@@ -293,6 +297,7 @@ test('native catalog drag places a track, and pointer dragging moves it with und
   await page.getByRole('button', { name: 'Deselect piece' }).click();
   const point = await pickPoint(page, original.id);
   await page.mouse.click(point.x, point.y);
+  await editSelectedPiece(page);
   await expect(page.getByLabel('Selected piece height')).toBeVisible();
   await page.getByRole('button', { name: 'Move pieces', exact: true }).click();
   const start = await pickPoint(page, original.id);
@@ -309,10 +314,13 @@ test('selected tracks rotate and change height with a rendered sloping train', a
   await openRailway(page);
   await startFresh(page);
   await page.getByRole('button', { name: 'Remove selected train', exact: true }).click();
+  await showPieces(page);
   await page.getByRole('button', { name: straightButton, exact: true }).click();
+  await editSelectedPiece(page);
   await page.getByLabel('Selected piece height').fill('80');
   await page.getByLabel('Selected track end height').fill('100');
   await expect(page.getByText('8.1% slope · steep for a physical train', { exact: true })).toBeVisible();
+  await editSelectedPiece(page);
   await page.getByRole('button', { name: 'Rotate selected piece' }).click();
   const track = (await savedLayout(page)).tracks[0];
   expect(track.angle).toBeCloseTo(Math.PI / 4);
@@ -392,6 +400,7 @@ test('KATO plan02 opens in 3D with its numbered switches and retains its source 
   await expect(page.getByRole('link', { name: 'View KATO plan' })).toBeVisible();
   await expect(desk.getByRole('button', { name: 'Switch 2 branch', exact: true })).toHaveAttribute('aria-pressed', 'true');
   const downloadPromise = page.waitForEvent('download');
+  await openMoreTools(page);
   await page.getByRole('button', { name: 'Save a layout file', exact: true }).click();
   const download = await downloadPromise;
   const exportPath = testInfo.outputPath('kato-plan02.json');
@@ -412,9 +421,13 @@ test('a selected turnout switches the running train onto its branch and persists
   await freezeAnimationClock(page);
   await openRailway(page);
   await startFresh(page);
+  await showPieces(page);
   await page.getByRole('button', { name: straightButton, exact: true }).click();
+  await showPieces(page);
   await page.getByRole('searchbox', { name: 'Search Kato catalog' }).fill('20-220');
+  await showPieces(page);
   await page.getByRole('button', { name: 'Add #4 left turnout', exact: true }).click();
+  await editSelectedPiece(page);
   await page.getByRole('button', { name: 'Branch route', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Branch route', exact: true })).toHaveAttribute('aria-pressed', 'true');
   const turnout = (await savedLayout(page)).tracks[1];
@@ -437,8 +450,11 @@ test('a selected turnout switches the running train onto its branch and persists
   // the initial rendered train, rather than only trains entering later.
   await startFresh(page);
   await page.getByRole('button', { name: 'Remove selected train', exact: true }).click();
+  await showPieces(page);
   await page.getByRole('searchbox', { name: 'Search Kato catalog' }).fill('20-220');
+  await showPieces(page);
   await page.getByRole('button', { name: 'Add #4 left turnout', exact: true }).click();
+  await editSelectedPiece(page);
   await page.getByRole('button', { name: 'Branch route', exact: true }).click();
   const branch = await savedLayout(page);
   await importData(page, { version: 2, name: 'Branch first', tracks: branch.tracks, accessories: [], carCount: 3 });
@@ -450,9 +466,13 @@ test('version 5 saves export tracks, scenery, heights, and train formation and c
   await openRailway(page);
   await startFresh(page);
   await page.getByRole('button', { name: 'Remove selected train', exact: true }).click();
+  await showPieces(page);
   await page.getByRole('button', { name: straightButton, exact: true }).click();
+  await editSelectedPiece(page);
   await page.getByLabel('Selected piece height').fill('80');
+  await showPieces(page);
   await page.getByRole('searchbox', { name: 'Search Kato catalog' }).fill('23-150');
+  await showPieces(page);
   await page.getByRole('button', { name: 'Add Modern DX island platform A · 248 mm', exact: true }).click();
   const built = await savedLayout(page);
   await importData(page, { version: 2, name: 'My Railway', tracks: built.tracks, accessories: built.accessories, carCount: 3 });
@@ -465,6 +485,7 @@ test('version 5 saves export tracks, scenery, heights, and train formation and c
   await page.reload();
   expect(await savedLayout(page)).toEqual(saved);
   const downloadPromise = page.waitForEvent('download');
+  await openMoreTools(page);
   await page.getByRole('button', { name: 'Save a layout file', exact: true }).click();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toBe('my-railway.json');
@@ -536,6 +557,7 @@ test('Mac shortcuts undo from focused buttons and ignore catalog typing', async 
   expect((await trainPoint(page)).x).toBeLessThan(beforeReverse.x);
   await page.keyboard.press('Space');
   await startFresh(page);
+  await showPieces(page);
   await page.getByRole('button', { name: straightButton, exact: true }).click();
   await expect(page.getByRole('button', { name: straightButton, exact: true })).toBeFocused();
   await page.keyboard.press('Meta+z');
@@ -686,6 +708,7 @@ test('a file backup of a saved design reopens as an independent draft while its 
   const originalId = (await savedLayout(page)).savedDesignId;
   const originalEntry = (await savedDesigns(page)).designs[0];
   const downloadPromise = page.waitForEvent('download');
+  await openMoreTools(page);
   await page.getByRole('button', { name: 'Save a layout file', exact: true }).click();
   const download = await downloadPromise;
   const exportPath = testInfo.outputPath('saved-design-backup.json');
@@ -1166,6 +1189,7 @@ async function seedLayout(page: Page, layout: ReturnType<typeof fixtureLayout>) 
 }
 
 async function reviewLayout(page: Page) {
+  await openMoreTools(page);
   await page.getByRole('button', { name: 'Check before shopping', exact: true }).click();
   return page.getByRole('dialog', { name: 'Check your physical layout', exact: true });
 }
@@ -1231,12 +1255,13 @@ test('numbered switches operate live without resetting a clear train and reject 
 
 test('guided ramp uses real S248 pieces, a grounded catalog pier, and a reviewable CSV', async ({ page }, testInfo) => {
   await seedLayout(page, fixtureLayout('Ramp shopping test', []));
+  await page.getByRole('tab', { name: 'Ramp', exact: true }).click();
   const builder = page.getByRole('region', { name: 'Ramp builder' });
   await expect(builder.getByRole('combobox', { name: 'Ramp target height' })).toHaveValue('60');
   await expect(builder.getByRole('combobox', { name: 'Ramp maximum grade' })).toHaveValue('3');
   await expect(builder).toContainText('9 × S248');
   await expect(builder).toContainText('support heights still need physical verification');
-  await builder.getByRole('button', { name: 'Build ramp', exact: true }).click();
+  await page.getByRole('tabpanel', { name: 'Ramp', exact: true }).getByRole('button', { name: 'Build ramp', exact: true }).click();
   const layout = await savedLayout(page);
   expect(layout.tracks).toHaveLength(9);
   expect(layout.tracks.every((track: { kind: string }) => track.kind === 's248')).toBe(true);
@@ -1270,12 +1295,16 @@ test('guided ramp uses real S248 pieces, a grounded catalog pier, and a reviewab
 test('matching piers support a sixty-millimeter track without floating or duplicate pieces', async ({ page }) => {
   await seedLayout(page, fixtureLayout('Supported track', []));
   await page.getByRole('button', { name: 'Remove selected train', exact: true }).click();
+  await showPieces(page);
   await page.getByRole('button', { name: straightButton, exact: true }).click();
+  await editSelectedPiece(page);
   await page.getByLabel('Selected piece height').fill('60');
+  await editSelectedPiece(page);
   await page.getByRole('button', { name: 'Add matching piers', exact: true }).click();
   const supported = await savedLayout(page);
   expect(supported.accessories).toHaveLength(2);
   expect(supported.accessories.every((piece: { kind: string; elevation: number }) => piece.kind === 'a-pier-tapered' && piece.elevation === 0)).toBe(true);
+  await editSelectedPiece(page);
   await page.getByRole('button', { name: 'Add matching piers', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('No additional matching catalog piers');
   expect((await savedLayout(page)).accessories).toHaveLength(2);
@@ -1306,9 +1335,11 @@ test('a centered catenary drop is allowed but moving its post onto the rails is 
     fixtureAccessory('reference-gantry', 'a-catenary', 0, 100),
   ]));
   await page.getByRole('button', { name: 'Top view', exact: true }).click();
+  await showPieces(page);
   await page.getByRole('searchbox', { name: 'Search Kato catalog' }).fill('23-059-1');
   const target = await pickPoint(page, 'rail');
   const bounds = (await scene(page).boundingBox())!;
+  await showPieces(page);
   await page.getByRole('button', { name: 'Add Single-track catenary pole', exact: true }).dragTo(scene(page), {
     targetPosition: { x: target.x - bounds.x, y: target.y - bounds.y },
   });
@@ -1355,6 +1386,7 @@ test('an earlier colliding layout can be imported, inspected, and repaired rathe
   await expect(conflict).toBeVisible();
   await conflict.getByRole('button', { name: 'Show DX island platform', exact: true }).click();
   await expect(report).toHaveCount(0);
+  await editSelectedPiece(page);
   await page.getByRole('button', { name: 'Remove', exact: true }).click();
   expect((await savedLayout(page)).accessories).toHaveLength(0);
   const repaired = await reviewLayout(page);

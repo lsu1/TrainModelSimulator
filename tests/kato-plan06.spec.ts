@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
+import { editSelectedPiece, openMoreTools } from './builder-navigation';
 import { readFile } from 'node:fs/promises'
 import { KATO_CATALOG } from '../src/catalog'
 import type { TrainSnapshot } from '../src/fleet'
@@ -116,9 +117,11 @@ test('the added KATO plan preserves the current railway and supports trains, tur
   layout = await saved(page)
   const named = layout.accessories.find(accessory => KATO_CATALOG.find(item => item.kind === accessory.kind)?.accessoryType === 'platform')!
   const item = KATO_CATALOG.find(value => value.kind === named.kind)!
+  await openMoreTools(page);
   const inventory = page.locator('details.inventory')
   if (!await inventory.evaluate(element => (element as HTMLDetailsElement).open)) await inventory.locator('summary').click()
   await page.getByRole('button', { name: `Select placed ${item.name}`, exact: true }).first().click()
+  await editSelectedPiece(page)
   await page.getByRole('textbox', { name: 'Station name', exact: true }).fill('新大阪 Shin-Osaka')
   await page.getByRole('button', { name: 'Apply station name', exact: true }).click()
   await advance(page)
@@ -144,6 +147,7 @@ test('the added KATO plan preserves the current railway and supports trains, tur
   await advance(page)
   expect(await saved(page)).toEqual(beforeReload)
   const downloadPromise = page.waitForEvent('download')
+  await openMoreTools(page);
   await page.getByRole('button', { name: 'Save a layout file', exact: true }).click()
   const exportPath = info.outputPath('kato-plan06-with-custom-name.json')
   await (await downloadPromise).saveAs(exportPath)
@@ -161,6 +165,7 @@ test('the added KATO plan preserves the current railway and supports trains, tur
   await expect(page.getByText('Start a new layout', { exact: true })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Start coupling practice', exact: true })).toHaveCount(0)
   await page.getByRole('button', { name: 'Close dialog', exact: true }).click()
+  await openMoreTools(page);
   await page.getByRole('button', { name: 'Catalog & model references', exact: true }).click()
   await expect(page.getByRole('dialog').getByRole('heading', { name: 'From Kato to your little world', exact: true })).toBeVisible()
   await expect(page.getByRole('dialog').locator('a[href="https://www.katomodels.com/unitrackplan/plan/plan06-15.pdf"]')).toHaveCount(1)

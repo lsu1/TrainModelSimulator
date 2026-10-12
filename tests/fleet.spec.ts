@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
+import { editSelectedPiece, openMoreTools, showPieces } from './builder-navigation';
 import { readFile } from 'node:fs/promises';
 import type { Track } from '../src/track';
 import { getCouplingLinkLength, getTrainCarSpec, getTrainSpec } from '../src/trains';
@@ -317,19 +318,24 @@ test('occupied track edits are rejected and adding a remote piece preserves both
   await advance(page, 100);
   const before = await fleet(page);
   const original = await saved(page);
+  await openMoreTools(page);
   await page.locator('details.inventory > summary').click();
   await page.getByRole('button', { name: 'Select placed 248 mm straight', exact: true }).nth(3).click();
+  await editSelectedPiece(page);
   await page.getByLabel('Selected piece height', { exact: true }).fill('60');
   await expect(page.getByRole('alert')).toContainText('This track is occupied');
   expect((await saved(page)).tracks).toEqual(original.tracks);
+  await editSelectedPiece(page);
   await page.getByRole('button', { name: 'Rotate selected piece', exact: true }).click();
   // The geometry guard may reject the rotated piece before the occupancy
   // guard because its bed would intersect the adjacent connected rails.
   await expect(page.getByRole('alert')).toContainText(/This track is occupied|These tracks overlap/);
+  await editSelectedPiece(page);
   await page.getByRole('button', { name: 'Remove', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('This track is occupied');
   expect((await saved(page)).tracks).toEqual(original.tracks);
   await page.getByRole('button', { name: 'Deselect piece', exact: true }).click();
+  await showPieces(page);
   await page.getByRole('button', { name: 'Add 248 mm straight', exact: true }).click();
   await advance(page, 100);
   expect((await saved(page)).tracks).toHaveLength(original.tracks.length + 1);
@@ -414,6 +420,7 @@ test('fleet identity, positions, directions and speeds survive named saves, file
   expect(restored.map(value => value.requestedSpeed)).toEqual([90, 40]);
   expect(restored.every(value => value.actualSpeed === 0 && !value.running)).toBe(true);
   const downloadPromise = page.waitForEvent('download');
+  await openMoreTools(page);
   await page.getByRole('button', { name: 'Save a layout file', exact: true }).click();
   const download = await downloadPromise;
   const file = testInfo.outputPath('two-train-layout.json');

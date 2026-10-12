@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import type { Locator, Page } from '@playwright/test';
+import { editSelectedPiece, openMoreTools } from './builder-navigation';
 import { readFile } from 'node:fs/promises';
 import { KATO_CATALOG } from '../src/catalog';
 import type { TrainSnapshot } from '../src/fleet';
@@ -45,7 +46,7 @@ function layout(withTrain = false): LayoutData {
 
 async function freeze(page: Page) {
   const time = new Date('2026-01-01T00:00:00Z');
-  await page.clock.install({ time });
+  await page.clock.install({ time: new Date(time.getTime() - 60_000) });
   await page.clock.pauseAt(time);
 }
 
@@ -66,6 +67,7 @@ async function seed(page: Page, value: LayoutData) {
 }
 
 async function selectAccessory(page: Page, kind: string) {
+  await openMoreTools(page);
   const inventory = page.locator('details.inventory');
   if (!await inventory.evaluate(element => (element as HTMLDetailsElement).open)) {
     await inventory.locator('summary').click();
@@ -73,6 +75,7 @@ async function selectAccessory(page: Page, kind: string) {
   const spec = KATO_CATALOG.find(item => item.kind === kind)!;
   await page.getByRole('button', { name: `Select placed ${spec.name}`, exact: true }).click();
   await advance(page);
+  await editSelectedPiece(page);
 }
 
 async function signs(page: Page): Promise<Record<string, string>> {
@@ -156,6 +159,7 @@ test('station signs can be renamed independently, undone, reset, and retained th
   await expectSign(page, 'named-station', 'Central Station');
 
   const downloadPromise = page.waitForEvent('download');
+  await openMoreTools(page);
   await page.getByRole('button', { name: 'Save a layout file', exact: true }).click();
   const exportPath = info.outputPath('station-names.json');
   await (await downloadPromise).saveAs(exportPath);

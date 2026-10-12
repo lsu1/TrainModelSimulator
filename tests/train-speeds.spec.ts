@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
+import { openMoreTools } from './builder-navigation';
 import { readFile } from 'node:fs/promises';
 import type { Track } from '../src/track';
 import type { TrainSnapshot } from '../src/fleet';
@@ -148,6 +149,7 @@ test('Shinkansen speeds above 120 and a zero request survive named saves, reload
   expect((await fleet(page)).map(value => value.requestedSpeed)).toEqual(expectedSpeeds);
   expect((await fleet(page)).every(value => !value.running && value.actualSpeed === 0)).toBe(true);
   const pendingDownload = page.waitForEvent('download');
+  await openMoreTools(page);
   await page.getByRole('button', { name: 'Save a layout file', exact: true }).click();
   const download = await pendingDownload;
   const filename = testInfo.outputPath('express-speeds.json');

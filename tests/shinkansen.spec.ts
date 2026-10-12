@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
+import { openMoreTools } from './builder-navigation';
 import { readFile } from 'node:fs/promises';
 import { attachTrack, endpoints, pathsFor } from '../src/track';
 import type { Track } from '../src/track';
@@ -286,6 +287,7 @@ test('train choice survives browser reload, independent named layouts, file back
   await page.getByRole('button', { name: 'Undo last change', exact: true }).click();
   await expect(selector(page)).toHaveValue('e5');
   const downloadPromise = page.waitForEvent('download');
+  await openMoreTools(page);
   await page.getByRole('button', { name: 'Save a layout file', exact: true }).click();
   const download = await downloadPromise;
   const path = testInfo.outputPath('our-green-shinkansen.json');

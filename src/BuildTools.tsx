@@ -146,7 +146,21 @@ export function SwitchPanel({
   );
 }
 
-export function RampBuilder({ h }: { h: Railway }) {
+export function RampBuilderActions({ h }: { h: Railway }) {
+  const hasRise = Math.abs(h.rampPlan.targetHeight - h.rampPlan.startHeight) > 0.01;
+  return (
+    <button
+      className="button primary"
+      disabled={!hasRise || h.couplingBusy}
+      onClick={h.buildRamp}
+    >
+      <ArrowUpFromLine size={16} />
+      Build ramp
+    </button>
+  );
+}
+
+export function RampBuilder({ h, docked = false }: { h: Railway; docked?: boolean }) {
   const customCount = h.rampPlan.supports.filter(
     (support) => support.status === "custom",
   ).length;
@@ -213,14 +227,7 @@ export function RampBuilder({ h }: { h: Railway }) {
           </small>
         )}
       </div>
-      <button
-        className="button primary"
-        disabled={!hasRise}
-        onClick={h.buildRamp}
-      >
-        <ArrowUpFromLine size={16} />
-        Build ramp
-      </button>
+      {!docked && <RampBuilderActions h={h} />}
       <p className="ramp-footnote">
         Grade = rise ÷ horizontal run. A 60 mm rise at 3% needs at least 2 m of
         horizontal run. Kato 23-069 uses a 50 mm pier and attachment to support

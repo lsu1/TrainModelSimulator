@@ -43,7 +43,7 @@ function clearTurnout(): Track {
 
 async function freeze(page: Page) {
   const time = new Date('2026-01-01T00:00:00Z');
-  await page.clock.install({ time });
+  await page.clock.install({ time: new Date(time.getTime() - 60_000) });
   await page.clock.pauseAt(time);
 }
 
@@ -56,7 +56,7 @@ async function seed(page: Page, value: LayoutData) {
   await page.addInitScript(({ key, value }) => {
     if (!localStorage.getItem(key)) localStorage.setItem(key, JSON.stringify(value));
   }, { key: STORAGE_KEY, value });
-  await page.goto('/');
+  await page.goto('./');
   await expect(scene(page)).toHaveAttribute('data-ready', 'true');
   await advance(page, 100);
 }

@@ -1,6 +1,6 @@
 # Track helper
 
-Build your railway freely with the existing track box, then expand **Track helper** when you want help connecting two unfinished ends. Select **First track end** and **Second track end**, and press **Check feasibility**. When exactly two connectors are open, the helper selects them automatically. A/B markers, arrows, and a dashed guide identify the selected ends in the scene.
+Build your railway freely with the existing track box, then select the **Helper** tab when you want help connecting two unfinished ends. Select **First track end** and **Second track end**, and press **Check feasibility**. When exactly two connectors are open, the helper selects them automatically. A/B markers, arrows, and a dashed guide identify the selected ends in the scene. The railway stays visible while the panel contents scroll, and the check/apply actions remain at the bottom of the panel.
 
 ## Suggestions and application
 
@@ -8,7 +8,7 @@ The check runs in a background worker and can be cancelled. A successful result 
 
 Nothing changes until **Add these pieces** or **Apply suggested repair** is pressed. Application revalidates the current railway, clearance, piece capacity, train occupancy, and existing fleet/coupling rules. The accepted change is a single existing Undo step. Station names, saved-layout identity, source-plan information, trains, couplings, and scenery stay with the working design. Named snapshots are updated only through the existing Save controls.
 
-Editing the railway, changing the selected ends, changing train models or formations, or closing the helper cancels an outstanding check and discards its suggestion. Application also checks current train occupancy, since trains may move while a check runs.
+Switching between **Pieces**, **Ramp**, and **Helper** retains the selected ends, ongoing check, results, and each tab's scroll position. The helper preview hides while another tab is active and returns with **Helper**. Editing the railway, changing the selected ends, or changing train models or formations cancels an outstanding check and discards its suggestion. Application also checks current train occupancy, since trains may move while a check runs.
 
 ## Search scope
 

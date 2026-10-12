@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
+import { editSelectedPiece, openMoreTools } from './builder-navigation';
 import { parseLayout } from '../src/layout';
 import type { LayoutData } from '../src/layout';
 import { connectedEndpoint, makeStarterLayout, openEndpoints } from '../src/track';
@@ -16,7 +17,8 @@ const scene = (page: Page) => page.getByRole('img', {
 const helper = (page: Page) => page.getByRole('region', { name: 'Track helper', exact: true });
 const first = (page: Page) => helper(page).getByRole('combobox', { name: 'First track end', exact: true });
 const second = (page: Page) => helper(page).getByRole('combobox', { name: 'Second track end', exact: true });
-const check = (page: Page) => helper(page).getByRole('button', { name: 'Check feasibility', exact: true });
+const actions = (page: Page) => page.getByRole('tabpanel', { name: 'Helper', exact: true }).locator('.builder-actions');
+const check = (page: Page) => actions(page).getByRole('button', { name: 'Check feasibility', exact: true });
 const endValue = (trackId: string, end: number) => JSON.stringify([trackId, end]);
 
 function layout(tracks: Track[], name = 'Our unfinished railway'): LayoutData {
@@ -71,10 +73,9 @@ async function preview(page: Page): Promise<{
 }
 
 async function expand(page: Page) {
-  const toggle = helper(page).getByRole('button', { name: 'Track helper', exact: true });
-  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
-  await toggle.click();
-  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  const tab = page.getByRole('tab', { name: 'Helper', exact: true });
+  await tab.click();
+  await expect(tab).toHaveAttribute('aria-selected', 'true');
   await expect(first(page)).toBeVisible();
 }
 
@@ -91,7 +92,7 @@ test('real worker previews a loop finish without changing the design, applies it
   await start(page, fixture, true);
   const before = await current(page);
   const savedBefore = await library(page);
-  await expect(helper(page).getByRole('button', { name: 'Track helper', exact: true })).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.getByRole('tab', { name: 'Helper', exact: true })).toHaveAttribute('aria-selected', 'false');
   await expand(page);
   await expect(first(page)).not.toHaveValue('');
   await expect(second(page)).not.toHaveValue('');
@@ -101,7 +102,7 @@ test('real worker previews a loop finish without changing the design, applies it
   await check(page).click();
   await expect(helper(page).getByText('We found a finish using 2 pieces!', { exact: true })).toBeVisible({ timeout: 120_000 });
   await expect(helper(page).getByText('This joins the selected ends and completes a track circuit.', { exact: false })).toBeVisible();
-  await expect(helper(page).getByRole('button', { name: 'Add these pieces', exact: true })).toBeEnabled();
+  await expect(actions(page).getByRole('button', { name: 'Add these pieces', exact: true })).toBeEnabled();
   expect(await current(page), 'Suggestions are only previews until accepted').toEqual(before);
   expect(await library(page), 'A suggestion does not overwrite a named snapshot').toEqual(savedBefore);
   expect((await preview(page))?.ghostCount).toBe(2);
@@ -113,7 +114,7 @@ test('real worker previews a loop finish without changing the design, applies it
   const scenePreview = info.outputPath('loop-finishing-scene.png');
   await scene(page).screenshot({ path: scenePreview });
   await info.attach('loop-finishing-scene', { path: scenePreview, contentType: 'image/png' });
-  await helper(page).getByRole('button', { name: 'Add these pieces', exact: true }).click();
+  await actions(page).getByRole('button', { name: 'Add these pieces', exact: true }).click();
   await page.clock.fastForward(16);
   const completed = await current(page);
   expect(completed.tracks).toHaveLength(12);
@@ -128,13 +129,13 @@ test('real worker previews a loop finish without changing the design, applies it
   expect(completed.couplings).toEqual(before.couplings);
   expect(completed.savedDesignId).toBe(before.savedDesignId);
   expect(await library(page)).toEqual(savedBefore);
-  await expect(helper(page).getByRole('button', { name: 'Add these pieces', exact: true })).toHaveCount(0);
+  await expect(actions(page).getByRole('button', { name: 'Add these pieces', exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: 'Undo last change', exact: true }).click();
   await page.clock.fastForward(16);
   expect(await current(page), 'The entire finishing section is a single undo step').toEqual(before);
   await check(page).click();
-  await expect(helper(page).getByRole('button', { name: 'Add these pieces', exact: true })).toBeVisible({ timeout: 120_000 });
-  await helper(page).getByRole('button', { name: 'Add these pieces', exact: true }).click();
+  await expect(actions(page).getByRole('button', { name: 'Add these pieces', exact: true })).toBeVisible({ timeout: 120_000 });
+  await actions(page).getByRole('button', { name: 'Add these pieces', exact: true }).click();
   await page.clock.fastForward(16);
   const persisted = await current(page);
   await page.reload();
@@ -166,10 +167,10 @@ test('multiple open ends require a selected pair and show distance and height gu
   await expect(check(page)).toBeEnabled();
   await expect(first(page).locator(`option[value='${endValue('right', 0)}']`)).toBeDisabled();
   await check(page).click();
-  await expect(helper(page).getByRole('button', { name: 'Add these pieces', exact: true })).toBeVisible({ timeout: 120_000 });
+  await expect(actions(page).getByRole('button', { name: 'Add these pieces', exact: true })).toBeVisible({ timeout: 120_000 });
   expect(await current(page)).toEqual(before);
   await second(page).selectOption(endValue('raised', 0));
-  await expect(helper(page).getByRole('button', { name: 'Add these pieces', exact: true })).toHaveCount(0);
+  await expect(actions(page).getByRole('button', { name: 'Add these pieces', exact: true })).toHaveCount(0);
   await expect(check(page)).toBeDisabled();
   expect(await current(page)).toEqual(before);
 });
@@ -178,7 +179,7 @@ test('opening another layout discards the checked suggestion and preserves the e
   await start(page, unfinishedOval(1));
   await expand(page);
   await check(page).click();
-  await expect(helper(page).getByRole('button', { name: 'Add these pieces', exact: true })).toBeVisible({ timeout: 120_000 });
+  await expect(actions(page).getByRole('button', { name: 'Add these pieces', exact: true })).toBeVisible({ timeout: 120_000 });
   await page.getByRole('button', { name: 'Layouts', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Where shall we go?', exact: true });
   const chooser = dialog.getByRole('combobox', { name: 'Choose a layout', exact: true });
@@ -189,7 +190,7 @@ test('opening another layout discards the checked suggestion and preserves the e
   await dialog.getByRole('button', { name: 'Open layout', exact: true }).click();
   await page.clock.fastForward(16);
   expect((await current(page)).tracks).toEqual([]);
-  await expect(helper(page).getByRole('button', { name: 'Add these pieces', exact: true })).toHaveCount(0);
+  await expect(actions(page).getByRole('button', { name: 'Add these pieces', exact: true })).toHaveCount(0);
   await expect(check(page)).toBeDisabled();
   await expect(first(page)).toHaveValue('');
   await expect(second(page)).toHaveValue('');
@@ -197,7 +198,7 @@ test('opening another layout discards the checked suggestion and preserves the e
   await page.clock.fastForward(16);
   expect((await current(page)).tracks).toHaveLength(11);
   await expect(check(page)).toBeEnabled();
-  await expect(helper(page).getByRole('button', { name: 'Add these pieces', exact: true })).toHaveCount(0);
+  await expect(actions(page).getByRole('button', { name: 'Add these pieces', exact: true })).toHaveCount(0);
 });
 
 test('a completed no-fit check gives direction clues and stays repeatable without changing the railway', async ({ page }) => {
@@ -213,7 +214,7 @@ test('a completed no-fit check gives direction clues and stays repeatable withou
   await expect(helper(page)).toContainText('six added pieces and three removed end pieces');
   await expect(helper(page)).toContainText('Try changing a nearby curve or straight');
   await expect(helper(page)).toContainText('Different directions can still be connected with curves.');
-  await expect(helper(page).getByRole('button', { name: 'Add these pieces', exact: true })).toHaveCount(0);
+  await expect(actions(page).getByRole('button', { name: 'Add these pieces', exact: true })).toHaveCount(0);
   const firstResult = await helper(page).locator('.track-helper-result').innerText();
   expect(await current(page)).toEqual(before);
   await check(page).click();
@@ -237,7 +238,7 @@ test('an actual exhausted worker budget gives honest limits and actionable clues
   await expect(helper(page)).toContainText('We have not found a finish yet.');
   await expect(helper(page)).toContainText('Try a different straight length or curve near one end');
   await expect(helper(page).getByText('No finish found within these limits.', { exact: true })).toHaveCount(0);
-  await expect(helper(page).getByRole('button', { name: 'Add these pieces', exact: true })).toHaveCount(0);
+  await expect(actions(page).getByRole('button', { name: 'Add these pieces', exact: true })).toHaveCount(0);
   const firstResult = await helper(page).locator('.track-helper-result').innerText();
   expect(await current(page)).toEqual(before);
   await check(page).click();
@@ -275,7 +276,7 @@ test('the real worker suggests a concrete small repair, previews what to remove,
   const scenePreview = info.outputPath('verified-repair-scene.png');
   await scene(page).screenshot({ path: scenePreview });
   await info.attach('verified-repair-scene', { path: scenePreview, contentType: 'image/png' });
-  await helper(page).getByRole('button', { name: 'Apply suggested repair', exact: true }).click();
+  await actions(page).getByRole('button', { name: 'Apply suggested repair', exact: true }).click();
   await page.clock.fastForward(16);
   const repaired = await current(page);
   expect(repaired.tracks).toHaveLength(4);
@@ -300,21 +301,25 @@ test('rotating an existing piece clears its old checked preview and Undo does no
   await start(page, fixture);
   await expand(page);
   await check(page).click();
-  await expect(helper(page).getByRole('button', { name: 'Add these pieces', exact: true })).toBeVisible({ timeout: 120_000 });
+  await expect(actions(page).getByRole('button', { name: 'Add these pieces', exact: true })).toBeVisible({ timeout: 120_000 });
   const before = await current(page);
   expect((await preview(page))?.ghostCount).toBe(1);
+  await openMoreTools(page);
   await page.locator('details.inventory > summary').click();
   await page.getByRole('button', { name: 'Select placed 248 mm straight', exact: true }).first().click();
+  await editSelectedPiece(page);
   await page.getByRole('button', { name: 'Rotate selected piece', exact: true }).click();
+  await page.getByRole('button', { name: 'Back to tools', exact: true }).click();
+  await expand(page);
   await page.clock.fastForward(16);
   const changed = await current(page);
   expect(changed.tracks).not.toEqual(before.tracks);
-  await expect(helper(page).getByRole('button', { name: 'Add these pieces', exact: true })).toHaveCount(0);
+  await expect(actions(page).getByRole('button', { name: 'Add these pieces', exact: true })).toHaveCount(0);
   expect((await preview(page))?.ghostCount ?? 0).toBe(0);
   await page.getByRole('button', { name: 'Undo last change', exact: true }).click();
   await page.clock.fastForward(16);
   expect(await current(page)).toEqual(before);
-  await expect(helper(page).getByRole('button', { name: 'Add these pieces', exact: true })).toHaveCount(0);
+  await expect(actions(page).getByRole('button', { name: 'Add these pieces', exact: true })).toHaveCount(0);
   await expect(check(page)).toBeEnabled();
 });
 
@@ -327,18 +332,18 @@ test('changing a train model or car count invalidates a preview even when the tr
   const before = await current(page);
   await expand(page);
   await check(page).click();
-  await expect(helper(page).getByRole('button', { name: 'Add these pieces', exact: true })).toBeVisible({ timeout: 120_000 });
+  await expect(actions(page).getByRole('button', { name: 'Add these pieces', exact: true })).toBeVisible({ timeout: 120_000 });
   await page.getByRole('combobox', { name: 'Train', exact: true }).selectOption('e6');
   expect((await current(page)).tracks).toEqual(before.tracks);
   expect((await current(page)).trains?.[0].type).toBe('e6');
-  await expect(helper(page).getByRole('button', { name: 'Add these pieces', exact: true })).toHaveCount(0);
+  await expect(actions(page).getByRole('button', { name: 'Add these pieces', exact: true })).toHaveCount(0);
   expect((await preview(page))?.ghostCount).toBe(0);
   await check(page).click();
-  await expect(helper(page).getByRole('button', { name: 'Add these pieces', exact: true })).toBeVisible({ timeout: 120_000 });
+  await expect(actions(page).getByRole('button', { name: 'Add these pieces', exact: true })).toBeVisible({ timeout: 120_000 });
   await page.getByRole('combobox', { name: 'Train car count', exact: true }).selectOption('4');
   expect((await current(page)).tracks).toEqual(before.tracks);
   expect((await current(page)).trains?.[0].carCount).toBe(4);
-  await expect(helper(page).getByRole('button', { name: 'Add these pieces', exact: true })).toHaveCount(0);
+  await expect(actions(page).getByRole('button', { name: 'Add these pieces', exact: true })).toHaveCount(0);
   expect((await preview(page))?.ghostCount).toBe(0);
 });
 
@@ -346,16 +351,15 @@ test('the helper fits a phone, supports keyboard navigation and cancels a pendin
   await page.setViewportSize({ width: 390, height: 844 });
   await start(page, unfinishedOval());
   const before = await current(page);
-  const toggle = helper(page).getByRole('button', { name: 'Track helper', exact: true });
-  await toggle.focus();
-  await page.keyboard.press('Enter');
-  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
-  await page.keyboard.press('Tab');
-  await expect(first(page)).toBeFocused();
+  const tab = page.getByRole('tab', { name: 'Helper', exact: true });
+  await page.getByRole('tab', { name: 'Pieces', exact: true }).focus();
+  await page.keyboard.press('End');
+  await expect(tab).toBeFocused();
+  await expect(tab).toHaveAttribute('aria-selected', 'true');
+  await first(page).focus();
   await page.keyboard.press('Tab');
   await expect(second(page)).toBeFocused();
-  await page.keyboard.press('Tab');
-  await expect(check(page)).toBeFocused();
+  await check(page).focus();
 
   // Hold only the worker's script request, so cancellation is tested before a
   // fast computer can finish this small search. The app still creates and
@@ -370,12 +374,12 @@ test('the helper fits a phone, supports keyboard navigation and cancels a pendin
   });
   try {
     await page.keyboard.press('Enter');
-    const cancel = helper(page).getByRole('button', { name: 'Cancel check', exact: true });
+    const cancel = actions(page).getByRole('button', { name: 'Cancel check', exact: true });
     await expect(cancel).toBeVisible();
     await expect.poll(() => workerRequested).toBe(true);
     await expect(first(page)).toBeDisabled();
     await expect(second(page)).toBeDisabled();
-    await expect(helper(page).getByRole('button', { name: 'Checking your gap…', exact: true })).toBeDisabled();
+    await expect(actions(page).getByRole('button', { name: 'Checking your gap…', exact: true })).toBeDisabled();
     await cancel.click();
     await expect(helper(page).getByText('Check cancelled. You can keep building or try again.', { exact: true })).toBeVisible();
     await expect(check(page)).toBeEnabled();
@@ -389,7 +393,7 @@ test('the helper fits a phone, supports keyboard navigation and cancels a pendin
     await page.unroute(/trackFeasibility\.worker/);
   }
   await check(page).click();
-  await expect(helper(page).getByRole('button', { name: 'Add these pieces', exact: true })).toBeVisible({ timeout: 120_000 });
+  await expect(actions(page).getByRole('button', { name: 'Add these pieces', exact: true })).toBeVisible({ timeout: 120_000 });
   const bounds = await helper(page).boundingBox();
   expect(bounds!.x).toBeGreaterThanOrEqual(0);
   expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(391);
@@ -398,8 +402,8 @@ test('the helper fits a phone, supports keyboard navigation and cancels a pendin
   const screenshot = info.outputPath('mobile-track-helper.png');
   await helper(page).screenshot({ path: screenshot });
   await info.attach('mobile-track-helper', { path: screenshot, contentType: 'image/png' });
-  await toggle.click();
-  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await page.getByRole('tab', { name: 'Pieces', exact: true }).click();
+  await expect(tab).toHaveAttribute('aria-selected', 'false');
   await expect(scene(page)).not.toHaveAttribute('data-track-helper-preview');
   expect(await current(page)).toEqual(before);
 });

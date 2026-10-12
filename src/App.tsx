@@ -1,6 +1,5 @@
 import {
   ArrowDownToLine,
-  ArrowUpFromLine,
   AlertTriangle,
   Building2,
   Check,
@@ -10,52 +9,28 @@ import {
   Layers3,
   Lightbulb,
   Mountain,
-  Move,
   Play,
   Plus,
-  RotateCcw,
   Route,
   Save,
-  Search,
   TrainFront,
   Trash2,
   Undo2,
-  Waypoints,
   X,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import Scene3D from "./Scene3D";
 import RailwayCockpit from "./RailwayCockpit";
-import StationNameEditor from "./StationNameEditor";
-import TrackHelper from "./TrackHelper";
 import { useTrackHelper } from "./useTrackHelper";
-import { supportsStationName } from "./stationName";
 import { KATO_CATALOG, CATALOG_SOURCES } from "./catalog";
-import type { CatalogCategory, CatalogItem } from "./catalogTypes";
-import { CATALOG, useRailway } from "./useRailway";
+import { useRailway } from "./useRailway";
 import { TRAIN_TYPES, getTrainSpec } from "./trains";
 import type { TrainType } from "./trains";
 import type { LayoutData, LayoutPreset } from "./layout";
-import {
-  CheckSummary,
-  RampBuilder,
-  ShoppingReview,
-} from "./BuildTools";
+import { ShoppingReview } from "./BuildTools";
+import BuilderPanel from "./BuilderPanel";
+import type { BuilderTool } from "./BuilderPanel";
 
-const CATEGORIES: {
-  key: CatalogCategory;
-  label: string;
-  icon: typeof Route;
-}[] = [
-  { key: "straight", label: "Straights", icon: Route },
-  { key: "curved", label: "Curves", icon: RotateCcw },
-  { key: "turnout", label: "Turnouts", icon: Waypoints },
-  { key: "crossing", label: "Crossings", icon: Plus },
-  { key: "double", label: "Double", icon: Layers3 },
-  { key: "viaduct", label: "Viaducts", icon: ArrowUpFromLine },
-  { key: "bridge", label: "Bridges", icon: Mountain },
-  { key: "accessory", label: "Scenery", icon: Building2 },
-];
 const TRAIN_DESCRIPTIONS: Record<TrainType, string> = {
   e235: "Stainless steel and lime green",
   e5: "Green, pink stripe, and an extra-long nose",
@@ -114,94 +89,13 @@ function savedTrainSummary(layout: LayoutData): string {
     .map((train) => `${getTrainSpec(train.type).name} (${train.carCount} cars)`)
     .join(" · ")}`;
 }
-function PieceIllustration({ piece }: { piece: CatalogItem }) {
-  const curved = piece.shape.toLowerCase().includes("curve");
-  const double = piece.shape.startsWith("double") || piece.shape === "scissors";
-  const d = curved ? "M19 13 Q19 49 88 49" : "M15 33 H96";
-  if (piece.shape === "accessory") {
-    const Icon =
-      piece.accessoryType === "catenary"
-        ? Waypoints
-        : piece.accessoryType === "pier"
-          ? ArrowUpFromLine
-          : piece.accessoryType === "signal"
-            ? Lightbulb
-            : Building2;
-    return (
-      <div className="piece-illustration accessory-illustration">
-        <Icon size={30} strokeWidth={1.4} />
-      </div>
-    );
-  }
-  return (
-    <svg className="piece-illustration" viewBox="0 0 112 68" aria-hidden="true">
-      <path
-        d={d}
-        fill="none"
-        stroke="#b3b6ad"
-        strokeWidth={double ? 26 : 18}
-        transform="translate(0 4)"
-      />
-      <path
-        d={d}
-        fill="none"
-        stroke={piece.bed === "bridge" ? (piece.color ?? "#567865") : "#c9c9bd"}
-        strokeWidth={double ? 26 : 18}
-      />
-      {(double ? [-7, 7] : [0]).map((offset) => (
-        <g key={offset} transform={`translate(0 ${offset})`}>
-          <path
-            d={d}
-            fill="none"
-            stroke="#525750"
-            strokeWidth="12"
-            strokeDasharray="2 4"
-          />
-          <path d={d} fill="none" stroke="#d9dad3" strokeWidth="8" />
-          <path d={d} fill="none" stroke="#777b72" strokeWidth="5" />
-        </g>
-      ))}
-      {piece.shape === "turnout" && (
-        <path
-          d="M15 33Q53 33 94 12"
-          fill="none"
-          stroke="#a7aea0"
-          strokeWidth="9"
-        />
-      )}
-      {piece.shape === "crossing" && (
-        <path d="M55 9V57" fill="none" stroke="#9fa89a" strokeWidth="10" />
-      )}
-      {piece.bed === "viaduct" && (
-        <>
-          <path d="M15 47H96" stroke="#828a7e" strokeWidth="4" />
-          <path d="M31 49V62M81 49V62" stroke="#a4aaa0" strokeWidth="6" />
-        </>
-      )}
-      {piece.bed === "bridge" && (
-        <path
-          d="M15 19H96M15 19 35 38 55 19 75 38 96 19"
-          fill="none"
-          stroke={piece.color ?? "#496c55"}
-          strokeWidth="3"
-        />
-      )}
-    </svg>
-  );
-}
 
 export default function App() {
   const h = useRailway();
   const trackHelper = useTrackHelper(h);
-  const {
-    layout,
-    tracks,
-    accessories,
-    selectedSpec,
-    selection,
-    selectedTrack,
-    selectedAccessory,
-  } = h;
+  const [activeTool, setActiveTool] = useState<BuilderTool>("pieces");
+  const [toolsExpanded, setToolsExpanded] = useState(false);
+  const { layout, tracks, accessories } = h;
   const [saveName, setSaveName] = useState(layout.name);
   const [deleteDesignId, setDeleteDesignId] = useState<string | null>(null);
   const [layoutChoice, setLayoutChoice] = useState("");
@@ -270,7 +164,7 @@ export default function App() {
         </div>
       </header>
       <h1 className="visually-hidden">Your 3D railway simulator</h1>
-      <main className="workspace">
+      <main className={`workspace${toolsExpanded ? " tool-panel-expanded" : ""}`}>
         <div className="workspace-main">
           <section className="railway-card" aria-label="3D railway playground">
             <div className="board-header">
@@ -398,363 +292,20 @@ export default function App() {
                   }}
                   onReady={() => h.setReady(true)}
                   issues={h.issues}
-                  helperPreview={trackHelper.preview}
+                  helperPreview={activeTool === "helper" ? trackHelper.preview : null}
                 />
               )}
             </RailwayCockpit>
           </section>
         </div>
-        <aside className="builder-panel" aria-label="Kato track builder">
-          <div className="panel-eyebrow">THE KATO-INSPIRED TRACK BOX</div>
-          <h2>
-            A world of possibilities <span>+</span>
-          </h2>
-          <p className="catalog-summary">
-            {KATO_CATALOG.length} catalog pieces to discover.
-          </p>
-          {h.couplingBusy && <p className="coupling-build-note">Track building waits until the trains have finished connecting or separating.</p>}
-          <fieldset className="coupling-build-lock" disabled={h.couplingBusy} aria-label="Track building">
-          <div className="catalog-search">
-            <Search size={17} />
-            <input
-              type="search"
-              aria-label="Search Kato catalog"
-              placeholder="Search tracks, scenery, or product no."
-              value={h.search}
-              onChange={(event) => h.setSearch(event.target.value)}
-            />
-            {h.search && (
-              <button
-                aria-label="Clear catalog search"
-                onClick={() => h.setSearch("")}
-              >
-                <X size={15} />
-              </button>
-            )}
-          </div>
-          <div
-            className="catalog-tabs"
-            role="group"
-            aria-label="Catalog categories"
-          >
-            {CATEGORIES.map((tab) => (
-              <button
-                key={tab.key}
-                aria-pressed={h.category === tab.key && !h.search}
-                className={h.category === tab.key && !h.search ? "active" : ""}
-                onClick={() => {
-                  h.setCategory(tab.key);
-                  h.setSearch("");
-                }}
-              >
-                <tab.icon size={17} />
-                {tab.label}
-              </button>
-            ))}
-          </div>
-          <div className="catalog-scroll">
-            <div className="piece-grid">
-              {h.filtered.map((piece) => (
-                <button
-                  key={piece.kind}
-                  className="piece-button"
-                  draggable={!h.couplingBusy}
-                  aria-label={`Add ${piece.name}`}
-                  title={`${piece.name} · Kato ${piece.sku}\nClick to add, or drag into the scene.`}
-                  onDragStart={(event) => {
-                    event.dataTransfer.setData(
-                      "application/x-kato-piece",
-                      piece.kind,
-                    );
-                    event.dataTransfer.effectAllowed = "copy";
-                  }}
-                  onClick={() => h.addPiece(piece.kind)}
-                >
-                  <PieceIllustration piece={piece} />
-                  <span className="piece-label">{piece.label}</span>
-                  <span className="piece-name">{piece.name}</span>
-                  <span className="piece-sku">KATO {piece.sku}</span>
-                  {piece.verification === "nominal" && (
-                    <span className="piece-precision">Verify physical fit</span>
-                  )}
-                  <span className="piece-add">
-                    <Plus size={12} />
-                  </span>
-                </button>
-              ))}
-            </div>
-            {!h.filtered.length && (
-              <p className="empty-catalog">
-                No pieces found. Try a radius, length, or product number.
-              </p>
-            )}
-          </div>
-          {["curved", "viaduct", "double"].includes(h.category) &&
-            !h.search && (
-              <div
-                className="bend-control"
-                role="group"
-                aria-label="Curve direction"
-              >
-                <button
-                  aria-pressed={h.bend === -1}
-                  className={h.bend === -1 ? "active" : ""}
-                  onClick={() => h.setBend(-1)}
-                >
-                  <RotateCcw size={15} />
-                  Bend left
-                </button>
-                <button
-                  aria-pressed={h.bend === 1}
-                  className={h.bend === 1 ? "active" : ""}
-                  onClick={() => h.setBend(1)}
-                >
-                  <RotateCcw size={15} style={{ transform: "scaleX(-1)" }} />
-                  Bend right
-                </button>
-              </div>
-            )}
-          <div className="placement-height">
-            <label htmlFor="build-height">
-              <Layers3 size={16} />
-              New piece height
-            </label>
-            <select
-              id="build-height"
-              value={h.buildHeight}
-              onChange={(event) => {
-                h.setBuildHeight(Number(event.target.value));
-                h.setAnchor(null);
-              }}
-            >
-              {Array.from(new Set([0, 20, 40, 60, 80, 100, 120, h.buildHeight]))
-                .sort((a, b) => a - b)
-                .map((height) => (
-                  <option key={height} value={height}>
-                    {height === 0 ? "Table level" : `${height} mm high`}
-                  </option>
-                ))}
-            </select>
-          </div>
-          {selection && selectedSpec ? (
-            <div className="selection-card">
-              <div className="selection-head">
-                <div>
-                  <span>SELECTED PIECE · {selectedSpec.sku}</span>
-                  <strong>{selectedSpec.name}</strong>
-                </div>
-                <button
-                  className="icon-button"
-                  aria-label="Deselect piece"
-                  onClick={() => h.setSelectedId(null)}
-                >
-                  <X size={15} />
-                </button>
-              </div>
-              <div className="selection-actions">
-                <button
-                  className="button secondary"
-                  aria-label="Rotate selected piece"
-                  onClick={() =>
-                    h.updateSelection({ angle: selection.angle + Math.PI / 4 })
-                  }
-                >
-                  <RotateCcw size={15} />
-                  Rotate 45°
-                </button>
-                <button className="button secondary" onClick={h.removeSelected}>
-                  <Trash2 size={15} />
-                  Remove
-                </button>
-              </div>
-              <div className="selection-grid">
-                <label>
-                  Height (mm)
-                  <input
-                    aria-label="Selected piece height"
-                    type="number"
-                    min="0"
-                    max="500"
-                    step="5"
-                    value={selection.elevation ?? 0}
-                    onChange={(event) => {
-                      const height = Math.min(
-                        500,
-                        Math.max(0, Number(event.target.value)),
-                      );
-                      h.updateSelection({
-                        elevation: height,
-                        ...(selectedTrack ? { endElevation: height } : {}),
-                      });
-                    }}
-                  />
-                </label>
-                {selectedTrack && (
-                  <label>
-                    End height (mm)
-                    <input
-                      aria-label="Selected track end height"
-                      type="number"
-                      min="0"
-                      max="500"
-                      step="5"
-                      value={
-                        selectedTrack.endElevation ??
-                        selectedTrack.elevation ??
-                        0
-                      }
-                      onChange={(event) =>
-                        h.updateSelection({
-                          endElevation: Math.min(
-                            500,
-                            Math.max(0, Number(event.target.value)),
-                          ),
-                        })
-                      }
-                    />
-                  </label>
-                )}
-              </div>
-              {selectedAccessory && supportsStationName(selectedSpec.accessoryType) && (
-                <StationNameEditor
-                  key={selectedAccessory.id}
-                  accessory={selectedAccessory}
-                  accessoryType={selectedSpec.accessoryType}
-                  onApply={h.updateStationName}
-                />
-              )}
-              <div className="height-presets">
-                {[0, 40, 80, 120].map((height) => (
-                  <button
-                    key={height}
-                    onClick={() =>
-                      h.updateSelection({
-                        elevation: height,
-                        ...(selectedTrack ? { endElevation: height } : {}),
-                      })
-                    }
-                  >
-                    {height === 0 ? "Ground" : `${height} mm`}
-                  </button>
-                ))}
-              </div>
-              {selectedTrack && (selectedTrack.elevation ?? 0) > 0 && (
-                <button
-                  className="button secondary"
-                  onClick={h.addMatchingPiers}
-                >
-                  <ArrowUpFromLine size={15} />
-                  Add matching piers
-                </button>
-              )}
-              {selectedTrack &&
-                (selectedSpec.shape === "turnout" ||
-                  selectedSpec.shape === "scissors") && (
-                  <div
-                    className="switch-controls"
-                    role="group"
-                    aria-label="Turnout route"
-                  >
-                    <button
-                      aria-pressed={selectedTrack.switchState !== "branch"}
-                      className={
-                        selectedTrack.switchState !== "branch" ? "active" : ""
-                      }
-                      onClick={() =>
-                        h.updateSelection({ switchState: "straight" })
-                      }
-                    >
-                      Straight route
-                    </button>
-                    <button
-                      aria-pressed={selectedTrack.switchState === "branch"}
-                      className={
-                        selectedTrack.switchState === "branch" ? "active" : ""
-                      }
-                      onClick={() =>
-                        h.updateSelection({ switchState: "branch" })
-                      }
-                    >
-                      Branch route
-                    </button>
-                  </div>
-                )}
-              {h.grade > 0.05 && (
-                <p className="grade-note">
-                  {h.grade.toFixed(1)}% slope
-                  {h.grade > 4 ? " · steep for a physical train" : ""}
-                </p>
-              )}
-              <a
-                className="piece-source"
-                href={selectedSpec.sourceUrl}
-                target="_blank"
-                rel="noreferrer"
-              >
-                See this piece in the Kato catalog <ChevronRight size={13} />
-              </a>
-            </div>
-          ) : (
-            <div className="hint-box">
-              <Lightbulb size={19} />
-              <p>
-                {h.anchor
-                  ? "A connector is selected. Click your next piece to join it at the same height."
-                  : "Drag a piece into the world. Choose Move pieces to arrange it, or click a green connector to extend a track."}
-              </p>
-            </div>
-          )}
-          <RampBuilder h={h} />
-          <TrackHelper h={h} helper={trackHelper} />
-          </fieldset>
-          <CheckSummary h={h} />
-          <details className="inventory">
-            <summary>
-              Placed pieces <span>{h.pieceCount}</span>
-            </summary>
-            <div className="inventory-list">
-              {[...tracks, ...accessories].map((piece) => (
-                <button
-                  key={piece.id}
-                  className={`placed-row ${h.selectedId === piece.id ? "selected" : ""}`}
-                  aria-label={`Select placed ${CATALOG.get(piece.kind)?.name}`}
-                  onClick={() => {
-                    h.setSelectedId(piece.id);
-                    h.setRunning(false);
-                  }}
-                >
-                  <span>{CATALOG.get(piece.kind)?.label}</span>
-                  <small>
-                    {CATALOG.get(piece.kind)?.sku} · {piece.elevation ?? 0} mm
-                    high
-                  </small>
-                </button>
-              ))}
-            </div>
-          </details>
-          <div className="inventory-total">
-            <span>
-              {tracks.length} tracks · {accessories.length} scenery pieces
-            </span>
-            <strong>{(h.totalLength / 1000).toFixed(2)} m</strong>
-          </div>
-          <div className="sidebar-footer">
-            <button className="export-button" disabled={h.couplingBusy} onClick={h.exportLayout}>
-              <ArrowDownToLine size={16} />
-              Save a layout file
-            </button>
-            <p className="layout-backup-hint">
-              Saved layouts stay in this browser. Download a file for a backup
-              or to use another computer.
-            </p>
-            <button
-              className="reference-button"
-              onClick={() => h.setModal("references")}
-            >
-              Catalog & model references <ChevronRight size={14} />
-            </button>
-          </div>
-        </aside>
+        <BuilderPanel
+          h={h}
+          helper={trackHelper}
+          activeTool={activeTool}
+          onToolChange={setActiveTool}
+          toolsExpanded={toolsExpanded}
+          onToggleTools={() => setToolsExpanded((value) => !value)}
+        />
       </main>
       <footer className="footer">
         <span>

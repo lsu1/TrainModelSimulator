@@ -943,3 +943,136 @@ kbd { display: inline-block; padding: 1px 5px; min-width: 20px; border: 1px soli
   .cockpit-drive-dock .speed-control { min-width: 115px; }
   .piece-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+/* Keep the railway beside the active tool instead of scrolling the whole page. */
+.app-shell { display: flex; flex-direction: column; height: 100dvh; min-height: 0; padding: 0 24px 12px; }
+.app-header { flex: 0 0 auto; }
+.footer { flex: 0 0 auto; flex-direction: row; align-items: center; margin-top: 6px; padding-top: 5px; gap: 8px 16px; font-size: 10px; }
+.workspace { flex: 1 1 auto; min-height: 0; margin-top: 8px; grid-template-columns: minmax(0, 1fr) 320px; grid-template-rows: minmax(0, 1fr); align-items: stretch; gap: 16px; }
+.workspace-main { display: flex; min-height: 0; }
+.railway-card { width: 100%; height: 100%; min-height: 0; }
+.builder-panel { display: flex; flex-direction: column; height: 100%; min-height: 0; padding: 0; overflow: hidden; }
+.builder-panel [hidden] { display: none !important; }
+.builder-header { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 14px 10px; }
+.builder-header > div { min-width: 0; }
+.builder-header .panel-eyebrow { font-size: 9px; letter-spacing: 1.1px; }
+.builder-panel .builder-header h2 { margin: 1px 0 0; font-size: 20px; }
+.builder-header .catalog-summary { margin: 2px 0 0; }
+.builder-expand { display: none; }
+.builder-tabs { display: grid; flex: 0 0 auto; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; padding: 0 12px 10px; border-bottom: 1px solid var(--line); }
+.builder-tabs button { display: flex; align-items: center; justify-content: center; gap: 6px; min-width: 0; min-height: 44px; padding: 7px 5px; border: 1px solid #dce5d2; border-radius: 8px; background: #f8faf3; color: #567248; font-size: 12px; font-weight: 600; }
+.builder-tabs button svg { width: 17px; height: 17px; }
+.builder-tabs button:hover { background: #eaf2df; border-color: #bacda6; }
+.builder-tabs button[aria-selected='true'] { color: #fff; background: var(--green); border-color: var(--green); }
+.builder-selected-strip { display: flex; flex: 0 0 auto; align-items: center; gap: 7px; min-width: 0; padding: 7px 12px; border-bottom: 1px solid #dce6d1; background: #f0f6e8; }
+.builder-selected-strip > span, .builder-selected-strip > div { flex: 1 1 auto; min-width: 0; }
+.builder-selected-strip > span { display: flex; align-items: center; gap: 5px; font-size: 11px; }
+.builder-selected-strip strong { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 600; }
+.builder-selected-strip small { color: var(--muted); font-size: 10px; }
+.builder-selected-strip .button { flex: 0 0 auto; min-height: 40px; padding: 0 10px; font-size: 12px; }
+.builder-selected-strip .icon-button { flex: 0 0 40px; width: 40px; height: 40px; padding: 10px; }
+.builder-body, .builder-pane { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; min-height: 0; }
+.builder-scroll { flex: 1 1 auto; min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: #b7c9a5 transparent; padding: 14px; scroll-padding: 14px; }
+.builder-scroll::-webkit-scrollbar { width: 7px; }
+.builder-scroll::-webkit-scrollbar-thumb { border: 2px solid var(--surface); border-radius: 8px; background: #b7c9a5; }
+.builder-scroll:focus-visible { outline-offset: -4px; }
+.builder-scroll .catalog-scroll, .builder-scroll .inventory-list { max-height: none; overflow: visible; }
+.builder-scroll .catalog-scroll { padding: 3px 0; margin: -3px 0; }
+.builder-panel .catalog-tabs { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.builder-panel .piece-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.builder-scroll .ramp-builder, .builder-scroll .track-helper { margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent; }
+.builder-scroll .track-helper h3 > span { display: flex; align-items: center; gap: 6px; }
+.builder-scroll .selection-card { margin-top: 0; }
+.builder-panel > .coupling-build-note { flex: 0 0 auto; margin: 0; padding: 6px 12px; border-radius: 0; border-bottom: 1px solid var(--line); }
+.builder-actions { flex: 0 0 auto; padding: 10px 12px 12px; border-top: 1px solid var(--line); background: #fbfcf6; }
+.builder-actions .inventory-total { margin: 0 0 7px; padding: 0; border: 0; }
+.builder-actions .validation-summary { min-height: 44px; margin: 0; padding: 8px 10px; }
+.builder-actions .button { min-width: 0; width: 100%; min-height: 42px; padding: 8px 10px; font-size: 12px; white-space: normal; }
+.builder-actions .track-helper-check-actions { margin: 0; }
+.builder-actions .track-helper-check-actions + .button { margin-top: 7px; }
+.builder-actions p { margin: 5px 0 0; color: var(--muted); font-size: 11px; line-height: 1.4; }
+.builder-more { margin-top: 16px; border-top: 1px solid #e0e7d6; padding-top: 7px; }
+.builder-more > summary { min-height: 40px; padding: 8px 0; color: #557343; cursor: pointer; font-size: 12px; font-weight: 600; }
+.builder-more .inventory { margin-top: 3px; padding-top: 9px; }
+.builder-back { display: inline-flex; align-items: center; gap: 6px; min-height: 40px; margin-bottom: 10px; padding: 7px 10px; border: 1px solid #d5e0c9; border-radius: 7px; background: #f7faf1; color: #4d6b3c; font-size: 12px; font-weight: 600; }
+.builder-back svg { width: 16px; height: 16px; }
+.builder-panel .selection-actions button, .builder-panel .height-presets button, .builder-panel .switch-controls button, .builder-panel .station-name-actions .button, .builder-panel .placement-height select, .builder-panel .ramp-fields input, .builder-panel .ramp-fields select, .builder-panel .selection-grid input, .builder-panel .selection-grid select, .builder-panel .track-helper select { min-height: 40px; }
+.builder-panel .selection-head > .icon-button { width: 40px; height: 40px; padding: 10px; }
+
+@media (min-width: 901px) and (max-width: 1100px) {
+  .app-shell { padding-left: 16px; padding-right: 16px; }
+  .workspace { grid-template-columns: minmax(0, 1fr) 300px; gap: 12px; }
+  .builder-header, .builder-scroll { padding-left: 12px; padding-right: 12px; }
+  .cockpit-train-bar { flex-wrap: wrap; }
+  .cockpit-train-bar .cockpit-fleet-strip { flex-basis: calc(100% - 75px); }
+  .cockpit-train-bar .cockpit-model-select { flex: 1 1 120px; }
+  .cockpit-drive-dock .train-controls { flex-basis: 100%; }
+  .cockpit-coupling { padding: 6px 0 0; border-top: 1px solid var(--line); border-left: 0; }
+}
+
+@media (max-width: 900px) {
+  .app-shell { padding: 0 12px 8px; }
+  .workspace { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 3fr) minmax(0, 2fr); gap: 8px; margin-top: 6px; }
+  .workspace.tool-panel-expanded { grid-template-rows: minmax(0, 11fr) minmax(0, 9fr); }
+  .railway-card, .builder-panel { border-radius: 12px; }
+  .builder-header { padding: 7px 12px; }
+  .builder-header > div { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
+  .builder-header .panel-eyebrow { display: none; }
+  .builder-panel .builder-header h2 { margin: 0; font-size: 17px; }
+  .builder-header h2 > span { display: none; }
+  .builder-header .catalog-summary { display: inline; margin: 0; font-size: 11px; }
+  .builder-expand { display: inline-flex; flex: 0 0 40px; align-items: center; justify-content: center; gap: 5px; width: 40px; height: 40px; min-height: 40px; padding: 8px; border: 1px solid #d5e0c9; border-radius: 7px; color: #557343; background: #f7faf1; font-size: 11px; font-weight: 600; }
+  .builder-expand svg { width: 16px; height: 16px; }
+  .builder-tabs { gap: 6px; padding: 0 10px 7px; }
+  .builder-tabs button { min-height: 40px; }
+  .builder-selected-strip { min-height: 44px; padding: 3px 10px; }
+  .builder-scroll { padding: 11px 12px; scroll-padding: 11px; }
+  .builder-actions { padding: 7px 10px 8px; }
+  .builder-actions .track-helper-check-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .builder-actions .track-helper-check-actions > .button:only-child { grid-column: 1 / -1; }
+  .builder-actions .inventory-total { margin-bottom: 4px; font-size: 11px; }
+  .builder-actions .validation-summary { padding: 6px 9px; }
+  .builder-panel .piece-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .builder-panel .catalog-tabs { grid-template-columns: repeat(8, minmax(0, 1fr)); }
+  .layout-plan-info { max-height: 52px; overflow: auto; overscroll-behavior: contain; }
+}
+
+@media (max-width: 550px) {
+  .app-shell { padding-left: 8px; padding-right: 8px; }
+  .builder-panel .catalog-tabs { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .builder-panel .piece-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .builder-header { gap: 8px; padding-top: 2px; padding-bottom: 2px; }
+  .builder-panel .builder-header h2 { font-size: 16px; }
+  .builder-selected-strip small { display: none; }
+  .footer { flex-direction: column; align-items: flex-start; gap: 2px; padding-top: 4px; }
+}
+
+/* Compact narrow-phone and short-screen train bars so the canvas retains height. */
+@media (max-width: 550px), (max-width: 900px) and (max-height: 760px) {
+  .workspace { grid-template-rows: minmax(0, 11fr) minmax(0, 9fr); }
+  .workspace.tool-panel-expanded { grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
+  .cockpit-train-bar { flex-wrap: nowrap; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: thin; padding-bottom: 3px; }
+  .cockpit-train-bar .cockpit-fleet-strip { flex: 0 0 140px; }
+  .cockpit-train-bar .cockpit-model-select { flex: 0 0 115px; }
+  .cockpit-train-bar .car-select { margin-left: 0; }
+  .cockpit-drive-dock { flex-wrap: nowrap; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: thin; padding: 6px 9px; }
+  .cockpit-drive-dock .train-controls { flex: 0 0 310px; }
+  .cockpit-coupling { flex: 0 0 260px; padding: 0 0 0 9px; border-top: 0; border-left: 1px solid var(--line); }
+  .cockpit-notice { flex: 0 0 240px; }
+  .cockpit-drive-dock .play-button { width: 44px; height: 44px; }
+  .builder-header { padding-top: 2px; padding-bottom: 2px; }
+  .builder-tabs { padding-bottom: 5px; }
+}
+
+@media (max-width: 550px) {
+  .workspace { grid-template-rows: minmax(0, 3fr) minmax(0, 2fr); }
+  .workspace.tool-panel-expanded { grid-template-rows: minmax(0, 11fr) minmax(0, 9fr); }
+}
+
+/* A wide phone in landscape has more useful room beside the railway. */
+@media (min-width: 700px) and (max-width: 900px) and (max-height: 500px) {
+  .workspace, .workspace.tool-panel-expanded { grid-template-columns: minmax(0, 1fr) 290px; grid-template-rows: minmax(0, 1fr); }
+  .builder-expand { display: none; }
+  .builder-panel .piece-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .builder-panel .catalog-tabs { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
