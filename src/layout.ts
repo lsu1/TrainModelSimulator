@@ -11,6 +11,8 @@ import type { CouplingGroup } from './couplingTypes';
 import { supportsCouplingPair } from './couplingTypes';
 import { makeCouplingDemo } from './couplingDemo';
 import { normalizeStationName, supportsStationName } from './stationName';
+import { parseScenery } from './sceneryValidation';
+import type { SceneryPlan } from './sceneryTypes';
 
 export interface PlacedAccessory {
   id: string;
@@ -38,6 +40,8 @@ export interface LayoutData {
   couplings?: CouplingGroup[];
   /** Source drawing retained when a preset is saved, edited, or exported. */
   sourcePlan?: 'kato-plan02-1a' | 'kato-plan06-15';
+  /** Optional decorative surroundings; older layouts retain their appearance. */
+  scenery?: SceneryPlan;
 }
 
 export const STORAGE_KEY = 'little-railways-layout-v5';
@@ -278,6 +282,7 @@ export function parseLayout(value: unknown): LayoutData {
     });
   }
 
+  const scenery = parseScenery(candidate.scenery);
   return {
     version: candidate.version === 5 ? 5 : candidate.version === 4 ? 4 : candidate.version === 3 ? 3 : 2,
     name: candidate.name.trim().slice(0, 60) || 'My Railway',
@@ -288,6 +293,7 @@ export function parseLayout(value: unknown): LayoutData {
     ...(trains === undefined ? {} : { trains }),
     ...(candidate.version >= 3 && candidate.selectedTrainId !== undefined ? { selectedTrainId: candidate.selectedTrainId as string } : {}),
     ...(couplings === undefined ? {} : { couplings }),
+    ...(scenery === undefined ? {} : { scenery }),
     ...(candidate.sourcePlan === 'kato-plan02-1a' || candidate.sourcePlan === 'kato-plan06-15'
       ? { sourcePlan: candidate.sourcePlan } : {}),
   };

@@ -959,7 +959,7 @@ kbd { display: inline-block; padding: 1px 5px; min-width: 20px; border: 1px soli
 .builder-panel .builder-header h2 { margin: 1px 0 0; font-size: 20px; }
 .builder-header .catalog-summary { margin: 2px 0 0; }
 .builder-expand { display: none; }
-.builder-tabs { display: grid; flex: 0 0 auto; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; padding: 0 12px 10px; border-bottom: 1px solid var(--line); }
+.builder-tabs { display: grid; flex: 0 0 auto; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; padding: 0 12px 10px; border-bottom: 1px solid var(--line); }
 .builder-tabs button { display: flex; align-items: center; justify-content: center; gap: 6px; min-width: 0; min-height: 44px; padding: 7px 5px; border: 1px solid #dce5d2; border-radius: 8px; background: #f8faf3; color: #567248; font-size: 12px; font-weight: 600; }
 .builder-tabs button svg { width: 17px; height: 17px; }
 .builder-tabs button:hover { background: #eaf2df; border-color: #bacda6; }

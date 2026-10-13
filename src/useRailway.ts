@@ -1,4 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { sceneryGeometryKey, visibleScenery } from "./sceneryGeneration";
+import { parseScenery } from "./sceneryValidation";
+import type { SceneryPlan } from "./sceneryTypes";
 import { KATO_CATALOG } from "./catalog";
 import type { CatalogCategory } from "./catalogTypes";
 import {
@@ -312,6 +315,30 @@ export function useRailway() {
     const snapshot = currentLayoutSnapshot();
     const savedDesignId = activeSavedDesignId;
     setHistory((previous) => [...previous.slice(-49), { layout: snapshot, savedDesignId }]);
+  };
+  const applyScenery = (plan: SceneryPlan | undefined, expectedGeometryKey: string): boolean => {
+    if (!operationAllowsEdit()) return false;
+    if (placementTrainId) { notify("Finish placing your train before changing its surroundings.", true); return false; }
+    const current = layoutRef.current;
+    if (sceneryGeometryKey(current.tracks, current.accessories) !== expectedGeometryKey) {
+      notify("Your railway changed. Build a fresh scenery preview for these tracks.", true);
+      return false;
+    }
+    let validated: SceneryPlan | undefined;
+    try {
+      validated = parseScenery(plan);
+      if (validated) validated = visibleScenery(validated, current.tracks, current.accessories);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "This scenery could not be kept.", true);
+      return false;
+    }
+    if (JSON.stringify(validated) === JSON.stringify(current.scenery)) return true;
+    rememberCurrentLayout();
+    const { scenery: _previous, ...railway } = current;
+    setLayout(snapshotFleetLayout({ ...railway, ...(validated ? { scenery: validated } : {}) },
+      fleetRef.current, selectedTrainIdRef.current, couplingsRef.current));
+    notify(validated ? "Your surroundings are saved. Undo brings back the previous scene." : "Surroundings removed. Undo brings them back.");
+    return true;
   };
   const proposedFleetIsSafe = (nextTracks: Track[], proposed: readonly TrainRuntime[], groups = couplingsRef.current): boolean => {
     const groupValidation = validateCoupledFleet(nextTracks, proposed, groups);
@@ -1393,6 +1420,7 @@ export function useRailway() {
     changeLayout,
     getHelperProtectedTrackIds,
     applyTrackHelperSolution,
+    applyScenery,
     undo,
     addPiece,
     movePiece,

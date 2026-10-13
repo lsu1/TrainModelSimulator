@@ -23,6 +23,8 @@ import type { TrainRuntime, TrainSnapshot } from './fleet';
 import { closestTrainPlacement, validateTrainPlacement } from './trainPlacement';
 import { defaultStationName, normalizeStationName } from './stationName';
 import type { TrackHelperPreview } from './trackHelperTypes';
+import type { SceneryArea, SceneryPlan } from './sceneryTypes';
+import { SceneryRenderer } from './sceneryRenderer';
 
 interface Scene3DProps {
   tracks: Track[];
@@ -56,6 +58,12 @@ interface Scene3DProps {
   issues?: LayoutIssue[];
   /** A noninteractive overlay; the existing layout remains untouched. */
   helperPreview?: TrackHelperPreview | null;
+  sceneryPlan?: SceneryPlan | null;
+  sceneryPreview?: boolean;
+  sceneryArea?: SceneryArea | null;
+  markScenery?: boolean;
+  sceneryRadius?: number;
+  onSceneryArea?: (area: SceneryArea) => void;
   onReady?: (ready: boolean) => void;
 }
 
@@ -1007,6 +1015,8 @@ interface Runtime {
   issueOutlines: THREE.BoxHelper[];
   updateLayout: () => void;
   updateHelperPreview: () => void;
+  updateScenery: () => void;
+  updateSceneryArea: () => void;
   fitCamera: () => void;
   publishPickPoints: () => void;
 }
@@ -1047,6 +1057,26 @@ export default function Scene3D(props: Scene3DProps) {
     world.add(pieces, anchors, trains, connections);
     // Excluded from picking and camera fitting: suggestions are visual only.
     const helperOverlay = new THREE.Group(); world.add(helperOverlay);
+    // Decorative scenery has no railway picking or train-physics role.
+    const surroundings = new THREE.Group(); world.add(surroundings);
+    const sceneryRenderer = new SceneryRenderer(surroundings);
+    const areaOverlay = new THREE.Group(); world.add(areaOverlay);
+    const areaMaterial = new THREE.MeshBasicMaterial({ color: '#d9a349', transparent: true, opacity: .15, depthTest: false, depthWrite: false });
+    const areaRingMaterial = new THREE.MeshBasicMaterial({ color: '#d9a349', transparent: true, opacity: .95, depthTest: false, depthWrite: false });
+    const areaGeometry = new THREE.CircleGeometry(1, 72);
+    const areaRingGeometry = new THREE.RingGeometry(.987, 1, 72);
+    for (const [geometry, material, height] of [[areaGeometry, areaMaterial, 1], [areaRingGeometry, areaRingMaterial, 1.1]] as const) {
+      const disk = new THREE.Mesh(geometry, material); disk.rotation.x = -Math.PI / 2;
+      disk.position.y = height; disk.raycast = () => {}; disk.renderOrder = 5; areaOverlay.add(disk);
+    }
+    const hereCanvas = document.createElement('canvas'); hereCanvas.width = 160; hereCanvas.height = 64;
+    const hereContext = hereCanvas.getContext('2d')!;
+    hereContext.fillStyle = '#b87928'; hereContext.beginPath(); hereContext.roundRect(2, 2, 156, 60, 15); hereContext.fill();
+    hereContext.fillStyle = '#fff9ec'; hereContext.font = 'bold 35px sans-serif'; hereContext.textAlign = 'center'; hereContext.textBaseline = 'middle'; hereContext.fillText('Here', 80, 34);
+    const hereTexture = new THREE.CanvasTexture(hereCanvas); hereTexture.colorSpace = THREE.SRGBColorSpace;
+    const hereMaterial = new THREE.SpriteMaterial({ map: hereTexture, depthTest: false, depthWrite: false, sizeAttenuation: false, toneMapped: false });
+    const hereBadge = new THREE.Sprite(hereMaterial); hereBadge.center.set(.5, 0); hereBadge.renderOrder = 7; hereBadge.raycast = () => {};
+    areaOverlay.add(hereBadge); areaOverlay.visible = false;
     const hemi = new THREE.HemisphereLight('#fafcf5', '#a4b59d', .9); scene.add(hemi);
     const sunlight = new THREE.DirectionalLight('#fff7e8', 2.0);
     sunlight.position.set(-15, 28, 13); sunlight.castShadow = true;
@@ -1086,6 +1116,10 @@ export default function Scene3D(props: Scene3DProps) {
     const activePointers = new Set<number>();
     let hoveredBadge: THREE.Sprite | null = null;
     let hoverPoint: { clientX: number; clientY: number } | null = null;
+    let areaDrag: { area: SceneryArea; initial: THREE.Vector2; moved: boolean } | null = null;
+    let sceneryFitBounds = '';
+    let lastSceneryTime = performance.now();
+    let sceneryDiagnosticsDirty = true, lastSceneryDiagnosticsTime = 0;
     let frame = 0, stopped = false, pickDirty = true, lastPickTime = 0;
     let pointDiagnosticsDirty = true;
     let previousLayoutRevision = latest.current.layoutRevision;
@@ -1373,7 +1407,7 @@ export default function Scene3D(props: Scene3DProps) {
       return null;
     };
     const getSwitchPicked = (event: { clientX: number; clientY: number }): THREE.Sprite | null => {
-      if (!latest.current.onSwitchToggle || latest.current.placingTrain) return null;
+      if (!latest.current.onSwitchToggle || latest.current.placingTrain || latest.current.markScenery) return null;
       const rect = renderer.domElement.getBoundingClientRect();
       pointer.set((event.clientX - rect.left) / rect.width * 2 - 1, -(event.clientY - rect.top) / rect.height * 2 + 1);
       raycaster.setFromCamera(pointer, camera);
@@ -1549,6 +1583,7 @@ export default function Scene3D(props: Scene3DProps) {
       pieces.traverse(object => {
         if (object.userData.switchBadge) object.scale.set(millimeters * 1.5, millimeters, 1);
       });
+      hereBadge.scale.set(millimeters * 2.5, millimeters, 1);
     };
     const fitCamera = () => {
       if (latest.current.cameraPreset === 'ride') return;
@@ -1559,6 +1594,7 @@ export default function Scene3D(props: Scene3DProps) {
         return;
       }
       const bounds = new THREE.Box3().setFromObject(pieces);
+      if (latest.current.sceneryPlan) bounds.union(new THREE.Box3().setFromObject(surroundings));
       if (bounds.isEmpty()) bounds.set(new THREE.Vector3(-2.5, 0, -2), new THREE.Vector3(2.5, .6, 2));
       const center = bounds.getCenter(new THREE.Vector3());
       const span = bounds.getSize(new THREE.Vector3());
@@ -1633,6 +1669,28 @@ export default function Scene3D(props: Scene3DProps) {
       if (latest.current.helperPreview) makeTrackHelperOverlay(helperOverlay, latest.current.helperPreview, latest.current.tracks);
       publishHelperPreview(); pickDirty = true;
     };
+    const updateSceneryArea = () => {
+      if (areaDrag && !latest.current.markScenery) {
+        areaDrag = null; pointerDown = null; controls.enabled = latest.current.cameraPreset !== 'ride';
+      }
+      sceneryDiagnosticsDirty = true;
+      const area = areaDrag?.area ?? latest.current.sceneryArea;
+      areaOverlay.visible = !!area;
+      if (!area) return;
+      for (const object of areaOverlay.children) {
+        if (object !== hereBadge) { object.position.x = area.x; object.position.z = area.y; object.scale.setScalar(area.radius); }
+      }
+      hereBadge.position.set(area.x, 3, area.y);
+      sizeSwitchBadges();
+    };
+    const updateScenery = () => {
+      sceneryRenderer.setPlan(latest.current.sceneryPlan ?? null, latest.current.sceneryPreview ?? false);
+      const bounds = JSON.stringify(latest.current.sceneryPlan?.bounds ?? null);
+      if (sceneryFitBounds !== bounds && latest.current.sceneryPlan) fitCamera();
+      sceneryFitBounds = bounds;
+      sceneryDiagnosticsDirty = true;
+      updateSceneryArea(); pickDirty = true;
+    };
     const updateLayout = () => {
       setBadgeHover(null);
       const settlePoints = previousLayoutRevision !== latest.current.layoutRevision;
@@ -1688,12 +1746,22 @@ export default function Scene3D(props: Scene3DProps) {
     const onDown = (event: PointerEvent) => {
       activePointers.add(event.pointerId);
       if (activePointers.size > 1 || event.button !== 0) {
+        areaDrag = null; updateSceneryArea();
         cancelPieceDrag(); pointerDown = null; hoverPoint = null; setBadgeHover(null); return;
       }
       pointerDown = { x: event.clientX, y: event.clientY, pointerId: event.pointerId, badgeId: null, moved: false };
       if (latest.current.placingTrain) {
         pointPlacementAt(event); updatePlacementGhost();
         return;
+      }
+      if (latest.current.markScenery) {
+        const start = getPlanePoint(event, 0);
+        if (!start) { pointerDown = null; return; }
+        areaDrag = { area: { x: start.x, y: start.z, radius: latest.current.sceneryRadius ?? 220 },
+          initial: new THREE.Vector2(event.clientX, event.clientY), moved: false };
+        setBadgeHover(null); hoverPoint = null; controls.enabled = false;
+        renderer.domElement.setPointerCapture(event.pointerId); renderer.domElement.style.cursor = 'crosshair';
+        updateSceneryArea(); event.preventDefault(); return;
       }
       const badge = getSwitchPicked(event);
       pointerDown.badgeId = badge?.userData.switchTrackId ?? null;
@@ -1717,6 +1785,17 @@ export default function Scene3D(props: Scene3DProps) {
     const onMove = (event: PointerEvent) => {
       if (pointerDown?.pointerId === event.pointerId && Math.hypot(event.clientX - pointerDown.x, event.clientY - pointerDown.y) >= 5) pointerDown.moved = true;
       hoverPoint = event.pointerType === 'touch' ? null : { clientX: event.clientX, clientY: event.clientY };
+      if (latest.current.markScenery) {
+        setBadgeHover(null); hoverPoint = null; renderer.domElement.style.cursor = 'crosshair';
+        if (areaDrag && pointerDown?.pointerId === event.pointerId) {
+          const point = getPlanePoint(event, 0);
+          if (point && Math.hypot(event.clientX - areaDrag.initial.x, event.clientY - areaDrag.initial.y) >= 5) {
+            areaDrag.moved = true; areaDrag.area.radius = Math.min(1200, Math.max(80, Math.hypot(point.x - areaDrag.area.x, point.z - areaDrag.area.y)));
+            updateSceneryArea();
+          }
+        }
+        return;
+      }
       if (latest.current.placingTrain) {
         setBadgeHover(null);
         pointPlacementAt(event); updatePlacementGhost();
@@ -1742,6 +1821,13 @@ export default function Scene3D(props: Scene3DProps) {
       activePointers.delete(event.pointerId);
       if (event.button !== 0) return;
       if (pointerDown?.pointerId !== event.pointerId) return;
+      if (areaDrag) {
+        const area = { ...areaDrag.area }; areaDrag = null;
+        controls.enabled = latest.current.cameraPreset !== 'ride';
+        if (renderer.domElement.hasPointerCapture(event.pointerId)) renderer.domElement.releasePointerCapture(event.pointerId);
+        if (latest.current.markScenery) latest.current.onSceneryArea?.(area);
+        pointerDown = null; updateSceneryArea(); return;
+      }
       if (pointerDown.badgeId && renderer.domElement.hasPointerCapture(event.pointerId)) renderer.domElement.releasePointerCapture(event.pointerId);
       if (drag) {
         const current = drag; drag = null;
@@ -1779,6 +1865,7 @@ export default function Scene3D(props: Scene3DProps) {
       pointerDown = null;
     };
     const onCancel = (event: PointerEvent) => {
+      areaDrag = null; updateSceneryArea();
       cancelPieceDrag(); pointerDown = null; activePointers.delete(event.pointerId); hoverPoint = null; setBadgeHover(null);
     };
     const onLeave = () => { hoverPoint = null; setBadgeHover(null); };
@@ -1797,15 +1884,15 @@ export default function Scene3D(props: Scene3DProps) {
     renderer.domElement.addEventListener('pointerleave', onLeave);
     renderer.domElement.addEventListener('lostpointercapture', onLostCapture);
     element.addEventListener('dragover', onDragOver); element.addEventListener('drop', onDrop);
-    controls.addEventListener('change', () => { pickDirty = true; });
+    controls.addEventListener('change', () => { pickDirty = true; sceneryDiagnosticsDirty = true; });
     const resize = () => {
       const width = Math.max(1, element.clientWidth), height = Math.max(1, element.clientHeight);
       renderer.setSize(width, height, false); camera.aspect = width / height; camera.updateProjectionMatrix(); sizeSwitchBadges(); pickDirty = true;
       if (runtime.current) fitCamera();
     };
     const resizeObserver = new ResizeObserver(resize); resizeObserver.observe(element); resize();
-    runtime.current = { renderer, scene, camera, controls, world, pieces, anchors, trains, library, selected: null, issueOutlines: [], updateLayout, updateHelperPreview, fitCamera, publishPickPoints };
-    updateLayout(); updateHelperPreview(); fitCamera(); publishPickPoints();
+    runtime.current = { renderer, scene, camera, controls, world, pieces, anchors, trains, library, selected: null, issueOutlines: [], updateLayout, updateHelperPreview, updateScenery, updateSceneryArea, fitCamera, publishPickPoints };
+    updateLayout(); updateHelperPreview(); updateScenery(); fitCamera(); publishPickPoints();
     const animate = () => {
       if (stopped) return;
       frame = requestAnimationFrame(animate);
@@ -2003,7 +2090,7 @@ export default function Scene3D(props: Scene3DProps) {
       } else {
         previousCouplingFocus = null; previousCouplingPair = null;
       }
-      if (!drag) {
+      if (!drag && !areaDrag) {
         controls.enabled = current.cameraPreset !== 'ride' || !!current.placingTrain || !leadPoint;
         if (controls.enabled) controls.update();
       }
@@ -2014,6 +2101,19 @@ export default function Scene3D(props: Scene3DProps) {
         couplingFocus: couplingFocus ? layoutPoint(couplingFocus.clone().divideScalar(SCALE)) : null,
       });
       const now = performance.now();
+      sceneryRenderer.update(Math.min(.1, Math.max(0, (now - lastSceneryTime) / 1000))); lastSceneryTime = now;
+      if (sceneryDiagnosticsDirty || now - lastSceneryDiagnosticsTime > 160) {
+        const scenerySnapshot = sceneryRenderer.snapshot();
+        const projectGround = (point: { x: number; y: number }) => {
+          const projected = new THREE.Vector3(point.x * SCALE, 0, point.y * SCALE).project(camera);
+          return { x: (projected.x + 1) * renderer.domElement.clientWidth / 2, y: (1 - projected.y) * renderer.domElement.clientHeight / 2 };
+        };
+        renderer.domElement.dataset.scenery = JSON.stringify({ ...scenerySnapshot,
+          objects: scenerySnapshot.objects.map(object => ({ ...object, screen: projectGround(object) })) });
+        const marked = areaDrag?.area ?? current.sceneryArea;
+        renderer.domElement.dataset.sceneryArea = JSON.stringify(marked ? { ...marked, screen: projectGround(marked) } : null);
+        sceneryDiagnosticsDirty = false; lastSceneryDiagnosticsTime = now;
+      }
       if (pickDirty && now - lastPickTime > 160) { publishPickPoints(); lastPickTime = now; }
       if (hoverPoint && !drag && !activePointers.size) setBadgeHover(getSwitchPicked(hoverPoint));
       renderer.render(scene, camera);
@@ -2034,6 +2134,7 @@ export default function Scene3D(props: Scene3DProps) {
       for (const rendered of renderedFleet.values()) disposeRenderedTrain(rendered);
       if (ghost) disposeRenderedTrain(ghost);
       disposeTrackHelperOverlay(helperOverlay);
+      sceneryRenderer.dispose(); areaGeometry.dispose(); areaRingGeometry.dispose(); areaMaterial.dispose(); areaRingMaterial.dispose(); hereMaterial.dispose(); hereTexture.dispose();
       if (runtime.current?.selected) { scene.remove(runtime.current.selected); runtime.current.selected.geometry.dispose(); }
       for (const outline of runtime.current?.issueOutlines ?? []) { outline.removeFromParent(); outline.geometry.dispose(); }
       ground.geometry.dispose(); grid.geometry.dispose(); (grid.material as THREE.Material).dispose();
@@ -2044,6 +2145,8 @@ export default function Scene3D(props: Scene3DProps) {
 
   useEffect(() => { runtime.current?.updateLayout(); }, [props.tracks, props.accessories, props.selectedId, props.activeAnchor, props.issues, props.layoutRevision]);
   useEffect(() => { runtime.current?.updateHelperPreview(); }, [props.tracks, props.helperPreview]);
+  useEffect(() => { runtime.current?.updateScenery(); }, [props.sceneryPlan, props.sceneryPreview]);
+  useEffect(() => { runtime.current?.updateSceneryArea(); }, [props.sceneryArea, props.sceneryRadius, props.markScenery]);
   useEffect(() => {
     const r = runtime.current; if (!r) return;
     r.controls.enabled = props.cameraPreset !== 'ride'; r.fitCamera();

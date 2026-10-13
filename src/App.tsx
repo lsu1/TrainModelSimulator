@@ -18,7 +18,7 @@ import {
   Undo2,
   X,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Scene3D from "./Scene3D";
 import RailwayCockpit from "./RailwayCockpit";
 import { useTrackHelper } from "./useTrackHelper";
@@ -30,6 +30,8 @@ import type { LayoutData, LayoutPreset } from "./layout";
 import { ShoppingReview } from "./BuildTools";
 import BuilderPanel from "./BuilderPanel";
 import type { BuilderTool } from "./BuilderPanel";
+import { useScenery } from "./useScenery";
+import { sceneryGeometryKey, visibleScenery } from "./sceneryGeneration";
 
 const TRAIN_DESCRIPTIONS: Record<TrainType, string> = {
   e235: "Stainless steel and lime green",
@@ -96,6 +98,14 @@ export default function App() {
   const [activeTool, setActiveTool] = useState<BuilderTool>("pieces");
   const [toolsExpanded, setToolsExpanded] = useState(false);
   const { layout, tracks, accessories } = h;
+  const scenery = useScenery({ tracks, accessories, existing: layout.scenery,
+    layoutRevision: h.layoutRevision, busy: h.couplingBusy || !!h.placingTrain,
+    apply: h.applyScenery, notify: h.notify });
+  const sceneryKey = useMemo(() => sceneryGeometryKey(tracks, accessories), [tracks, accessories]);
+  const shownScenery = activeTool === "scenery" && scenery.preview ? scenery.preview : layout.scenery;
+  const renderedScenery = useMemo(() => shownScenery ? visibleScenery(shownScenery, tracks, accessories) : null,
+    [shownScenery, sceneryKey]);
+  useEffect(() => { if (activeTool !== "scenery") scenery.stopMarking(); }, [activeTool]);
   const [saveName, setSaveName] = useState(layout.name);
   const [deleteDesignId, setDeleteDesignId] = useState<string | null>(null);
   const [layoutChoice, setLayoutChoice] = useState("");
@@ -297,6 +307,12 @@ export default function App() {
                   onReady={() => h.setReady(true)}
                   issues={h.issues}
                   helperPreview={activeTool === "helper" ? trackHelper.preview : null}
+                  sceneryPlan={renderedScenery}
+                  sceneryPreview={activeTool === "scenery" && !!scenery.preview}
+                  sceneryArea={activeTool === "scenery" ? scenery.area : null}
+                  markScenery={activeTool === "scenery" && scenery.marking && !h.couplingBusy && !h.placingTrain}
+                  sceneryRadius={scenery.areaRadius}
+                  onSceneryArea={scenery.setArea}
                 />
               )}
             </RailwayCockpit>
@@ -305,6 +321,7 @@ export default function App() {
         <BuilderPanel
           h={h}
           helper={trackHelper}
+          scenery={scenery}
           activeTool={activeTool}
           onToolChange={setActiveTool}
           toolsExpanded={toolsExpanded}

@@ -93,7 +93,7 @@ test('desktop tabs preserve catalog and ramp choices, support keyboard selection
   page.on('pageerror', error => errors.push(error.message));
   await start(page);
   await expect(tab(page, 'Pieces')).toHaveAttribute('aria-selected', 'true');
-  await expect(page.getByRole('tablist', { name: 'Building tools', exact: true }).getByRole('tab')).toHaveCount(3);
+  await expect(page.getByRole('tablist', { name: 'Building tools', exact: true }).getByRole('tab')).toHaveCount(4);
   await page.getByRole('button', { name: 'Curves', exact: true }).click();
   await page.getByRole('button', { name: 'Bend left', exact: true }).click();
   await page.getByRole('combobox', { name: 'New piece height', exact: true }).selectOption('40');
@@ -116,6 +116,8 @@ test('desktop tabs preserve catalog and ramp choices, support keyboard selection
   await page.getByRole('combobox', { name: 'Ramp maximum grade', exact: true }).selectOption('2.5');
   await tab(page, 'Ramp').focus();
   await page.keyboard.press('End');
+  await expect(tab(page, 'Scenery')).toBeFocused();
+  await page.keyboard.press('ArrowLeft');
   await expect(tab(page, 'Helper')).toBeFocused();
   await expect(helper(page).getByRole('combobox', { name: 'First track end', exact: true })).toBeVisible();
   await expect(helperActions(page).getByRole('button', { name: 'Check feasibility', exact: true })).toBeDisabled();

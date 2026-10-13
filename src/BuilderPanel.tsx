@@ -28,13 +28,16 @@ import type { CatalogCategory, CatalogItem } from "./catalogTypes";
 import { CATALOG } from "./useRailway";
 import type { useRailway } from "./useRailway";
 import type { TrackHelperController } from "./useTrackHelper";
+import SceneryPanel, { SceneryActions } from "./SceneryPanel";
+import type { SceneryController } from "./useScenery";
 
 type Railway = ReturnType<typeof useRailway>;
-export type BuilderTool = "pieces" | "ramp" | "helper";
+export type BuilderTool = "pieces" | "ramp" | "helper" | "scenery";
 const TOOLS: { key: BuilderTool; label: string; icon: typeof Route }[] = [
   { key: "pieces", label: "Pieces", icon: Route },
   { key: "ramp", label: "Ramp", icon: ArrowUpFromLine },
   { key: "helper", label: "Helper", icon: Lightbulb },
+  { key: "scenery", label: "Scenery", icon: Building2 },
 ];
 
 const CATEGORIES: {
@@ -127,9 +130,10 @@ function PieceIllustration({ piece }: { piece: CatalogItem }) {
   );
 }
 
-export default function BuilderPanel({ h, helper, activeTool, onToolChange, toolsExpanded, onToggleTools }: {
+export default function BuilderPanel({ h, helper, scenery, activeTool, onToolChange, toolsExpanded, onToggleTools }: {
   h: Railway;
   helper: TrackHelperController;
+  scenery: SceneryController;
   activeTool: BuilderTool;
   onToolChange: (tool: BuilderTool) => void;
   toolsExpanded: boolean;
@@ -204,7 +208,7 @@ export default function BuilderPanel({ h, helper, activeTool, onToolChange, tool
       {selection && selectedSpec && <div className="builder-selected-strip">
         <span>Selected: <strong>{selectedSpec.name}</strong></span>
         <button className="button secondary" ref={editButton} aria-label="Edit selected piece"
-          onClick={() => setEditing(true)}>Edit</button>
+          onClick={() => { scenery.stopMarking(); setEditing(true); }}>Edit</button>
         <button className="icon-button" aria-label="Deselect piece" onClick={() => h.setSelectedId(null)}><X size={15} /></button>
       </div>}
       {h.couplingBusy && <p className="coupling-build-note">Track building waits until the trains have finished connecting or separating.</p>}
@@ -411,6 +415,11 @@ export default function BuilderPanel({ h, helper, activeTool, onToolChange, tool
           hidden={activeTool !== "helper" || editing}>
           <div className="builder-scroll"><TrackHelper h={h} helper={helper} docked /></div>
           <div className="builder-actions"><TrackHelperActions h={h} helper={helper} /></div>
+        </section>
+        <section className="builder-pane" role="tabpanel" id="builder-panel-scenery" aria-labelledby="builder-tab-scenery"
+          hidden={activeTool !== "scenery" || editing}>
+          <div className="builder-scroll"><SceneryPanel scenery={scenery} /></div>
+          <div className="builder-actions"><SceneryActions scenery={scenery} /></div>
         </section>
         <section className="builder-pane builder-editor" role="tabpanel" id="builder-panel-editor"
           aria-labelledby={`builder-tab-${activeTool}`} hidden={!editing}>

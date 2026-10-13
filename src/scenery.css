@@ -1,0 +1,52 @@
+.scenery-panel { color: #34543c; font-size: 12px; line-height: 1.45; }
+.scenery-panel h3 { display: flex; align-items: center; gap: 7px; margin: 0 0 5px; font-size: 14px; }
+.scenery-intro { margin: 0 0 12px; color: #65765f; }
+.scenery-fields { display: grid; gap: 11px; min-width: 0; margin: 0; padding: 0; border: 0; }
+.scenery-fields:disabled { opacity: .7; }
+.scenery-label { margin: 0 0 6px; padding: 0; font-weight: 650; font-size: 12px; }
+.scenery-themes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.scenery-theme { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; min-width: 0; min-height: 66px; padding: 8px 3px; border: 1px solid #d7e2cb; border-radius: 9px; background: #fbfcf7; color: #506b44; font: inherit; cursor: pointer; }
+.scenery-theme[aria-pressed='true'] { border-color: #527d4b; background: #e7f0db; color: #2e5b3b; box-shadow: inset 0 0 0 1px #527d4b; }
+.scenery-themes button:hover, .scenery-examples button:hover, .scenery-area-sizes button:hover { background: #eaf1df; }
+.scenery-features { display: flex; flex-wrap: wrap; gap: 6px; }
+.scenery-feature { display: inline-flex; align-items: center; gap: 5px; min-height: 32px; padding: 5px 8px; border: 1px solid #dae4cf; border-radius: 16px; background: #fbfcf7; cursor: pointer; }
+.scenery-feature:has(input:checked) { background: #eaf2e0; border-color: #b4cba4; }
+.scenery-feature input, .scenery-traffic input { width: 14px; height: 14px; margin: 0; accent-color: #315c47; }
+.scenery-density { display: grid; gap: 5px; font-weight: 600; }
+.scenery-density select { min-width: 0; width: 100%; min-height: 36px; padding: 6px 8px; border: 1px solid #c6d8b8; border-radius: 6px; background: #fff; color: #34543c; font: inherit; font-weight: normal; }
+.scenery-area { padding: 9px; border: 1px solid #d5e3c9; border-radius: 8px; background: #f1f6e9; }
+.scenery-area-marking { border-color: #3d96a1; background: #eaf7f6; }
+.scenery-area-heading { display: flex; align-items: center; gap: 6px; }
+.scenery-area p { margin: 5px 0 8px; color: #617458; font-size: 11px; }
+.scenery-area-buttons { display: flex; flex-wrap: wrap; gap: 6px; }
+.scenery-area-buttons .button { min-height: 34px; padding: 6px 8px; font-size: 11px; }
+.scenery-area-sizes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-top: 7px; }
+.scenery-area-sizes button { min-height: 30px; padding: 4px 5px; border: 1px solid #d1dfc4; border-radius: 5px; background: #fff; color: #526c45; font: inherit; font-size: 11px; cursor: pointer; }
+.scenery-area-sizes button[aria-pressed='true'] { border-color: #6b8e5c; background: #dce9cf; color: #2e573a; }
+.scenery-prompt-label { font-weight: 650; }
+.scenery-panel textarea { resize: vertical; width: 100%; min-height: 75px; box-sizing: border-box; padding: 8px; border: 1px solid #c2d6b2; border-radius: 7px; background: #fff; color: #34543c; font: inherit; line-height: 1.45; }
+.scenery-panel textarea:focus, .scenery-density select:focus { outline: 2px solid #88ac75; outline-offset: 1px; }
+.scenery-examples { display: flex; flex-wrap: wrap; gap: 5px; }
+.scenery-examples button { min-height: 30px; padding: 5px 7px; border: 1px solid #d3dfc8; border-radius: 6px; background: #fafcf6; color: #59774a; font: inherit; font-size: 11px; cursor: pointer; }
+.scenery-guidance { margin: 0; font-size: 10px; color: #76866c; line-height: 1.5; }
+.scenery-status { margin-top: 12px; }
+.scenery-status p { margin: 5px 0; color: #65765f; }
+.scenery-status-preview { padding: 10px; border: 1px solid #9fc7bf; border-radius: 8px; background: #eaf6f1; }
+.scenery-status-preview strong { color: #286251; }
+.scenery-saved-controls { margin-top: 14px; padding-top: 11px; border-top: 1px solid #dde6d3; }
+.scenery-traffic { display: flex; align-items: center; gap: 7px; font-weight: 600; }
+.scenery-saved-controls p { margin: 5px 0 8px; font-size: 11px; color: #6b7d62; }
+.scenery-remove { min-height: 34px; padding: 6px 9px; font-size: 11px; }
+.scenery-help { margin-top: 13px; color: #74836b; font-size: 11px; }
+.scenery-help summary { cursor: pointer; color: #5e784f; }
+.scenery-help p { margin: 7px 0; }
+.scenery-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.scenery-actions .scenery-keep, .scenery-actions .scenery-generate { grid-column: 1 / -1; }
+.scenery-actions button:disabled, .scenery-panel button:disabled { cursor: default; }
+@media (max-width: 900px) {
+  .scenery-theme { min-height: 56px; padding: 5px 3px; }
+  .scenery-fields { gap: 9px; }
+  .scenery-actions { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .scenery-actions .scenery-keep { grid-column: auto; }
+  .builder-actions .scenery-actions .button { min-height: 38px; padding: 6px 5px; font-size: 11px; }
+}
