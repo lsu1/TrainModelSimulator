@@ -59,7 +59,7 @@ export default function RailwayCockpit({
   const [newTrainType, setNewTrainType] = useState<TrainType>("e5");
   const [newTrainCarCount, setNewTrainCarCount] = useState(3);
   const [partnerId, setPartnerId] = useState("");
-  const [switchesOpen, setSwitchesOpen] = useState(true);
+  const [switchesOpen, setSwitchesOpen] = useState(false);
   const selected = h.fleet.find((train) => train.id === h.selectedTrainId);
   const creating = (adding || !selected) && !h.couplingBusy && !h.placingTrain;
   const createLocked =

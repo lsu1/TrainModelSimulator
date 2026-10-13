@@ -49,6 +49,7 @@ interface Scene3DProps {
   layoutRevision?: number;
   onSelect: (id: string | null) => void;
   onMove: (id: string, x: number, y: number) => void;
+  onSwitchToggle?: (id: string) => void;
   onAnchor: (anchor: Endpoint & { trackId: string; end: number }) => void;
   onDropItem?: (kind: string, x: number, y: number) => void;
   placementHeight?: number;
@@ -63,6 +64,7 @@ type Point = ReturnType<Path['pointAt']>;
 type Anchor = Endpoint & { trackId: string; end: number };
 const SCALE = .01;
 const RAIL_TOP = 7.35;
+const SWITCH_BADGE_HEIGHT = 28;
 // 9 mm is the distance between the inside faces of the 0.98 mm rail heads.
 const RAIL_CENTER = 4.99;
 const UP = new THREE.Vector3(0, 1, 0);
@@ -201,25 +203,33 @@ function setTangent(object: THREE.Object3D, angle: number, slope = 0) {
   object.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(forward, up, sideways));
 }
 
-function switchBadge(number: number, branch: boolean): THREE.Sprite {
-  const canvas = document.createElement('canvas'); canvas.width = 192; canvas.height = 128;
+function paintSwitchBadge(sprite: THREE.Sprite, hovered: boolean) {
+  const canvas = sprite.material.map!.image as HTMLCanvasElement;
   const context = canvas.getContext('2d')!;
+  const branch = sprite.userData.switchState === 'branch';
+  context.clearRect(0, 0, canvas.width, canvas.height);
   context.beginPath(); context.roundRect(4, 4, 184, 120, 24);
-  context.fillStyle = '#244c40'; context.fill();
-  context.lineWidth = 5; context.strokeStyle = '#f5f7ec'; context.stroke();
+  context.fillStyle = hovered ? '#386754' : '#244c40'; context.fill();
+  context.lineWidth = hovered ? 8 : 5; context.strokeStyle = hovered ? '#d7ed9e' : '#f5f7ec'; context.stroke();
   context.lineCap = 'round'; context.lineJoin = 'round'; context.lineWidth = 7;
   context.beginPath(); context.moveTo(34, 98); context.lineTo(34, 30);
   context.strokeStyle = branch ? '#849a85' : '#bedc79'; context.stroke();
   context.beginPath(); context.moveTo(34, 72); context.lineTo(56, 45); context.lineTo(56, 30);
   context.strokeStyle = branch ? '#bedc79' : '#849a85'; context.stroke();
   context.fillStyle = '#f5f7ec'; context.font = 'bold 59px sans-serif';
-  context.textAlign = 'center'; context.textBaseline = 'middle'; context.fillText(String(number), 124, 66);
+  context.textAlign = 'center'; context.textBaseline = 'middle'; context.fillText(String(sprite.userData.switchNumber), 124, 66);
+  sprite.material.map!.needsUpdate = true;
+}
+
+function switchBadge(number: number, branch: boolean): THREE.Sprite {
+  const canvas = document.createElement('canvas'); canvas.width = 192; canvas.height = 128;
   const texture = new THREE.CanvasTexture(canvas); texture.colorSpace = THREE.SRGBColorSpace;
   const material = new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false, depthWrite: false, toneMapped: false, sizeAttenuation: false });
   material.userData.temporary = true;
   const sprite = new THREE.Sprite(material);
   sprite.userData.switchBadge = true; sprite.userData.switchNumber = number;
   sprite.userData.switchState = branch ? 'branch' : 'straight';
+  paintSwitchBadge(sprite, false);
   sprite.center.set(.5, 0);
   sprite.renderOrder = 8;
   return sprite;
@@ -251,6 +261,7 @@ function addTurnoutLabel(group: THREE.Object3D, track: Track, library: ModelLibr
     decoration.add(dot);
   }
   const badge = switchBadge(track.switchNumber, track.switchState === 'branch');
+  badge.userData.switchTrackId = track.id;
   badge.position.set(position.x - track.x, position.z, position.y - track.y);
   decoration.add(badge);
   group.add(decoration);
@@ -1071,7 +1082,10 @@ export default function Scene3D(props: Scene3DProps) {
 
     const raycaster = new THREE.Raycaster(), pointer = new THREE.Vector2();
     let drag: { id: string; group: THREE.Object3D; start: THREE.Vector3; original: THREE.Vector3; initial: THREE.Vector2; moved: boolean; height: number } | null = null;
-    let pointerDown: { x: number; y: number } | null = null;
+    let pointerDown: { x: number; y: number; pointerId: number; badgeId: string | null; moved: boolean } | null = null;
+    const activePointers = new Set<number>();
+    let hoveredBadge: THREE.Sprite | null = null;
+    let hoverPoint: { clientX: number; clientY: number } | null = null;
     let frame = 0, stopped = false, pickDirty = true, lastPickTime = 0;
     let pointDiagnosticsDirty = true;
     let previousLayoutRevision = latest.current.layoutRevision;
@@ -1358,6 +1372,35 @@ export default function Scene3D(props: Scene3DProps) {
       }
       return null;
     };
+    const getSwitchPicked = (event: { clientX: number; clientY: number }): THREE.Sprite | null => {
+      if (!latest.current.onSwitchToggle || latest.current.placingTrain) return null;
+      const rect = renderer.domElement.getBoundingClientRect();
+      pointer.set((event.clientX - rect.left) / rect.width * 2 - 1, -(event.clientY - rect.top) / rect.height * 2 + 1);
+      raycaster.setFromCamera(pointer, camera);
+      const badges = pieces.children.flatMap(piece => {
+        if (!piece.visible) return [];
+        const decoration = piece.children.find(child => child.userData.switchBadgeDecoration && child.visible);
+        const badge = decoration?.children.find(child => child.userData.switchBadge && child.visible);
+        return badge ? [badge] : [];
+      });
+      // Badges are drawn above trains/rails, so their picking priority must
+      // match that visual layer, including on an occupied turnout.
+      const hit = raycaster.intersectObjects(badges, false)[0];
+      return hit ? hit.object as THREE.Sprite : null;
+    };
+    const setBadgeHover = (badge: THREE.Sprite | null) => {
+      if (hoveredBadge !== badge) {
+        if (hoveredBadge && !badge && !drag && !latest.current.placingTrain) renderer.domElement.style.cursor = 'default';
+        if (hoveredBadge?.parent) paintSwitchBadge(hoveredBadge, false);
+        hoveredBadge = badge;
+        if (badge) paintSwitchBadge(badge, true);
+      }
+      if (badge) {
+        const state = badge.userData.switchState as 'straight' | 'branch';
+        renderer.domElement.title = `Switch ${badge.userData.switchNumber}: ${state}. Click or tap to take the ${state === 'straight' ? 'branch' : 'straight'} route.`;
+        renderer.domElement.style.cursor = 'pointer';
+      } else renderer.domElement.removeAttribute('title');
+    };
     const pointPlacementAt = (event: { clientX: number; clientY: number }) => {
       const rect = renderer.domElement.getBoundingClientRect();
       pointer.set((event.clientX - rect.left) / rect.width * 2 - 1, -(event.clientY - rect.top) / rect.height * 2 + 1);
@@ -1502,7 +1545,7 @@ export default function Scene3D(props: Scene3DProps) {
     };
     const sizeSwitchBadges = () => {
       const height = Math.max(1, renderer.domElement.clientHeight);
-      const millimeters = 2 * 22 / (height * camera.projectionMatrix.elements[5] * SCALE);
+      const millimeters = 2 * SWITCH_BADGE_HEIGHT / (height * camera.projectionMatrix.elements[5] * SCALE);
       pieces.traverse(object => {
         if (object.userData.switchBadge) object.scale.set(millimeters * 1.5, millimeters, 1);
       });
@@ -1591,6 +1634,7 @@ export default function Scene3D(props: Scene3DProps) {
       publishHelperPreview(); pickDirty = true;
     };
     const updateLayout = () => {
+      setBadgeHover(null);
       const settlePoints = previousLayoutRevision !== latest.current.layoutRevision;
       previousLayoutRevision = latest.current.layoutRevision;
       const ids = new Set([...latest.current.tracks, ...latest.current.accessories].map(piece => piece.id));
@@ -1634,12 +1678,29 @@ export default function Scene3D(props: Scene3DProps) {
       if (stationSigns.length) renderer.domElement.setAttribute('aria-description', `Station signs: ${stationSigns.map(sign => sign.name).join('; ')}`);
       else renderer.domElement.removeAttribute('aria-description');
     };
+    const cancelPieceDrag = () => {
+      if (drag) {
+        drag.group.position.copy(drag.original); drag.group.updateMatrixWorld(true);
+        runtime.current?.selected?.update(); pickDirty = true;
+      }
+      drag = null; controls.enabled = latest.current.cameraPreset !== 'ride';
+    };
     const onDown = (event: PointerEvent) => {
-      if (event.button !== 0) return;
-      pointerDown = { x: event.clientX, y: event.clientY };
+      activePointers.add(event.pointerId);
+      if (activePointers.size > 1 || event.button !== 0) {
+        cancelPieceDrag(); pointerDown = null; hoverPoint = null; setBadgeHover(null); return;
+      }
+      pointerDown = { x: event.clientX, y: event.clientY, pointerId: event.pointerId, badgeId: null, moved: false };
       if (latest.current.placingTrain) {
         pointPlacementAt(event); updatePlacementGhost();
         return;
+      }
+      const badge = getSwitchPicked(event);
+      pointerDown.badgeId = badge?.userData.switchTrackId ?? null;
+      // A badge controls points even in Move pieces mode. The rail body
+      // remains available for selecting and dragging the piece itself.
+      if (badge) {
+        setBadgeHover(badge); renderer.domElement.setPointerCapture(event.pointerId); return;
       }
       const picked = getPicked(event);
       if (latest.current.mode !== 'move' || !picked?.id) return;
@@ -1654,12 +1715,16 @@ export default function Scene3D(props: Scene3DProps) {
       event.preventDefault();
     };
     const onMove = (event: PointerEvent) => {
+      if (pointerDown?.pointerId === event.pointerId && Math.hypot(event.clientX - pointerDown.x, event.clientY - pointerDown.y) >= 5) pointerDown.moved = true;
+      hoverPoint = event.pointerType === 'touch' ? null : { clientX: event.clientX, clientY: event.clientY };
       if (latest.current.placingTrain) {
+        setBadgeHover(null);
         pointPlacementAt(event); updatePlacementGhost();
         renderer.domElement.style.cursor = 'crosshair';
         return;
       }
       if (drag) {
+        setBadgeHover(null);
         const point = getPlanePoint(event, drag.height); if (!point) return;
         if (Math.hypot(event.clientX - drag.initial.x, event.clientY - drag.initial.y) > 4) drag.moved = true;
         drag.group.position.x = drag.original.x + point.x - drag.start.x;
@@ -1667,11 +1732,17 @@ export default function Scene3D(props: Scene3DProps) {
         runtime.current?.selected?.update();
         return;
       }
+      const badge = activePointers.size > 1 || pointerDown?.moved ? null : getSwitchPicked(event);
+      setBadgeHover(badge);
+      if (badge) return;
       const picked = getPicked(event);
       renderer.domElement.style.cursor = picked?.anchor || picked?.trainId ? 'pointer' : latest.current.mode === 'move' && picked?.id ? 'grab' : 'default';
     };
     const onUp = (event: PointerEvent) => {
+      activePointers.delete(event.pointerId);
       if (event.button !== 0) return;
+      if (pointerDown?.pointerId !== event.pointerId) return;
+      if (pointerDown.badgeId && renderer.domElement.hasPointerCapture(event.pointerId)) renderer.domElement.releasePointerCapture(event.pointerId);
       if (drag) {
         const current = drag; drag = null;
         controls.enabled = latest.current.cameraPreset !== 'ride';
@@ -1686,11 +1757,18 @@ export default function Scene3D(props: Scene3DProps) {
         if (current.moved) latest.current.onMove(current.id, x, y);
         pickDirty = true; pointerDown = null; return;
       }
-      if (pointerDown && Math.hypot(event.clientX - pointerDown.x, event.clientY - pointerDown.y) < 5) {
+      if (!pointerDown.moved && Math.hypot(event.clientX - pointerDown.x, event.clientY - pointerDown.y) < 5) {
         if (latest.current.placingTrain) {
           pointPlacementAt(event); updatePlacementGhost();
           if (ghostPosition) latest.current.onPlaceTrain?.(ghostPosition);
           pointerDown = null;
+          return;
+        }
+        if (pointerDown.badgeId) {
+          const badge = getSwitchPicked(event);
+          if (badge?.userData.switchTrackId === pointerDown.badgeId) latest.current.onSwitchToggle?.(pointerDown.badgeId);
+          pointerDown = null;
+          if (event.pointerType === 'touch') setBadgeHover(null);
           return;
         }
         const picked = getPicked(event);
@@ -1700,10 +1778,11 @@ export default function Scene3D(props: Scene3DProps) {
       }
       pointerDown = null;
     };
-    const onCancel = () => {
-      if (drag) { drag.group.position.copy(drag.original); drag.group.updateMatrixWorld(true); }
-      drag = null; pointerDown = null; controls.enabled = latest.current.cameraPreset !== 'ride';
+    const onCancel = (event: PointerEvent) => {
+      cancelPieceDrag(); pointerDown = null; activePointers.delete(event.pointerId); hoverPoint = null; setBadgeHover(null);
     };
+    const onLeave = () => { hoverPoint = null; setBadgeHover(null); };
+    const onLostCapture = (event: PointerEvent) => { if (activePointers.has(event.pointerId)) onCancel(event); };
     const onDragOver = (event: DragEvent) => { if (event.dataTransfer?.types.includes('application/x-kato-piece')) { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; } };
     const onDrop = (event: DragEvent) => {
       const kind = event.dataTransfer?.getData('application/x-kato-piece');
@@ -1715,6 +1794,8 @@ export default function Scene3D(props: Scene3DProps) {
     renderer.domElement.addEventListener('pointermove', onMove);
     renderer.domElement.addEventListener('pointerup', onUp);
     renderer.domElement.addEventListener('pointercancel', onCancel);
+    renderer.domElement.addEventListener('pointerleave', onLeave);
+    renderer.domElement.addEventListener('lostpointercapture', onLostCapture);
     element.addEventListener('dragover', onDragOver); element.addEventListener('drop', onDrop);
     controls.addEventListener('change', () => { pickDirty = true; });
     const resize = () => {
@@ -1934,6 +2015,7 @@ export default function Scene3D(props: Scene3DProps) {
       });
       const now = performance.now();
       if (pickDirty && now - lastPickTime > 160) { publishPickPoints(); lastPickTime = now; }
+      if (hoverPoint && !drag && !activePointers.size) setBadgeHover(getSwitchPicked(hoverPoint));
       renderer.render(scene, camera);
       if (!renderer.domElement.dataset.ready) { renderer.domElement.dataset.ready = 'true'; latest.current.onReady?.(true); }
     };
@@ -1944,6 +2026,8 @@ export default function Scene3D(props: Scene3DProps) {
       renderer.domElement.removeEventListener('pointermove', onMove);
       renderer.domElement.removeEventListener('pointerup', onUp);
       renderer.domElement.removeEventListener('pointercancel', onCancel);
+      renderer.domElement.removeEventListener('pointerleave', onLeave);
+      renderer.domElement.removeEventListener('lostpointercapture', onLostCapture);
       element.removeEventListener('dragover', onDragOver); element.removeEventListener('drop', onDrop);
       controls.dispose();
       for (const piece of pieces.children) disposePiece(piece, library);

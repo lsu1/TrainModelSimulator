@@ -284,6 +284,10 @@ export default function App() {
                     h.setSelectedId(id);
                   }}
                   onMove={h.movePiece}
+                  onSwitchToggle={(id) => {
+                    const track = h.tracks.find((piece) => piece.id === id);
+                    if (track) h.setSwitchState(id, track.switchState === "branch" ? "straight" : "branch");
+                  }}
                   onAnchor={(value) => {
                     h.setAnchor(value);
                     h.setSelectedId(null);
@@ -661,7 +665,7 @@ export default function App() {
                     },
                     {
                       title: "Find a safe place and share the rails",
-                      text: "New trains find a free place on connected track when possible. Use Place train or Move train to choose a rail and direction yourself. The green preview shows a valid place; red means the whole train does not fit safely. Trains slow or wait when another train is ahead, and stop at open ends. The Switch control desk sets each numbered turnout to straight or branch. Zoom in to watch its point blades move. Switches beneath a parked or moving train wait until it clears. Move a train away before editing occupied track.",
+                      text: "New trains find a free place on connected track when possible. Use Place train or Move train to choose a rail and direction yourself. The green preview shows a valid place; red means the whole train does not fit safely. Trains slow or wait when another train is ahead, and stop at open ends. Click or tap a numbered turnout badge to switch between straight and branch. The camera toolbar opens the Switch control desk for all numbered turnouts. Zoom in to watch their point blades move. Switches beneath a parked or moving train wait until it clears. Move a train away before editing occupied track.",
                     },
                     {
                       title: "Check before building for real",

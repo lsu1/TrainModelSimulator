@@ -16,6 +16,11 @@ const straightButton = 'Add 248 mm straight';
 const curveButton = 'Add 282 mm radius · 45° curve';
 const scene = (page: Page) => page.getByRole('img', { name: canvasName });
 
+async function openSwitchDesk(page: Page) {
+  const toggle = page.getByRole('button', { name: 'Toggle switch controls', exact: true });
+  if (await toggle.getAttribute('aria-expanded') !== 'true') await toggle.click();
+}
+
 async function openRailway(page: Page) {
   await page.goto('/');
   await expect(scene(page)).toHaveAttribute('data-ready', 'true');
@@ -354,14 +359,20 @@ test('Sky Railway renders an elevated loop above its separate ground-level under
 });
 
 test('KATO plan02 opens in 3D with its numbered switches and retains its source across undo, saves, and imports', async ({ page }, testInfo) => {
+  test.setTimeout(180_000);
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
   await openRailway(page);
   const previous = await savedLayout(page);
   await chooseLayout(page, 'KATO M1');
   await expect(page.getByRole('heading', { name: 'KATO M1 + V1 + V2', exact: true })).toBeVisible();
   await expect(page.getByText('51 tracks · 18 scenery pieces', { exact: true })).toBeVisible();
   await expect(page.getByText('Connected loop · ready to ride', { exact: true })).toBeVisible();
-  await expect(scene(page)).toHaveAttribute('data-car-count', '3');
   await expect(page.getByRole('combobox', { name: 'Train car count', exact: true })).toHaveValue('3');
+  await expect.poll(async () => {
+    expect(errors, 'Preset replacement does not stop the renderer with an exception').toEqual([]);
+    return scene(page).getAttribute('data-car-count');
+  }, { timeout: 30_000 }).toBe('3');
   await expect(page.locator('.layout-plan-info')).toContainText('four additional R315-45 curves');
   await expect(page.locator('.layout-plan-info')).toContainText('Pier heights are modeled');
   await expect(page.getByRole('link', { name: 'View KATO plan' })).toHaveAttribute('href',
@@ -381,6 +392,7 @@ test('KATO plan02 opens in 3D with its numbered switches and retains its source 
   // The starter formation spans Switch 1. Clear it before deliberately
   // changing both routes; parked trains now protect their point blades.
   await page.getByRole('button', { name: 'Remove selected train', exact: true }).click();
+  await openSwitchDesk(page);
   const desk = page.getByRole('region', { name: 'Turnout switch controls' });
   await expect(desk.getByRole('group')).toHaveCount(2);
   for (const number of [1, 2]) {
@@ -398,6 +410,7 @@ test('KATO plan02 opens in 3D with its numbered switches and retains its source 
   await expect(scene(page)).toHaveAttribute('data-ready', 'true');
   expect(await savedLayout(page)).toEqual(saved);
   await expect(page.getByRole('link', { name: 'View KATO plan' })).toBeVisible();
+  await openSwitchDesk(page);
   await expect(desk.getByRole('button', { name: 'Switch 2 branch', exact: true })).toHaveAttribute('aria-pressed', 'true');
   const downloadPromise = page.waitForEvent('download');
   await openMoreTools(page);
@@ -415,6 +428,7 @@ test('KATO plan02 opens in 3D with its numbered switches and retains its source 
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.locator('.layout-plan-info')).toBeVisible();
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  expect(errors).toEqual([]);
 });
 
 test('a selected turnout switches the running train onto its branch and persists the route', async ({ page }) => {
@@ -635,6 +649,7 @@ test('named saved layouts keep independent designs through fresh starts, reloads
   await openSavedDesign(page, 'Our overpass');
   expect(await currentRailway(page)).toEqual(overpass);
   await expect(scene(page)).toHaveAttribute('data-car-count', '5');
+  await openSwitchDesk(page);
   await expect(page.getByRole('button', { name: 'Switch 4 branch', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator('.layout-plan-info')).toBeVisible();
   await page.reload();
@@ -910,6 +925,7 @@ test('all rendered turnout point blades and scissors pairs move gradually and re
   const initial = await renderedTurnoutPoints(page);
   expect(initial).toHaveLength(5);
   expectPointBladeEndpoint(initial, false);
+  await openSwitchDesk(page);
   const desk = page.getByRole('region', { name: 'Turnout switch controls' });
   for (let number = 1; number <= 5; number += 1) {
     await desk.getByRole('button', { name: `Switch ${number} branch`, exact: true }).click();
@@ -1201,6 +1217,7 @@ test('numbered switches operate live without resetting a clear train and reject 
     fixtureTrack('switch-near', 248, 0, { kind: 't4l', bend: -1, switchNumber: 1 }),
     fixtureTrack('switch-away', 900, 220, { kind: 't4r', switchNumber: 7 }),
   ]));
+  await openSwitchDesk(page);
   const desk = page.getByRole('region', { name: 'Turnout switch controls' });
   await expect(desk.getByRole('group', { name: 'Switch 1', exact: true })).toBeVisible();
   await expect(desk.getByRole('group', { name: 'Switch 7', exact: true })).toBeVisible();
@@ -1250,6 +1267,7 @@ test('numbered switches operate live without resetting a clear train and reject 
   await page.reload();
   await expect(scene(page)).toHaveAttribute('data-ready', 'true');
   expect(await savedLayout(page)).toEqual(saved);
+  await openSwitchDesk(page);
   await expect(desk.getByRole('button', { name: 'Switch 7 branch', exact: true })).toHaveAttribute('aria-pressed', 'true');
 });
 

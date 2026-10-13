@@ -16,6 +16,12 @@ const scene = (page: Page) => page.getByRole('img', {
   name: '3D railway layout: rotate, zoom, select trains, and move Kato track pieces',
 });
 const desk = (page: Page) => page.getByRole('region', { name: 'Turnout switch controls', exact: true });
+
+async function openSwitchDesk(page: Page) {
+  const toggle = page.getByRole('button', { name: 'Toggle switch controls', exact: true });
+  if (await toggle.getAttribute('aria-expanded') !== 'true') await toggle.click();
+}
+
 type Point = { x: number; y: number; z: number };
 type ScreenPoint = { x: number; y: number };
 type Badge = {
@@ -49,6 +55,7 @@ async function start(page: Page, value: LayoutData) {
   await page.goto('./');
   await expect(scene(page)).toHaveAttribute('data-ready', 'true', { timeout: 90_000 });
   await expect(page.getByLabel('Train count', { exact: true })).toHaveText('0 trains');
+  await openSwitchDesk(page);
   await page.clock.fastForward(16);
 }
 
@@ -211,6 +218,7 @@ test('every catalog turnout and scissors variant keeps its identity through mirr
   expect((await saved(page)).tracks).toEqual(layout.tracks);
   await page.reload();
   await expect(scene(page)).toHaveAttribute('data-ready', 'true');
+  await openSwitchDesk(page);
   await page.clock.fastForward(200);
   assertAnchors(await badges(page), layout.tracks);
   await scene(page).screenshot({ path: info.outputPath('catalog-mirrored-rotated-elevated-switches.png') });

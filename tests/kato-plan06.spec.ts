@@ -136,6 +136,7 @@ test('the added KATO plan preserves the current railway and supports trains, tur
     await selector.locator(`button[data-train-id="${train.id}"]`).click()
     await page.getByRole('button', { name: 'Remove selected train', exact: true }).click()
   }
+  await page.getByRole('button', { name: 'Toggle switch controls', exact: true }).click()
   const desk = page.getByRole('region', { name: 'Turnout switch controls', exact: true })
   await expect(desk.getByRole('group')).toHaveCount(24)
   await desk.getByRole('button', { name: 'Switch 1 branch', exact: true }).click()
@@ -144,6 +145,7 @@ test('the added KATO plan preserves the current railway and supports trains, tur
   const beforeReload = await saved(page)
   await page.reload()
   await expect(scene(page)).toHaveAttribute('data-ready', 'true', { timeout: 90_000 })
+  await page.getByRole('button', { name: 'Toggle switch controls', exact: true }).click()
   await advance(page)
   expect(await saved(page)).toEqual(beforeReload)
   const downloadPromise = page.waitForEvent('download')

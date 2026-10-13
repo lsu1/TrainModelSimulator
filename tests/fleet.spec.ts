@@ -304,6 +304,7 @@ test('a parked train protects its turnout while an unrelated train remains uncha
   await advance(page, 100);
   await select(page, 'away-set');
   const before = await fleet(page);
+  await page.getByRole('button', { name: 'Toggle switch controls', exact: true }).click();
   const desk = page.getByRole('region', { name: 'Turnout switch controls' });
   await desk.getByRole('button', { name: 'Switch 1 branch', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('Switch 1 is occupied');

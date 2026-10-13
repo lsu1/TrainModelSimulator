@@ -273,6 +273,8 @@ test('numbered switches, joining, nose view and separation operate from the same
   const practice = makeCouplingDemo({ firstType: 'e7', secondType: 'e5' });
   practice.tracks.push(clearTurnout());
   await seed(page, practice);
+  await page.getByRole('button', { name: 'Toggle switch controls', exact: true }).click();
+  await advance(page, 100);
   await expectCockpitFits(page, true);
   const desk = page.getByRole('region', { name: 'Turnout switch controls', exact: true });
   const branch = desk.getByRole('button', { name: 'Switch 1 branch', exact: true });
@@ -327,6 +329,7 @@ test('numbered switches, joining, nose view and separation operate from the same
   }, { key: STORAGE_KEY, value: stable, marker: 'cockpit-settled-pair-fixture' });
   await page.reload();
   await expect(scene(page)).toHaveAttribute('data-ready', 'true');
+  await page.getByRole('button', { name: 'Toggle switch controls', exact: true }).click();
   await advance(page, 100);
   await expect(speed(page)).toHaveAttribute('max', '275');
   await expect(page.getByRole('combobox', { name: 'Train', exact: true })).toBeDisabled();
