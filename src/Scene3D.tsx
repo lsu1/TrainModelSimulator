@@ -2151,6 +2151,9 @@ export default function Scene3D(props: Scene3DProps) {
       const now = performance.now();
       sceneryRenderer.update(Math.min(.1, Math.max(0, (now - lastSceneryTime) / 1000))); lastSceneryTime = now;
       if (sceneryDiagnosticsDirty || now - lastSceneryDiagnosticsTime > 160) {
+        // OrbitControls may have just changed the camera rotation. Publish
+        // ground locations using the same current matrices as the next render.
+        camera.updateMatrixWorld();
         const scenerySnapshot = sceneryRenderer.snapshot();
         const projectGround = (point: { x: number; y: number }) => {
           const projected = new THREE.Vector3(point.x * SCALE, 0, point.y * SCALE).project(camera);

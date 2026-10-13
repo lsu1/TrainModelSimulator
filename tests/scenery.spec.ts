@@ -69,7 +69,8 @@ function customRailway(): LayoutData {
 }
 async function topView(page: Page) {
   await page.getByRole('button', { name: 'Top view', exact: true }).click();
-  await page.clock.runFor(200);
+  // Camera fitting is synchronous; one fresh frame publishes its projection.
+  await page.clock.fastForward(200);
 }
 async function clickBadge(page: Page, id: string) {
   const badge = await scene(page).evaluate((element, id) => JSON.parse((element as HTMLCanvasElement).dataset.switchBadges!)
@@ -92,6 +93,19 @@ function assertCarsOnRoads(snapshot: RenderScenery) {
     const segments = road.points.map((point, index) => [point, road.points[(index + 1) % road.points.length]]);
     expect(Math.min(...segments.map(([a, b]) => segmentDistance(car, a, b))), `Car ${car.id} stays within its actual road`).toBeLessThanOrEqual(road.width / 2 + 2);
   }
+}
+
+async function trafficFrames(page: Page) {
+  // Exercise several actual mesh updates without rendering every idle RAF in
+  // software. Four frames cover 320 ms, cross the 160 ms diagnostic refresh,
+  // and validate each published pose against the rendered road geometry.
+  let snapshot: RenderScenery | undefined;
+  for (let frame = 0; frame < 4; frame++) {
+    await page.clock.fastForward(80);
+    snapshot = await rendered(page);
+    assertCarsOnRoads(snapshot);
+  }
+  return snapshot!;
 }
 
 async function generateCity(page: Page, prompt = 'A city with apartments, shops, roads, cars, people, trees and parks.') {
@@ -182,7 +196,7 @@ test('M1 city preview stays separate, accepts one undoable change and survives n
   expect((await rendered(page)).objects.map(({ id, kind, x, y, angle }) => ({ id, kind, x, y, angle }))).toEqual(poses);
   expect(railwayOnly(await saved(page))).toEqual(railwayOnly(original));
   await sceneryTab(page);
-  await page.clock.runFor(100);
+  await page.clock.fastForward(200);
   await scene(page).screenshot({ path: info.outputPath('m1-city-live-surroundings.png') });
   expect(errors).toEqual([]);
 });
@@ -199,8 +213,7 @@ test('a custom rotated railway receives scenery and real moving road cars, with 
   expect(railwayOnly(await saved(page))).toEqual(railwayOnly(original));
   const initial = await rendered(page);
   assertCarsOnRoads(initial);
-  await page.clock.runFor(300);
-  const moving = await rendered(page);
+  const moving = await trafficFrames(page);
   assertCarsOnRoads(moving);
   expect(moving.cars.filter(car => distance(car, initial.cars.find(value => value.id === car.id)!) > 1).length).toBeGreaterThan(0);
   expect(moving.cars.some(car => car.moving)).toBe(true);
@@ -208,11 +221,9 @@ test('a custom rotated railway receives scenery and real moving road cars, with 
   await page.clock.fastForward(200);
   const paused = await rendered(page);
   expect((await saved(page)).scenery!.trafficPlaying).toBe(false);
-  await page.clock.runFor(300);
-  expect(carPoses(await rendered(page))).toEqual(carPoses(paused));
+  expect(carPoses(await trafficFrames(page))).toEqual(carPoses(paused));
   await panel(page).getByRole('checkbox', { name: 'Moving road traffic', exact: true }).check();
-  await page.clock.runFor(300);
-  expect(carPoses(await rendered(page))).not.toEqual(carPoses(paused));
+  expect(carPoses(await trafficFrames(page))).not.toEqual(carPoses(paused));
   expect((await saved(page)).scenery!.cars).toEqual(plan.cars);
 
   await topView(page);
@@ -242,11 +253,11 @@ test('a custom rotated railway receives scenery and real moving road cars, with 
   await page.mouse.down();
   await page.mouse.move(viewPoint.x + 40, viewPoint.y + 15, { steps: 4 });
   await page.mouse.up();
-  await page.clock.runFor(100);
+  await page.clock.fastForward(200);
   expect(await scene(page).getAttribute('data-camera-pose')).not.toBe(beforeDrag);
   expect(await scene(page).getAttribute('data-scenery-area')).toBe('null');
   expect(await saved(page)).toEqual(changed);
-  await page.clock.runFor(100);
+  await page.clock.fastForward(200);
   await scene(page).screenshot({ path: info.outputPath('custom-rotated-city-road-traffic.png') });
   expect(errors).toEqual([]);
 });
@@ -275,7 +286,7 @@ test('phone ground marking changes only the chosen area and ordinary camera drag
   expect(await scene(page).getAttribute('data-scenery-area')).toBe('null');
   expect((await saved(page)).scenery).toEqual(original);
   await page.getByRole('button', { name: 'Fit railway to view', exact: true }).click();
-  await page.clock.runFor(200);
+  await page.clock.fastForward(200);
   await topView(page);
 
   await panel(page).getByRole('button', { name: 'Mark an area', exact: true }).click();
@@ -317,7 +328,7 @@ test('phone ground marking changes only the chosen area and ordinary camera drag
   expect(changed.objects.some(value => inside.some(initial => initial.id === value.id))).toBe(false);
   expect(changed.roads).toEqual(original.roads);
   expect(changed.cars).toEqual(original.cars);
-  await page.clock.runFor(100);
+  await page.clock.fastForward(200);
   await page.screenshot({ path: info.outputPath('phone-local-city-scenery-change.png') });
   await page.getByRole('button', { name: 'Undo last change', exact: true }).click();
   await page.clock.fastForward(200);
