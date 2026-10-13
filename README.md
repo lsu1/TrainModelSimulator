@@ -4,6 +4,8 @@
 
 A 3D KATO N scale railway playground for a young conductor on a Mac. Build layouts, arrange stations and bridges, explore overpasses, and run independent E235 Yamanote Line, E5, E6, and E7 Shinkansen trainsets together. Visitors need no download, installation, account, or API key. Use a current browser with WebGL 2 graphics support.
 
+Version **0.15.2** anchors each turnout number to its own rail with a short visible stem. This corrects the crossed visual labels on adjacent switches, including 1 and 4 in KATO plan 06-15. Saved numbering and the existing switch controls remain supported.
+
 Version **0.15.1** keeps the railway in view beside a tool panel with **Pieces**, **Ramp**, and **Helper** tabs. Only the active tool's contents scroll, while its main actions stay visible. Tabs retain their fields, scroll positions, and helper results. Select a piece and press **Edit** for its existing controls. On smaller screens, the railway and tools share the screen vertically; **Expand tools** / **Shrink tools** adjusts their space. Phone train-control rows scroll horizontally to keep more room for the railway.
 
 Version **0.15.0** added an optional **Track helper** for finishing a self-built railway. Select two open ends, press **Check feasibility**, and preview matching catalog pieces or a small repair before accepting it. The whole accepted change can be undone in one step. See [the helper's limits and behavior](docs/track-helper.md).

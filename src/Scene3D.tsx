@@ -18,6 +18,7 @@ import { noseCouplerProfile, supportsCouplingPair } from './couplingTypes';
 import type { CouplingGroup, CouplingOperation, NoseCouplingState } from './couplingTypes';
 import { getNoseCouplerDiagnostics, orientNoseCoupler, updateNoseCoupler } from './noseCoupler';
 import { TurnoutPoints, staticRailRanges } from './turnoutPoints';
+import { turnoutLabelPlacement } from './turnoutLabelPlacement';
 import type { TrainRuntime, TrainSnapshot } from './fleet';
 import { closestTrainPlacement, validateTrainPlacement } from './trainPlacement';
 import { defaultStationName, normalizeStationName } from './stationName';
@@ -218,8 +219,41 @@ function switchBadge(number: number, branch: boolean): THREE.Sprite {
   material.userData.temporary = true;
   const sprite = new THREE.Sprite(material);
   sprite.userData.switchBadge = true; sprite.userData.switchNumber = number;
+  sprite.userData.switchState = branch ? 'branch' : 'straight';
+  sprite.center.set(.5, 0);
   sprite.renderOrder = 8;
   return sprite;
+}
+
+function addTurnoutLabel(group: THREE.Object3D, track: Track, library: ModelLibrary) {
+  if (track.switchNumber === undefined) return;
+  const { anchor, position } = turnoutLabelPlacement(track, RAIL_TOP);
+  const decoration = new THREE.Group();
+  decoration.userData.switchBadgeDecoration = true;
+  const white = new THREE.MeshBasicMaterial({ color: '#f5f7ec', depthTest: false, depthWrite: false, toneMapped: false });
+  const green = new THREE.MeshBasicMaterial({ color: '#244c40', depthTest: false, depthWrite: false, toneMapped: false });
+  white.userData.temporary = green.userData.temporary = true;
+  for (const [radius, material] of [[.85, green], [.45, white]] as const) {
+    const stem = new THREE.Mesh(library.cylinder, material);
+    stem.scale.set(radius, position.z - anchor.z, radius);
+    stem.position.set(anchor.x - track.x, (anchor.z + position.z) / 2, anchor.y - track.y);
+    stem.renderOrder = material === white ? 7 : 6;
+    stem.raycast = () => {};
+    if (material === white) stem.userData.switchBadgeStem = true;
+    decoration.add(stem);
+  }
+  for (const [radius, material] of [[1.3, white], [.9, green]] as const) {
+    const dot = new THREE.Mesh(library.sphere, material);
+    dot.scale.setScalar(radius);
+    dot.position.set(anchor.x - track.x, anchor.z, anchor.y - track.y);
+    dot.renderOrder = material === green ? 7 : 6;
+    dot.raycast = () => {};
+    decoration.add(dot);
+  }
+  const badge = switchBadge(track.switchNumber, track.switchState === 'branch');
+  badge.position.set(position.x - track.x, position.z, position.y - track.y);
+  decoration.add(badge);
+  group.add(decoration);
 }
 
 function makeTrack(track: Track, library: ModelLibrary): THREE.Group {
@@ -417,12 +451,7 @@ function makeTrack(track: Track, library: ModelLibrary): THREE.Group {
     const slider = box(lever, library, 6, 2, 3.3, points.fraction * 8 - 4, 2, -14, '#a2b67b');
     group.userData.pointLeverSlider = slider;
     group.add(lever);
-    if (track.switchNumber !== undefined) {
-      const badge = switchBadge(track.switchNumber, track.switchState === 'branch');
-      const side = track.bend === 1 ? -1 : 1;
-      badge.position.set(p.x - track.x - Math.sin(p.angle) * side * 23, p.z + 25, p.y - track.y + Math.cos(p.angle) * side * 23);
-      group.add(badge);
-    }
+    addTurnoutLabel(group, track, library);
     group.userData.switchBadgeNumber = track.switchNumber;
     group.userData.switchBadgeState = track.switchState ?? 'straight';
   }
@@ -435,15 +464,9 @@ function syncTurnoutState(group: THREE.Object3D, track: Track, library: ModelLib
   points.setState(track.switchState ?? 'straight', now, settle);
   if (group.userData.switchBadgeNumber === track.switchNumber
     && group.userData.switchBadgeState === (track.switchState ?? 'straight')) return;
-  const existing = group.children.find(child => child.userData.switchBadge);
+  const existing = group.children.find(child => child.userData.switchBadgeDecoration);
   if (existing) { group.remove(existing); disposePiece(existing, library); }
-  if (track.switchNumber !== undefined) {
-    const p = pathsFor(track)[0].pointAt(Math.min(38, pathsFor(track)[0].length / 4));
-    const badge = switchBadge(track.switchNumber, track.switchState === 'branch');
-    const side = track.bend === 1 ? -1 : 1;
-    badge.position.set(p.x - track.x - Math.sin(p.angle) * side * 23, p.z + 25, p.y - track.y + Math.cos(p.angle) * side * 23);
-    group.add(badge);
-  }
+  addTurnoutLabel(group, track, library);
   group.userData.switchBadgeNumber = track.switchNumber;
   group.userData.switchBadgeState = track.switchState ?? 'straight';
 }
@@ -1447,6 +1470,25 @@ export default function Scene3D(props: Scene3DProps) {
         turnoutPoints[piece.userData.pieceId] = { x: Math.round((projected.x + 1) * width / 2), y: Math.round((1 - projected.y) * height / 2) };
       }
       renderer.domElement.dataset.turnoutPickPoints = JSON.stringify(turnoutPoints);
+      // Read the actual annotation meshes, so checks can catch misplaced or
+      // stale badges rather than merely repeating the saved switch metadata.
+      const project = (point: THREE.Vector3) => {
+        const projected = point.clone().project(camera);
+        return { x: (projected.x + 1) * width / 2, y: (1 - projected.y) * height / 2 };
+      };
+      renderer.domElement.dataset.switchBadges = JSON.stringify(pieces.children.flatMap(piece => {
+        const decoration = piece.children.find(child => child.userData.switchBadgeDecoration);
+        const badge = decoration?.children.find(child => child.userData.switchBadge);
+        const stem = decoration?.children.find(child => child.userData.switchBadgeStem);
+        if (!badge || !stem) return [];
+        const position = badge.getWorldPosition(new THREE.Vector3());
+        const start = new THREE.Vector3(0, -.5, 0).applyMatrix4(stem.matrixWorld);
+        const end = new THREE.Vector3(0, .5, 0).applyMatrix4(stem.matrixWorld);
+        return [{ id: piece.userData.pieceId, number: badge.userData.switchNumber, state: badge.userData.switchState,
+          position: layoutPoint(position.clone().divideScalar(SCALE)), screen: project(position),
+          anchor: layoutPoint(start.clone().divideScalar(SCALE)), anchorScreen: project(start),
+          leaderStart: layoutPoint(start.clone().divideScalar(SCALE)), leaderEnd: layoutPoint(end.clone().divideScalar(SCALE)) }];
+      }));
       const trainPoints: Record<string, { x: number; y: number }> = {};
       for (const [id, rendered] of renderedFleet) {
         const car = rendered.cars.children.find(car => rendered.cars.visible && car.visible);
