@@ -1,17 +1,18 @@
 import * as THREE from 'three';
-import type { SceneryObject, SceneryPlan, SceneryPoint, SceneryRiver } from './sceneryTypes';
+import type { SceneryObject, SceneryPlan, SceneryPoint, SceneryRiver, ScenerySurface } from './sceneryTypes';
 import { advanceTraffic, makeRoadPath, makeTrafficCars, sampleRoad, sceneryCarSize, trafficPose } from './sceneryTraffic';
 import type { RoadPath, TrafficCar } from './sceneryTraffic';
 
-type Primitive = 'box' | 'cylinder' | 'sphere' | 'cone' | 'roof' | 'hill';
+type Primitive = 'box' | 'cylinder' | 'sphere' | 'cone' | 'roof' | 'hill' | 'sign0' | 'sign1' | 'sign2' | 'sign3';
+type Finish = 'matte' | 'glass' | 'foliage' | 'sign';
 interface Part { matrix: THREE.Matrix4; color: THREE.Color; car?: number }
-interface Batch { primitive: Primitive; shadow: boolean; parts: Part[]; mesh?: THREE.InstancedMesh }
+interface Batch { primitive: Primitive; shadow: boolean; finish: Finish; parts: Part[]; mesh?: THREE.InstancedMesh }
 interface Basis { x: number; y: number; angle: number }
 const NO_PICK = () => {};
 const UP = new THREE.Vector3(0, 1, 0);
 const PALETTES = {
-  wall: [0xe5d8bd, 0xd6c5a6, 0xc2cbd0, 0xe4e3d8, 0xbbc1bf, 0xd6bcb0],
-  roof: [0x4a5865, 0x754e42, 0x48585c, 0x545b59],
+  wall: [0xe6ddc7, 0xd4b998, 0xbcc8ce, 0xf0ede1, 0xb7beb7, 0xc89078, 0xc1b8a6, 0xd8dfdd],
+  roof: [0x384959, 0x794d41, 0x3c5453, 0x5a5c59],
   car: [0xd34b42, 0xeae7d9, 0x477eaa, 0xdfb943, 0x508c7b, 0x3d4551],
   clothes: [0x315f86, 0x9c3c46, 0xe6bd57, 0x45664f, 0x6d5681, 0xe4dbca],
 };
@@ -46,6 +47,8 @@ export class SceneryRenderer {
   private signature = '';
   private geometries = new Map<Primitive, THREE.BufferGeometry>();
   private materials = new Set<THREE.Material>();
+  private textures = new Set<THREE.Texture>();
+  private finishes = new Map<Finish, THREE.MeshStandardMaterial>();
   private opaque: THREE.MeshStandardMaterial | null = null;
   private staticBatches = new Map<string, Batch>();
   private carBatches = new Map<string, Batch>();
@@ -85,6 +88,15 @@ export class SceneryRenderer {
       color: preview ? 0xe1f0ec : 0xffffff, roughness: .82, metalness: .02,
     });
     this.materials.add(this.opaque);
+    this.finishes.set('matte', this.opaque);
+    const glazing = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: .28, metalness: .32 });
+    const foliage = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: .96 });
+    this.finishes.set('glass', glazing); this.finishes.set('foliage', foliage);
+    this.materials.add(glazing); this.materials.add(foliage);
+    const signs = new THREE.MeshStandardMaterial({ map: this.signAtlas(), color: 0xffffff, roughness: .65,
+      emissive: 0xffffff, emissiveIntensity: .08, side: THREE.DoubleSide });
+    this.finishes.set('sign', signs); this.materials.add(signs);
+    plan.surfaces?.forEach(surface => this.surface(surface));
     plan.roads.forEach(road => {
       const path = makeRoadPath(road);
       if (path.length > 0) { this.paths.set(road.id, path); this.road(path); }
@@ -137,6 +149,7 @@ export class SceneryRenderer {
       }),
       roads: (this.plan?.roads ?? []).map(road => ({ ...road, points: road.points.map(pointWorld) })),
       rivers: (this.plan?.rivers ?? []).map(river => ({ ...river, points: river.points.map(pointWorld) })),
+      surfaces: (this.plan?.surfaces ?? []).map(surface => ({ ...surface, ...pointWorld(surface) })),
       cars: this.traffic.map((entry, index) => {
         const position = world(this.carAnchors[index].getWorldPosition(new THREE.Vector3()));
         const forward = new THREE.Vector3(1, 0, 0).applyQuaternion(this.carAnchors[index].getWorldQuaternion(new THREE.Quaternion()));
@@ -163,9 +176,12 @@ export class SceneryRenderer {
     });
     this.geometries.forEach(geometry => geometry.dispose());
     this.materials.forEach(material => material.dispose());
+    this.textures.forEach(texture => texture.dispose());
     this.group.clear();
     this.geometries.clear();
     this.materials.clear();
+    this.textures.clear();
+    this.finishes.clear();
     this.staticBatches.clear();
     this.carBatches.clear();
     this.paths.clear();
@@ -178,18 +194,74 @@ export class SceneryRenderer {
   private geometry(primitive: Primitive) {
     const cached = this.geometries.get(primitive);
     if (cached) return cached;
-    const geometry = primitive === 'box' ? new THREE.BoxGeometry(1, 1, 1) :
+    const geometry = primitive.startsWith('sign') ? this.signGeometry(Number(primitive.slice(4))) :
+      primitive === 'box' ? new THREE.BoxGeometry(1, 1, 1) :
       primitive === 'cylinder' ? new THREE.CylinderGeometry(1, 1, 1, 8) :
       primitive === 'cone' ? new THREE.ConeGeometry(1, 1, 8) :
       primitive === 'roof' ? roofGeometry() :
       primitive === 'hill' ? new THREE.SphereGeometry(1, 14, 7, 0, Math.PI * 2, 0, Math.PI / 2) :
-      new THREE.SphereGeometry(1, 8, 6);
+      new THREE.SphereGeometry(1, 9, 7);
     this.geometries.set(primitive, geometry);
     return geometry;
   }
 
+  private signGeometry(row: number) {
+    const geometry = new THREE.PlaneGeometry(1, 1);
+    const uv = geometry.getAttribute('uv');
+    for (let index = 0; index < uv.count; index++) uv.setY(index, (3 - row + uv.getY(index)) / 4);
+    return geometry;
+  }
+
+  /** One shared atlas, rather than a texture allocation for every storefront. */
+  private signAtlas(): THREE.Texture {
+    if (typeof document === 'undefined') {
+      const texture = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
+      texture.needsUpdate = true; this.textures.add(texture); return texture;
+    }
+    const canvas = document.createElement('canvas'); canvas.width = 1024; canvas.height = 512;
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      const labels = ['CORNER CAFE', 'FRESH MARKET', 'BOOKS & GIFTS', 'CITY MART'];
+      const colors = ['#794539', '#316d57', '#354c67', '#1c718f'];
+      for (let row = 0; row < 4; row++) {
+        ctx.fillStyle = colors[row]; ctx.fillRect(0, row * 128, 1024, 128);
+        ctx.fillStyle = '#f4e6c6'; ctx.fillRect(10, row * 128 + 8, 1004, 3);
+        ctx.fillRect(10, row * 128 + 117, 1004, 3);
+        ctx.font = '600 68px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(labels[row], 512, row * 128 + 65);
+      }
+    }
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace; texture.anisotropy = 4;
+    this.textures.add(texture); return texture;
+  }
+
+  private surface(surface: ScenerySurface) {
+    const { width: w, depth: d, variant: v, kind } = surface;
+    const base = kind === 'lawn' || kind === 'garden' ? choice([0x75935a, 0x849f66, 0x6f8955], v) :
+      kind === 'parking' ? 0x727575 : kind === 'plaza' ? choice([0xd0c1a5, 0xb8b4a5, 0xc7c0af], v) : 0xb9b6a8;
+    this.add('box', surface, 0, 0, -.075, w, .10, d, base, false);
+    if (w < 5 || d < 5) return;
+    if (kind === 'plaza' || kind === 'paving') {
+      // Long joints form a readable tiled surface without hundreds of tiny meshes.
+      const nx = Math.min(16, Math.floor(w / 24)), nz = Math.min(16, Math.floor(d / 24));
+      for (let index = 1; index < nx; index++) this.add('box', surface, -w / 2 + index * w / nx, 0, -.015, .35, .04, d, 0xa4a397, false);
+      for (let index = 1; index < nz; index++) this.add('box', surface, 0, -d / 2 + index * d / nz, -.012, w, .04, .35, 0xa4a397, false);
+    } else if (kind === 'parking') {
+      const bays = Math.max(1, Math.min(12, Math.floor(w / 17)));
+      for (let index = 0; index <= bays; index++) this.add('box', surface, (-.46 + index * .92 / bays) * w, d * .13, -.01, Math.min(.75, w * .06), .07, d * .64, 0xe8e5cf, false);
+      this.add('box', surface, 0, d * .45, -.01, w * .92, .07, Math.min(.75, d * .06), 0xe8e5cf, false);
+    } else if (kind === 'garden') {
+      for (let index = 0; index < 7; index++) {
+        const x = Math.sin(index * 2.71 + v) * w * .32, z = Math.cos(index * 1.87 + v) * d * .32;
+        this.add('sphere', surface, x, z, .05, w * .11, .1, d * .10,
+          choice([0x8ea76f, 0x59764e, 0x9baf7b], index + v), false, undefined, 0, 'foliage');
+      }
+    }
+  }
+
   private add(primitive: Primitive, basis: Basis, x: number, z: number, y: number,
-    width: number, height: number, depth: number, color: number, shadow = true, car?: number, tilt = 0) {
+    width: number, height: number, depth: number, color: number, shadow = true, car?: number, tilt = 0, finish: Finish = 'matte') {
     const c = Math.cos(basis.angle), s = Math.sin(basis.angle);
     this.position.set(basis.x + x * c - z * s, y, basis.y + x * s + z * c);
     this.quaternion.setFromAxisAngle(UP, -basis.angle);
@@ -197,15 +269,15 @@ export class SceneryRenderer {
     this.scale.set(width, height, depth);
     this.transform.compose(this.position, this.quaternion, this.scale);
     const map = car === undefined ? this.staticBatches : this.carBatches;
-    const key = `${primitive}:${shadow}`;
+    const key = `${primitive}:${shadow}:${finish}`;
     let batch = map.get(key);
-    if (!batch) { batch = { primitive, shadow, parts: [] }; map.set(key, batch); }
+    if (!batch) { batch = { primitive, shadow, finish, parts: [] }; map.set(key, batch); }
     batch.parts.push({ matrix: this.transform.clone(), color: new THREE.Color(color), car });
   }
 
   private flush(batches: Map<string, Batch>, dynamic: boolean) {
     batches.forEach(batch => {
-      const mesh = new THREE.InstancedMesh(this.geometry(batch.primitive), this.opaque!, batch.parts.length);
+      const mesh = new THREE.InstancedMesh(this.geometry(batch.primitive), this.finishes.get(batch.finish)!, batch.parts.length);
       mesh.castShadow = batch.shadow;
       mesh.receiveShadow = true;
       mesh.raycast = NO_PICK;
@@ -316,16 +388,24 @@ export class SceneryRenderer {
   }
 
   private tree(basis: Basis, x: number, z: number, width: number, height: number, variant: number, depth = width) {
-    const trunkHeight = height * .58;
-    this.add('cylinder', basis, x, z, trunkHeight / 2, Math.max(.55, width * .035), trunkHeight, Math.max(.55, width * .035), 0x80684d);
-    const green = choice([0x568653, 0x73945f, 0x47744e, 0x839d63], variant);
+    const trunkHeight = height * .64;
+    this.add('cylinder', basis, x, z, trunkHeight / 2, Math.min(width * .075, Math.max(.45, width * .035)), trunkHeight,
+      Math.min(depth * .075, Math.max(.45, depth * .035)), 0x6d5841);
+    const green = choice([0x477436, 0x709049, 0x3d683e, 0x7c9650, 0x51723e, 0x96a662], variant);
+    const leaf = (px: number, pz: number, y: number, w: number, h: number, d: number, color: number) =>
+      this.add('sphere', basis, x + px * width, z + pz * depth, height * y, width * w, height * h, depth * d, color, true, undefined, 0, 'foliage');
     if (variant % 5 === 0) {
-      this.add('cone', basis, x, z, height * .6, width / 2, height * .8, depth / 2, green);
-      this.add('cone', basis, x, z, height * .8, width * .36, height * .4, depth * .36, green);
+      this.add('cone', basis, x, z, height * .52, width * .47, height * .60, depth * .47, green, true, undefined, 0, 'foliage');
+      this.add('cone', basis, x, z, height * .67, width * .36, height * .52, depth * .36, 0x4c713a, true, undefined, 0, 'foliage');
+      this.add('cone', basis, x, z, height * .82, width * .23, height * .35, depth * .23, green, true, undefined, 0, 'foliage');
     } else {
-      this.add('sphere', basis, x, z, height * .70, width * .43, height * .28, depth * .4, green);
-      this.add('sphere', basis, x - width * .18, z + depth * .10, height * .58, width * .3, height * .23, depth * .32, green);
-      this.add('sphere', basis, x + width * .18, z - depth * .10, height * .61, width * .31, height * .25, depth * .30, green);
+      leaf(0, 0, .72, .32, .24, .32, green);
+      leaf(-.19, .13, .58, .28, .21, .29, 0x4b743c);
+      leaf(.19, -.12, .61, .28, .22, .28, green);
+      leaf(-.11, -.21, .68, .30, .23, .27, 0x779346);
+      leaf(.11, .20, .67, .30, .23, .28, green);
+      leaf(.04, -.03, .82, .26, .17, .26, variant % 13 === 0 ? 0xc2b29a : 0x8ea457);
+      leaf(-.20, .04, .76, .20, .16, .24, 0x668943);
     }
   }
 
@@ -344,6 +424,7 @@ export class SceneryRenderer {
   }
 
   private building(object: SceneryObject) {
+    if (object.lot === true) { this.urbanBuilding(object); return; }
     const { width: w, depth: d, height: h, variant: v } = object;
     const house = object.kind === 'house', shop = object.kind === 'shop';
     const roofLevel = house ? h : Math.max(2, h - 6);
@@ -407,18 +488,190 @@ export class SceneryRenderer {
     }
   }
 
+  /** A complete reserved parcel: all architecture, trees and frontage stay inside it. */
+  private urbanBuilding(object: SceneryObject) {
+    const { width: lotW, depth: lotD, height: h, variant: v } = object;
+    if (lotW < 40 || lotD < 35 || h < 20) {
+      // Imported miniature parcels still obey the same reserved footprint.
+      this.add('box', object, 0, 0, -.055, lotW, .13, lotD, 0xbeb9a5, false);
+      this.add('box', object, 0, -lotD * .06, h * .41, lotW * .76, h * .82, lotD * .70, choice(PALETTES.wall, v));
+      this.add('box', object, 0, -lotD * .06, h * .88, lotW * .82, h * .12, lotD * .76, choice(PALETTES.roof, v));
+      this.add('box', object, 0, lotD * .295, h * .40, lotW * .52, h * .28, lotD * .01, 0x536c78, false, undefined, 0, 'glass');
+      return;
+    }
+    const house = object.kind === 'house', shop = object.kind === 'shop', office = object.kind === 'office';
+    const w = lotW * (house ? .71 : .79), d = lotD * (house ? .63 : .69), z = -lotD * .08;
+    const wall = choice(PALETTES.wall, v), trim = choice([0xeee7d5, 0xd1c6ac, 0xc5c8c2], v);
+    const front = z + d / 2, rear = z - d / 2;
+    const roofH = house ? h * .25 - .5 : 0;
+    const bodyH = house ? h * .70 : h - 8;
+    const base = house ? 0x849565 : 0xbcb8ab;
+    this.add('box', object, 0, 0, -.055, lotW, .13, lotD, base, false);
+    // The forecourt joins the road-facing façade to the edge of its parcel.
+    this.add('box', object, 0, (front + lotD / 2) / 2, .10, lotW * .97, .15, lotD / 2 - front, house ? 0xcac4ad : 0xd0c8b5, false);
+    this.add('box', object, 0, lotD * .47, .27, lotW, .38, lotD * .055, 0xdcd4bf, false);
+    if (!house) {
+      for (let x = -lotW * .40; x < lotW * .45; x += 13) this.add('box', object, x, (front + lotD / 2) / 2, .20, .32, .06, lotD / 2 - front, 0xb5b0a1, false);
+    }
+    const foundation = Math.min(2.4, h * .05);
+    this.add('box', object, 0, z, foundation / 2, w + 2, foundation, d + 2, 0x9c9e93, false);
+    this.add('box', object, 0, z, bodyH / 2 + foundation, w, bodyH, d, wall);
+    // Clear changes of material distinguish brick, stucco, glazing and concrete.
+    if (!house) {
+      const serviceX = w * (v % 2 ? -.36 : .36);
+      this.add('box', object, serviceX, front + .36, bodyH / 2 + foundation, w * .12, bodyH, .74, choice([0x807f74, 0xb38b6b, 0x657881], v));
+      for (const side of [-1, 1]) this.add('box', object, side * (w / 2 - 1), z, bodyH / 2 + foundation, 1.8, bodyH, d + .8, trim, false);
+    }
+    const floors = Math.max(1, Math.min(16, house ? 2 : Math.floor(bodyH / 14)));
+    const floorH = bodyH / floors;
+    const columns = Math.max(2, Math.min(7, Math.floor(w / (office ? 12 : 15))));
+    const sideColumns = Math.max(2, Math.min(6, Math.floor(d / 15)));
+    const paneH = Math.min(house ? 8 : 9, floorH * .60);
+    for (let floor = 0; floor < floors; floor++) {
+      const y = foundation + (floor + .55) * floorH;
+      const color = choice([0x536c78, 0x708791, 0x445d6e, 0x829097], floor + v);
+      if (!house && floor > 0) {
+        this.add('box', object, 0, z, foundation + floor * floorH, w + .85, .9, d + .85, trim, false);
+      }
+      for (const side of [-1, 1]) {
+        const faceZ = z + side * d / 2;
+        for (let col = 0; col < columns; col++) {
+          const x = (col + .5) * w / columns - w / 2;
+          if (side === 1 && floor === 0 && (shop || Math.abs(x) < w / columns * .55)) continue;
+          const paneW = Math.min(office ? 10 : 8, w / columns * (office ? .78 : .60));
+          this.add('box', object, x, faceZ + side * .27, y, paneW + 1.2, paneH + 1.2, .55, 0x596261, false);
+          this.add('box', object, x, faceZ + side * .60, y, paneW, paneH, .15,
+            (col + floor + v) % 11 === 0 ? 0xc7b895 : color, false, undefined, 0, 'glass');
+          if (house || !office) this.add('box', object, x, faceZ + side * .73, y, .30, paneH, .08, 0xc5c7bc, false);
+          if (!house && !office && side === 1 && floor > 0) {
+            const balconyDepth = Math.min(lotD * .055, 6);
+            const balconyW = w / columns * .86;
+            const bottom = y - paneH / 2 - .5;
+            this.add('box', object, x, faceZ + balconyDepth / 2, bottom, balconyW, .8, balconyDepth, 0xc9c7b8, false);
+            this.add('box', object, x, faceZ + balconyDepth, bottom + 1.5, balconyW, 2.2, .48, 0x78867f, false);
+            for (const dx of [-1, 1]) this.add('box', object, x + dx * balconyW * .47, faceZ + balconyDepth / 2, bottom + 1.5, .45, 2.2, balconyDepth, 0x89948c, false);
+            if ((floor + col + v) % 4 === 0) this.add('box', object, x, faceZ + balconyDepth * .63, bottom + 1, balconyW * .28, 1.8, 1.4, 0x688253, false);
+          }
+        }
+        for (let col = 0; col < sideColumns; col++) {
+          const localZ = z + (col + .5) * d / sideColumns - d / 2;
+          const paneD = Math.min(office ? 11 : 8, d / sideColumns * .61);
+          this.add('box', object, side * (w / 2 + .25), localZ, y, .55, paneH + 1.1, paneD + 1.1, 0x606763, false);
+          this.add('box', object, side * (w / 2 + .57), localZ, y, .14, paneH, paneD, color, false, undefined, 0, 'glass');
+        }
+      }
+    }
+    const doorwayW = Math.min(10, w * .16), doorwayH = Math.min(13, bodyH * .36);
+    this.add('box', object, 0, front + .55, foundation + doorwayH / 2, doorwayW + 1.5, doorwayH + .8, .8, 0x665f52, false);
+    this.add('box', object, 0, front + 1.05, foundation + doorwayH / 2, doorwayW, doorwayH, .15, 0x465e68, false, undefined, 0, 'glass');
+    this.add('box', object, doorwayW * .26, front + 1.2, foundation + doorwayH * .52, .35, 2, .25, 0xded5ba, false);
+    this.add('box', object, 0, front + 2.5, .45, doorwayW + 4, .9, 5, 0xb7b3a3, false);
+    if (house) {
+      const roofW = w + 6, roofD = d + 6, roofBase = bodyH + foundation;
+      this.add('roof', object, 0, z, roofBase + roofH / 2, roofW, roofH, roofD, choice(PALETTES.roof, v));
+      this.add('box', object, 0, z, roofBase + roofH, roofW, .65, 1.4, choice(PALETTES.roof, v), false);
+      for (let line = 1; line <= 5; line++) for (const side of [-1, 1]) {
+        const dz = line * roofD / 12;
+        this.add('box', object, 0, z + side * dz, roofBase + roofH * (1 - 2 * dz / roofD) + .2, roofW, .28, .35, 0x63706e, false);
+      }
+      this.add('box', object, -w * .25, z - d * .12, roofBase + roofH * .55, 4.5, roofH * .7, 4.5, 0x9c806b);
+      // Porch and garden give each small house a visibly owned frontage.
+      this.add('box', object, 0, front + 3, doorwayH + foundation + 1, doorwayW + 9, 1.2, 7, choice(PALETTES.roof, v));
+      for (const side of [-1, 1]) this.add('cylinder', object, side * (doorwayW / 2 + 3), front + 5, doorwayH / 2, .4, doorwayH, .4, trim);
+      this.add('box', object, w * .29, front + .8, foundation + 2.6, 9, 4.5, 1.8, 0x7a8256, false);
+      this.shrub(object, w * .29, front + 1.1, 9.5, 4, 2.2, v);
+    } else {
+      const roofLevel = h - 6;
+      this.add('box', object, 0, z, roofLevel - .7, w + 1.7, 1.4, d + 1.7, 0x7e847f);
+      for (const side of [-1, 1]) {
+        this.add('box', object, 0, z + side * d / 2, roofLevel + .75, w + 2, 1.8, 1.1, trim, false);
+        this.add('box', object, side * w / 2, z, roofLevel + .75, 1.1, 1.8, d, trim, false);
+      }
+      this.add('box', object, -w * .26, z - d * .16, roofLevel + 2.6, w * .22, 5, d * .24, 0xa8aeaa);
+      this.add('box', object, w * .23, z - d * .20, roofLevel + 1.4, w * .20, 2.8, d * .26, 0xc0c4bb);
+      for (const dx of [-1, 1]) this.add('cylinder', object, w * .23 + dx * w * .055, z - d * .20, roofLevel + 2.95, w * .037, .2, w * .037, 0x536166, false);
+      this.add('box', object, w * .25, z + d * .25, roofLevel + .42, w * .20, .7, d * .22, 0x2c4c69, false, undefined, 0, 'glass');
+    }
+    if (shop) {
+      for (const side of [-1, 1]) {
+        this.add('box', object, side * w * .29, front + .75, foundation + 5.8, w * .32, 10.4, .55, 0x42535b, false);
+        this.add('box', object, side * w * .29, front + 1.05, foundation + 5.8, w * .30, 9.5, .14, 0x69878e, false, undefined, 0, 'glass');
+        for (const division of [-1, 1]) this.add('box', object, side * w * .29 + division * w * .07, front + 1.18, foundation + 5.8, .35, 9.5, .08, 0xc6c5b7, false);
+      }
+      const awning = choice([0x447e63, 0x95574e, 0xaa884a, 0x3c7590], v);
+      const canopyD = Math.min(9, lotD * .08);
+      this.add('box', object, 0, front + canopyD / 2, foundation + 12.4, w * .94, 1.3, canopyD, awning);
+      for (let stripe = -4; stripe <= 4; stripe++) this.add('box', object, stripe * w * .10, front + canopyD / 2, foundation + 13.1, w * .04, .12, canopyD, 0xeee3c7, false);
+      this.add('box', object, 0, front + .65, foundation + 16.2, w * .72, 5.2, .8, awning, false);
+      this.add(`sign${v % 4}` as Primitive, object, 0, front + 1.12, foundation + 16.2, w * .70, 4.9, 1, 0xffffff, false, undefined, 0, 'sign');
+      // Outdoor tables and parked bicycles/cars read at both overview and close zoom.
+      for (const side of [-1, 1]) {
+        const tx = side * lotW * .31, tz = lotD * .39;
+        this.add('cylinder', object, tx, tz, 3.3, 3.6, .8, 3.6, 0xc4ae82);
+        this.add('cylinder', object, tx, tz, 1.6, .35, 3, .35, 0x686d60);
+        for (const dx of [-1, 1]) this.add('box', object, tx + dx * 5, tz, 1.8, 2.7, .65, 2.7, 0x8d7757);
+      }
+    }
+    // A side path and planted beds stay clear of the architecture and the road.
+    const sideX = lotW * .46;
+    this.add('box', object, -sideX, -.05 * lotD, .10, lotW * .065, .16, lotD * .82, 0xc5bfac, false);
+    for (const side of [-1, 1]) {
+      this.shrub(object, side * lotW * .465, -lotD * .19, lotW * .045, 5.5, lotD * .48, v + side);
+      if (house) this.tree(object, side * lotW * .34, lotD * .34, lotW * .14, Math.min(25, h * .52), v + side + 2, lotD * .15);
+    }
+    if (!shop) {
+      const parkedX = -lotW * .26, parkedZ = lotD * .36;
+      this.add('box', object, parkedX, parkedZ, .18, lotW * .27, .2, lotD * .20, 0x777c74, false);
+      for (const side of [-1, 1]) this.add('box', object, parkedX + side * lotW * .13, parkedZ, .31, .6, .08, lotD * .18, 0xe1dec7, false);
+      this.parkedCar(object, parkedX, parkedZ, Math.min(25, lotW * .22), Math.min(10, lotD * .13), v);
+    }
+    this.add('box', object, lotW * .40, lotD * .40, 2, 2.4, 4, 1.3, 0x596f62);
+    this.add('box', object, lotW * .40, lotD * .40, 4.2, 3.3, 1, 2.1, 0x647966);
+    // Rear utility strip avoids an empty-looking parcel behind the model.
+    this.add('box', object, 0, (rear - lotD / 2) / 2, .08, w, .12, lotD / 2 + rear, 0xa6a794, false);
+  }
+
+  private shrub(basis: Basis, x: number, z: number, width: number, height: number, depth: number, variant: number) {
+    this.add('box', basis, x, z, height * .42, width, height * .65, depth, choice([0x547444, 0x66854c, 0x7c9459], variant), false, undefined, 0, 'foliage');
+    const count = Math.max(1, Math.min(7, Math.floor(depth / 7)));
+    for (let index = 0; index < count; index++) this.add('sphere', basis, x, z + (index + .5) * depth / count - depth / 2,
+      height * .65, width * .49, height * .35, depth / count * .49, choice([0x698c4b, 0x8ca261, 0x53763e], index + variant), false, undefined, 0, 'foliage');
+  }
+
+  private parkedCar(basis: Basis, x: number, z: number, length: number, width: number, variant: number) {
+    const body = choice(PALETTES.car, variant), h = width * .56;
+    this.add('box', basis, x, z, h * .38, length, h * .48, width, body);
+    this.add('box', basis, x - length * .05, z, h * .73, length * .61, h * .38, width * .88, body);
+    for (const side of [-1, 1]) {
+      this.add('box', basis, x - length * .05, z + side * width * .447, h * .74, length * .48, h * .25, .15, 0x506979, false, undefined, 0, 'glass');
+      for (const axle of [-1, 1]) this.add('sphere', basis, x + axle * length * .30, z + side * width * .44, h * .22, h * .20, h * .20, .7, 0x343a3a);
+    }
+    this.add('box', basis, x + length * .263, z, h * .74, .2, h * .24, width * .78, 0x65828e, false, undefined, 0, 'glass');
+  }
+
   private park(object: SceneryObject) {
     const { width: w, depth: d, variant: v } = object;
-    this.add('box', object, 0, 0, -.06, w, .24, d, 0x9db888, false);
+    this.add('box', object, 0, 0, -.06, w, .24, d, 0x849b61, false);
+    this.add('box', object, 0, -d * .24, .065, w * .91, .025, d * .34, 0x90a86e, false);
     this.add('box', object, 0, 0, .13, w * .96, .12, 5, 0xd2c7ad, false);
     this.add('box', object, w * .12, 0, .16, 5, .12, d * .96, 0xd2c7ad, false);
     for (const side of [-1, 1]) {
-      this.tree(object, side * w * .32, -d * .28, Math.min(w, d) * .25, Math.min(42, d * .48), v + side + 2);
+      this.tree(object, side * w * .32, -d * .28, Math.min(45, w * .31, d * .36), Math.min(50, d * .52), v + side + 2);
+      if (w > 100 && d > 95) {
+        // Front-corner trunks sit outside the sandbox and swing; foliage shades their edges.
+        this.tree(object, side * w * .39, d * .365, Math.min(43, w * .22, d * .27), Math.min(46, d * .47), v + side + 5);
+      }
       this.add('box', object, side * w * .23, 7, 4, 15, 1.2, 4, 0x876d4c);
       this.add('box', object, side * w * .23, 9, 6, 15, 4, .6, 0x987954);
       for (const x of [-6, 6]) this.add('box', object, side * w * .23 + x, 7, 2, .6, 4, 3, 0x626e61);
     }
     if (w > 70 && d > 65) {
+      for (const side of [-1, 1]) {
+        this.shrub(object, side * w * .46, -d * .20, w * .055, 4.5, d * .48, v + side);
+        this.add('box', object, side * w * .31, d * .46, .28, w * .22, .48, d * .06, 0x777d63, false);
+        for (let bloom = 0; bloom < 5; bloom++) this.add('sphere', object, side * w * .31 + (bloom - 2) * w * .037, d * .46, 1.3,
+          w * .018, 1, d * .021, choice([0xcfb366, 0xbbb198, 0x97656e, 0xd7c68c], bloom + v), false);
+      }
       // Compact playground: sandbox, a colourful slide and swing frame.
       this.add('box', object, -w * .23, d * .25, .18, w * .3, .35, d * .28, 0xcdbb87, false);
       this.add('box', object, -w * .25, d * .25, 6, 5, 12, 5, 0xc17c4c);

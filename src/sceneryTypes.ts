@@ -14,6 +14,16 @@ export interface SceneryObject extends SceneryPoint {
   height: number;
   /** Small palette/shape variation, stable through saving and reopening. */
   variant: number;
+  /** Width/depth reserve a complete landscaped building parcel. */
+  lot?: true;
+}
+export interface ScenerySurface extends SceneryPoint {
+  id: string;
+  kind: 'paving' | 'lawn' | 'garden' | 'plaza' | 'parking';
+  angle: number;
+  width: number;
+  depth: number;
+  variant: number;
 }
 export interface SceneryRoad {
   id: string;
@@ -34,6 +44,8 @@ export interface SceneryCar {
 }
 export interface SceneryPlan {
   version: 1;
+  /** Optional visual upgrade; older arrangements remain valid. */
+  style?: 'urban-v2';
   seed: number;
   theme: SceneryTheme;
   density: SceneryDensity;
@@ -41,6 +53,7 @@ export interface SceneryPlan {
   prompt: string;
   bounds: SceneryBounds;
   objects: SceneryObject[];
+  surfaces?: ScenerySurface[];
   roads: SceneryRoad[];
   rivers: SceneryRiver[];
   cars: SceneryCar[];
@@ -61,6 +74,6 @@ export interface SceneryResult {
   recognized: string[];
 }
 export const SCENERY_LIMITS = {
-  objects: 400, roads: 8, rivers: 4, cars: 36, pathPoints: 160,
+  objects: 400, surfaces: 256, roads: 8, rivers: 4, cars: 36, pathPoints: 160,
   coordinate: 60000, prompt: 500, pathLength: 600000,
 } as const;

@@ -4,6 +4,8 @@
 
 A 3D KATO N scale railway playground for a young conductor on a Mac. Build layouts, arrange stations and bridges, explore overpasses, and run independent E235 Yamanote Line, E5, E6, and E7 Shinkansen trainsets together. Visitors need no download, installation, account, or API key. Use a current browser with WebGL 2 graphics support.
 
+Version **0.16.1** gives generated cities street-facing neighbourhoods, landscaped building plots, paved entrances, gardens, and richer houses, shops, apartments, and offices. Local streets fit into clear ground around the railway, while moving traffic follows the perimeter road. Existing saved arrangements stay in place; open **Scenery**, choose **City**, and use **Build my city** followed by **Keep this city** to create a new arrangement with the improved city design. See [scenery controls and saving](docs/scenery.md).
+
 Version **0.16.0** adds a **Scenery** tab for building city, countryside, or hill surroundings around any preset or self-built railway. Choose scenery, describe it with supported English or Chinese words, and preview before keeping it. Mark an area for a local change. Lightweight 3D buildings, greenery, people, optional rivers, and roads with moving traffic are saved with the layout; accepted changes support Undo. See [scenery controls and limits](docs/scenery.md).
 
 Version **0.15.3** lets you **click or tap a numbered turnout badge** directly in the railway to toggle its straight/branch route. Badges highlight on hover, while dragging from one still moves the camera. The switch desk starts collapsed and remains available from the numbered route button in the camera toolbar. Occupied-turnout protection, coupling locks, Undo, and saved routes still apply.

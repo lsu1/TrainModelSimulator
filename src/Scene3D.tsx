@@ -1043,7 +1043,8 @@ export default function Scene3D(props: Scene3DProps) {
     renderer.domElement.style.width = renderer.domElement.style.height = '100%';
     renderer.domElement.style.display = 'block'; renderer.domElement.style.touchAction = 'none';
     element.appendChild(renderer.domElement);
-    const scene = new THREE.Scene(); scene.fog = new THREE.Fog('#e5e9df', 45, 110);
+    const scene = new THREE.Scene();
+    const railwayFog = new THREE.Fog('#e5e9df', 45, 110); scene.fog = railwayFog;
     const camera = new THREE.PerspectiveCamera(38, 1, .02, 200);
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true; controls.dampingFactor = .075;
@@ -1094,6 +1095,27 @@ export default function Scene3D(props: Scene3DProps) {
     // A subdued tabletop lets the model's ballast, sleepers, and silver bodywork read clearly.
     const ground = new THREE.Mesh(new THREE.PlaneGeometry(16000, 16000), library.material('#99aa8f', 0, 1));
     ground.rotation.x = -Math.PI / 2; ground.position.y = -.3; ground.receiveShadow = true; world.add(ground);
+    const railwayGroundMaterial = ground.material;
+    const grassCanvas = document.createElement('canvas'); grassCanvas.width = grassCanvas.height = 256;
+    const grassContext = grassCanvas.getContext('2d')!;
+    const grassPixels = grassContext.createImageData(256, 256);
+    // Fine grain gives the ground a landscaped surface
+    // without placing geometry over a rail or depending on an external texture.
+    let grassSeed = 913;
+    for (let y = 0; y < 256; y++) for (let x = 0; x < 256; x++) {
+      grassSeed = (Math.imul(grassSeed, 1664525) + 1013904223) >>> 0;
+      const grain = (grassSeed / 0xffffffff - .5) * 24;
+      const i = (y * 256 + x) * 4;
+      grassPixels.data[i] = 111 + grain;
+      grassPixels.data[i + 1] = 133 + grain;
+      grassPixels.data[i + 2] = 78 + grain * .65;
+      grassPixels.data[i + 3] = 255;
+    }
+    grassContext.putImageData(grassPixels, 0, 0);
+    const grassTexture = new THREE.CanvasTexture(grassCanvas); grassTexture.colorSpace = THREE.SRGBColorSpace;
+    grassTexture.wrapS = grassTexture.wrapT = THREE.RepeatWrapping; grassTexture.repeat.set(80, 80);
+    grassTexture.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+    const cityGroundMaterial = new THREE.MeshStandardMaterial({ map: grassTexture, roughness: 1 });
     const grid = new THREE.GridHelper(120, 120, '#728b78', '#728b78');
     (grid.material as THREE.Material).transparent = true; (grid.material as THREE.Material).opacity = .075;
     grid.position.y = -.002; scene.add(grid);
@@ -1685,6 +1707,32 @@ export default function Scene3D(props: Scene3DProps) {
     };
     const updateScenery = () => {
       sceneryRenderer.setPlan(latest.current.sceneryPlan ?? null, latest.current.sceneryPreview ?? false);
+      const urban = latest.current.sceneryPlan?.style === 'urban-v2' && latest.current.sceneryPlan.theme === 'city';
+      // Railway-only scenes keep their established lighting. A city overview
+      // needs clear distance detail and stronger contact shadows between parcels.
+      scene.fog = urban ? null : railwayFog;
+      ground.material = urban ? cityGroundMaterial : railwayGroundMaterial;
+      grid.visible = !urban;
+      hemi.intensity = urban ? .52 : .9;
+      fill.intensity = urban ? .24 : .45;
+      scene.environmentIntensity = urban ? .30 : .45;
+      sunlight.shadow.normalBias = urban ? .004 : .013;
+      if (urban) {
+        const cityBounds = new THREE.Box3().setFromObject(surroundings);
+        const size = cityBounds.getSize(new THREE.Vector3()), center = cityBounds.getCenter(new THREE.Vector3());
+        const extent = Math.max(8, Math.max(size.x, size.z) * .65 + 2);
+        ground.position.x = center.x / SCALE; ground.position.z = center.z / SCALE;
+        sunlight.position.set(center.x - 15, 28, center.z + 13);
+        sunlight.target.position.set(center.x, 0, center.z);
+        sunlight.shadow.camera.left = sunlight.shadow.camera.bottom = -extent;
+        sunlight.shadow.camera.right = sunlight.shadow.camera.top = extent;
+      } else {
+        ground.position.x = ground.position.z = 0;
+        sunlight.position.set(-15, 28, 13); sunlight.target.position.set(0, 0, 0);
+        sunlight.shadow.camera.left = sunlight.shadow.camera.bottom = -24;
+        sunlight.shadow.camera.right = sunlight.shadow.camera.top = 24;
+      }
+      sunlight.target.updateMatrixWorld(); sunlight.shadow.camera.updateProjectionMatrix();
       const bounds = JSON.stringify(latest.current.sceneryPlan?.bounds ?? null);
       if (sceneryFitBounds !== bounds && latest.current.sceneryPlan) fitCamera();
       sceneryFitBounds = bounds;
@@ -2137,7 +2185,8 @@ export default function Scene3D(props: Scene3DProps) {
       sceneryRenderer.dispose(); areaGeometry.dispose(); areaRingGeometry.dispose(); areaMaterial.dispose(); areaRingMaterial.dispose(); hereMaterial.dispose(); hereTexture.dispose();
       if (runtime.current?.selected) { scene.remove(runtime.current.selected); runtime.current.selected.geometry.dispose(); }
       for (const outline of runtime.current?.issueOutlines ?? []) { outline.removeFromParent(); outline.geometry.dispose(); }
-      ground.geometry.dispose(); grid.geometry.dispose(); (grid.material as THREE.Material).dispose();
+      ground.geometry.dispose(); cityGroundMaterial.dispose(); grassTexture.dispose();
+      grid.geometry.dispose(); (grid.material as THREE.Material).dispose();
       markerGeometry.dispose(); plusGeometry.dispose(); markerMaterial.dispose(); activeMarkerMaterial.dispose(); plusMaterial.dispose(); selectionMaterial.dispose(); errorMaterial.dispose();
       library.dispose(); environment.dispose(); renderer.dispose(); renderer.domElement.remove(); runtime.current = null;
     };

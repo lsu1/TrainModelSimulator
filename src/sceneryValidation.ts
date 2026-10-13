@@ -1,6 +1,6 @@
 import { SCENERY_LIMITS } from './sceneryTypes';
 import { sceneryCarSize } from './sceneryTraffic';
-import type { SceneryBounds, SceneryCar, SceneryObject, SceneryPlan, SceneryPoint, SceneryRiver, SceneryRoad } from './sceneryTypes';
+import type { SceneryBounds, SceneryCar, SceneryObject, SceneryPlan, SceneryPoint, SceneryRiver, SceneryRoad, ScenerySurface } from './sceneryTypes';
 
 const THEMES = ['city', 'countryside', 'hills'] as const;
 const DENSITIES = ['quiet', 'balanced', 'busy'] as const;
@@ -32,6 +32,7 @@ export function parseScenery(value: unknown): SceneryPlan | undefined {
   if (value === undefined) return undefined;
   const source = record(value);
   if (source.version !== 1) throw new Error('This scenery version is not supported.');
+  const style = source.style === undefined ? undefined : choice(source.style, ['urban-v2'], 'style');
   const theme = choice(source.theme, THEMES, 'theme');
   const density = choice(source.density, DENSITIES, 'density');
   const seed = integer(source.seed, 0, 0xffffffff, 'seed');
@@ -70,10 +71,25 @@ export function parseScenery(value: unknown): SceneryPlan | undefined {
   }
   const objects = array(source.objects, SCENERY_LIMITS.objects, 'objects').map((input): SceneryObject => {
     const item = record(input);
-    return { id: id(item.id), kind: choice(item.kind, KINDS, 'object'), ...point(item),
+    if (item.lot !== undefined && item.lot !== true) throw new Error('Scenery has an invalid building lot setting.');
+    const kind = choice(item.kind, KINDS, 'object');
+    if (item.lot && !['house', 'apartment', 'shop', 'office'].includes(kind)) throw new Error('Scenery lots must contain a building.');
+    return { id: id(item.id), kind, ...point(item),
       angle: finite(item.angle, -1000, 1000, 'angle'), width: finite(item.width, .5, 3000, 'width'),
       depth: finite(item.depth, .5, 3000, 'depth'), height: finite(item.height, .1, 1500, 'height'),
-      variant: integer(item.variant, 0, 31, 'variant') };
+      variant: integer(item.variant, 0, 31, 'variant'), ...(item.lot ? { lot: true } : {}) };
+  });
+  const surfaces = source.surfaces === undefined ? undefined : array(source.surfaces, SCENERY_LIMITS.surfaces, 'surfaces').map((input): ScenerySurface => {
+    const item = record(input);
+    const surface: ScenerySurface = { id: id(item.id), kind: choice(item.kind, ['paving', 'lawn', 'garden', 'plaza', 'parking'], 'surface'),
+      ...point(item), angle: finite(item.angle, -1000, 1000, 'surface angle'),
+      width: finite(item.width, .5, 3000, 'surface width'), depth: finite(item.depth, .5, 3000, 'surface depth'),
+      variant: integer(item.variant, 0, 31, 'surface variant') };
+    const c = Math.abs(Math.cos(surface.angle)), s = Math.abs(Math.sin(surface.angle));
+    const rx = (surface.width * c + surface.depth * s) / 2, ry = (surface.width * s + surface.depth * c) / 2;
+    if (surface.x - rx < bounds.minX - .001 || surface.x + rx > bounds.maxX + .001 ||
+        surface.y - ry < bounds.minY - .001 || surface.y + ry > bounds.maxY + .001) throw new Error('Scenery surface is outside its saved bounds.');
+    return surface;
   });
   const roads = array(source.roads, SCENERY_LIMITS.roads, 'roads').map((input): SceneryRoad => {
     const item = record(input);
@@ -110,5 +126,6 @@ export function parseScenery(value: unknown): SceneryPlan | undefined {
     const minimum = (sceneryCarSize(a, road.width).length + sceneryCarSize(b, road.width).length) / 2 + 7;
     if (gap < minimum) throw new Error('Scenery vehicles overlap or are too close in the same lane. Spread their saved traffic phases apart.');
   }
-  return { version: 1, seed, theme, density, features, prompt: source.prompt, bounds, objects, roads, rivers, cars, trafficPlaying: source.trafficPlaying };
+  return { version: 1, ...(style ? { style } : {}), seed, theme, density, features, prompt: source.prompt, bounds, objects,
+    ...(surfaces === undefined ? {} : { surfaces }), roads, rivers, cars, trafficPlaying: source.trafficPlaying };
 }

@@ -60,6 +60,8 @@ export default function SceneryPanel({ scenery }: { scenery: SceneryController }
   return <section className="scenery-panel" aria-label="Scenery builder">
     <h3><Sparkles size={17} /> Build the surroundings</h3>
     <p className="scenery-intro">Give any railway its own world. Preview it, then keep what you like.</p>
+    {scenery.existing?.theme === 'city' && !scenery.existing.style && !scenery.hasPreview &&
+      <p className="scenery-intro">Build a new preview to try street-facing neighbourhoods and landscaped building plots. Keep accepts the new arrangement.</p>}
     <fieldset className="scenery-fields" disabled={locked}>
       <legend className="scenery-label">Choose a feeling</legend>
       <div className="scenery-themes" role="group" aria-label="Scenery theme">

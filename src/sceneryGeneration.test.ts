@@ -22,6 +22,11 @@ function segmentDistance(p: SceneryPoint, a: SceneryPoint, b: SceneryPoint): num
 function distanceToRoad(p: SceneryPoint, points: SceneryPoint[]): number {
   return Math.min(...points.map((a, i) => segmentDistance(p, a, points[(i + 1) % points.length])));
 }
+function distanceToLot(point: SceneryPoint, lot: SceneryPlan['objects'][number], c: number, s: number): number {
+  const x = (point.x - lot.x) * c + (point.y - lot.y) * s;
+  const y = -(point.x - lot.x) * s + (point.y - lot.y) * c;
+  return Math.hypot(Math.max(0, Math.abs(x) - lot.width / 2), Math.max(0, Math.abs(y) - lot.depth / 2));
+}
 describe('generic guided scenery', () => {
   it('understands the single Chinese tree word advertised in the panel', () => {
     const plan = make([], [], { ...REQUEST, features: [], prompt: '树' });
@@ -35,7 +40,8 @@ describe('generic guided scenery', () => {
     expect(JSON.stringify(layout)).toBe(before);
     expect(plan.objects.length).toBeGreaterThan(30);
     expect(plan.objects.length).toBeLessThanOrEqual(400);
-    expect(plan.roads).toHaveLength(1);
+    expect(plan.roads.length).toBeGreaterThanOrEqual(1);
+    expect(plan.roads.length).toBeLessThanOrEqual(8);
     expect(plan.roads[0].closed).toBe(true);
     expect(plan.roads[0].points.length).toBeGreaterThan(20);
     expect(plan.cars.length).toBeGreaterThan(0);
@@ -45,22 +51,47 @@ describe('generic guided scenery', () => {
     expect(visibleScenery(plan, layout.tracks, layout.accessories)).toBe(plan);
     // Independently sample every physical rail, including inactive branches,
     // double lanes, scissors crossings and raised/graded routes.
-    let closestRail = Infinity, closestRoad = Infinity, closestPair = '';
+    const objectFootprints = plan.objects.map(object => ({ ...object, footprint: Math.hypot(object.width, object.depth) / 2 }));
+    const surfaceFootprints = (plan.surfaces ?? []).map(surface => ({ ...surface, footprint: Math.hypot(surface.width, surface.depth) / 2 }));
+    let closestRail = Infinity, closestRoad = Infinity, closestSurface = Infinity, closestPair = '';
     for (const track of layout.tracks) for (const path of pathsFor(track)) {
       const count = Math.ceil(path.length / 7);
       for (let i = 0; i <= count; i++) {
         const p = path.pointAt(path.length * i / Math.max(1, count));
-        for (const object of plan.objects) {
-          const footprint = Math.hypot(object.width, object.depth) / 2;
-          const gap = Math.hypot(p.x - object.x, p.y - object.y) - footprint;
+        for (const object of objectFootprints) {
+          const squaredDistance = (p.x - object.x) ** 2 + (p.y - object.y) ** 2;
+          if (object.footprint + closestRail <= 0 || squaredDistance >= (object.footprint + closestRail) ** 2) continue;
+          const gap = Math.sqrt(squaredDistance) - object.footprint;
           if (gap < closestRail) { closestRail = gap; closestPair = `${track.id}/${path.route} vs ${object.id}`; }
         }
-        closestRoad = Math.min(closestRoad, distanceToRoad(p, plan.roads[0].points) - plan.roads[0].width / 2);
+        for (const road of plan.roads) closestRoad = Math.min(closestRoad, distanceToRoad(p, road.points) - road.width / 2);
+        for (const surface of surfaceFootprints) {
+          const squaredDistance = (p.x - surface.x) ** 2 + (p.y - surface.y) ** 2;
+          if (surface.footprint + closestSurface > 0 && squaredDistance < (surface.footprint + closestSurface) ** 2) closestSurface = Math.sqrt(squaredDistance) - surface.footprint;
+        }
       }
     }
     expect(closestRail, closestPair).toBeGreaterThanOrEqual(19.9);
     expect(closestRoad).toBeGreaterThan(35);
-    for (const object of plan.objects) expect(distanceToRoad(object, plan.roads[0].points) - Math.hypot(object.width, object.depth) / 2).toBeGreaterThanOrEqual(32);
+    expect(closestSurface).toBeGreaterThanOrEqual(19.9);
+    const roadSamples = plan.roads.map(road => {
+      const points: SceneryPoint[] = [];
+      for (let segment = 0; segment < road.points.length - (road.closed ? 0 : 1); segment++) {
+        const a = road.points[segment], b = road.points[(segment + 1) % road.points.length];
+        const samples = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) / 7));
+        for (let i = 0; i <= samples; i++) points.push({ x: a.x + (b.x - a.x) * i / samples, y: a.y + (b.y - a.y) * i / samples });
+      }
+      return { road, points };
+    });
+    let pavementGap = Infinity;
+    for (const object of plan.objects) {
+      const c = Math.cos(object.angle), s = Math.sin(object.angle);
+      for (const { road, points } of roadSamples) {
+        if (!object.lot) pavementGap = Math.min(pavementGap, distanceToRoad(object, road.points) - Math.hypot(object.width, object.depth) / 2 - road.width / 2 - (object.kind === 'person' ? 2 : 12));
+        else for (const point of points) pavementGap = Math.min(pavementGap, distanceToLot(point, object, c, s) - road.width / 2 - 12);
+      }
+    }
+    expect(pavementGap).toBeGreaterThanOrEqual(-.1);
   });
 
   it('is reproducible across saves, reordered geometry and switch/name changes', () => {
@@ -81,6 +112,32 @@ describe('generic guided scenery', () => {
     expect(plan.bounds.minX).toBeGreaterThan(1500);
     expect(plan.bounds.maxY).toBeLessThan(-5500);
     expect(visibleScenery(plan, tracks, [])).toBe(plan);
+    expect(parseScenery(plan)).toEqual(plan);
+  });
+
+  it('keeps widely separated custom ground bounded without allocating its entire planting grid', () => {
+    const tracks: Track[] = [
+      { id: 'far-a', kind: 's248', x: -50000, y: -50000, angle: 0, bend: 1 },
+      { id: 'far-b', kind: 's248', x: 50000, y: 50000, angle: 0, bend: 1 },
+    ];
+    const request: SceneryRequest = { ...REQUEST, features: ['trees'], density: 'busy' };
+    const plan = make(tracks, [], request);
+    expect(plan.objects.length).toBeGreaterThan(0);
+    expect(plan.objects.length).toBeLessThanOrEqual(400);
+    expect(plan.objects.every(object => object.kind === 'tree')).toBe(true);
+    expect(plan.roads).toHaveLength(0);
+    expect(parseScenery(plan)).toEqual(plan);
+    expect(make(tracks, [], request)).toEqual(plan);
+  });
+
+  it('keeps total street and river lengths importable across widely separated custom tracks', () => {
+    const tracks: Track[] = [
+      { id: 'far-a', kind: 's248', x: -50000, y: -50000, angle: 0, bend: 1 },
+      { id: 'far-b', kind: 's248', x: 50000, y: 50000, angle: 0, bend: 1 },
+    ];
+    const plan = make(tracks, [], { ...REQUEST, features: ['roads', 'cars', 'river'] });
+    expect(plan.roads.length).toBeGreaterThan(0);
+    expect(plan.cars.every(car => plan.roads.some(road => road.id === car.roadId && road.closed))).toBe(true);
     expect(parseScenery(plan)).toEqual(plan);
   });
 
@@ -108,6 +165,8 @@ describe('generic guided scenery', () => {
     expect(plan.roads).toBe(existing.roads);
     expect(plan.cars).toBe(existing.cars);
     expect(plan.rivers).toBe(existing.rivers);
+    const outsideSurfaces = existing.surfaces?.filter(surface => Math.hypot(surface.x - area.x, surface.y - area.y) > area.radius) ?? [];
+    for (const surface of outsideSurfaces) expect(plan.surfaces?.find(item => item.id === surface.id)).toBe(surface);
     expect(plan.trafficPlaying).toBe(false);
     expect(plan.objects.some(object => !outside.includes(object))).toBe(true);
     expect(parseScenery(plan)).toEqual(plan); // Same seed must not duplicate IDs.
@@ -131,7 +190,7 @@ describe('generic guided scenery', () => {
     const road = plan.roads[0], p = road.points[2];
     const crossing: Track = { id: 'crossing', kind: 's248', x: p.x - 124, y: p.y, angle: 0, bend: 1 };
     const hidden = visibleScenery(plan, [crossing], []);
-    expect(hidden.roads).toHaveLength(0);
+    expect(hidden.roads.some(item => item.id === road.id)).toBe(false);
     expect(hidden.cars).toHaveLength(0);
     expect(visibleScenery(plan, [], [])).toBe(plan);
   });
@@ -140,6 +199,7 @@ describe('generic guided scenery', () => {
     const existing = make(), area = { x: 0, y: 0, radius: 240 };
     const plan = make([], [], { ...REQUEST, existing, area, prompt: 'Remove scenery here' });
     expect(plan.objects.every(object => Math.hypot(object.x, object.y) > 240)).toBe(true);
+    expect(plan.surfaces?.every(surface => Math.hypot(surface.x, surface.y) > 240)).toBe(true);
     expect(generateScenery([], [], { ...REQUEST, prompt: 'Remove scenery' }).plan).toBeNull();
     expect(generateScenery([], [], { ...REQUEST, area: { x: NaN, y: 0, radius: 200 } }).plan).toBeNull();
   });

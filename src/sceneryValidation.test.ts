@@ -13,6 +13,31 @@ describe('saved scenery validation', () => {
     expect(parseScenery(JSON.parse(JSON.stringify(plan)))).toEqual(plan);
     expect(parseScenery({ ...plan, script: '<script>' })).not.toHaveProperty('script');
   });
+  it('round-trips landscaped parcels and ground surfaces while retaining older undecorated saves', () => {
+    const plan = valid();
+    const styled = { ...plan, style: 'urban-v2', objects: plan.objects.map(object =>
+      ['house', 'apartment', 'shop', 'office'].includes(object.kind) ? { ...object, lot: true } : object),
+      surfaces: [{ id: 'plaza-surface', kind: 'plaza', x: 0, y: 0, width: 100, depth: 80, angle: .3, variant: 2 }] };
+    expect(parseScenery(JSON.parse(JSON.stringify(styled)))).toEqual(styled);
+    const legacy = { ...plan }; delete legacy.style; delete legacy.surfaces;
+    legacy.objects = legacy.objects.map(({ lot: _lot, ...object }) => object);
+    const restored = parseScenery(legacy)!;
+    expect(restored).toEqual(legacy);
+    expect(restored).not.toHaveProperty('surfaces');
+    expect(restored.objects.every(object => object.lot === undefined)).toBe(true);
+  });
+  it('rejects invalid parcel flags, surface styles and excessive saved surfaces', () => {
+    const plan = valid(), object = plan.objects[0];
+    expect(() => parseScenery({ ...plan, style: 'unknown-style' })).toThrow('style');
+    expect(() => parseScenery({ ...plan, objects: [{ ...object, lot: false }] })).toThrow('lot');
+    expect(() => parseScenery({ ...plan, objects: [{ ...object, kind: 'person', lot: true }] })).toThrow('building');
+    expect(() => parseScenery({ ...plan, surfaces: Array(257).fill(null) })).toThrow('at most 256');
+    const surface = { id: 'ground-surface', kind: 'parking', x: 0, y: 0, width: 70, depth: 50, angle: 0, variant: 1 };
+    expect(() => parseScenery({ ...plan, surfaces: [{ ...surface, kind: 'track' }] })).toThrow('surface');
+    expect(() => parseScenery({ ...plan, surfaces: [{ ...surface, id: object.id }] })).toThrow('duplicate identifier');
+    expect(() => parseScenery({ ...plan, surfaces: [{ ...surface, width: Infinity }] })).toThrow('width');
+    expect(() => parseScenery({ ...plan, surfaces: [{ ...surface, x: plan.bounds.maxX - 1, angle: Math.PI / 4 }] })).toThrow('outside');
+  });
   it.each([null, false, 'city', {}, { version: 5 }])('rejects malformed scenery %s', input => {
     expect(() => parseScenery(input)).toThrow(/Scenery|scenery/);
   });
